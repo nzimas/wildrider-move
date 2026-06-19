@@ -202,6 +202,31 @@
 		Out.ar(out, ~killbad.(signal * (1 - bypass) * wet));
 	}).add;
 
+
+	// ---- ENV: ADSR envelope VCA / audio gate ----
+	// EnvGen-driven amplitude envelope applied to the incoming audio signal.
+	// `enable` acts as the gate: 0 releases, 1 attacks/sustains; returning to 1
+	// re-triggers the envelope.
+	SynthDef(("env" ++ suf).asSymbol, { |out = 0, in = 0,
+		attack = 20, decay = 200, sustain = 0.7, release = 500,
+		curve = -4, amp = 1, pan = 0,
+		bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan);
+		var gate = enable;
+		var env = EnvGen.kr(
+			Env.adsr(
+				attackTime: attack * 0.001,
+				decayTime: decay * 0.001,
+				sustainLevel: sustain,
+				releaseTime: release * 0.001,
+				curve: curve
+			),
+			gate
+		);
+		var sig = dry * env * amp;
+		sig = ~spread.(sig * enable, nchan, pan);
+		Out.ar(out, ~killbad.(XFade2.ar(dry, sig, (wet * 2 - 1)) * (1 - bypass) + (dry * bypass)));
+	}).add;
 	// ---- BAND: band / spectral window (IIR realization first version) ----
 	SynthDef(("band" ++ suf).asSymbol, { |out = 0, in = 0, centerHz = 800,
 		bandwidth = 400, gain = 0, mode = 0, freeze = 0, smear = 0,

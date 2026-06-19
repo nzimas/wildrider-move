@@ -601,15 +601,42 @@ BUCHLOID = ModuleSpec(
 )
 
 
+# --------------------------------------------------------------------------- #
+# ENV — ADSR envelope VCA / audio gate
+# --------------------------------------------------------------------------- #
+ENV = ModuleSpec(
+    type="ENV",
+    role="ADSR envelope VCA: shapes the amplitude of incoming audio with a classic attack-decay-sustain-release envelope.",
+    node_meaning="Envelope voice.",
+    synthdef="env",
+    insert_capable=True,
+    generative_capable=False,
+    max_nodes=4,
+    cpu_per_node=1.0,
+    gestures=["envelope", "gate", "vca"],
+    node_params=[
+        P("env.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("env.attack", "Attack", unit="ms", rmin=1.0, rmax=10000.0, default=20.0, curve=Curve.EXP, formatter="ms", musical=(5.0, 500.0)),
+        P("env.decay", "Decay", unit="ms", rmin=1.0, rmax=10000.0, default=200.0, curve=Curve.EXP, formatter="ms", musical=(10.0, 1000.0)),
+        P("env.sustain", "Sustain", rmin=0.0, rmax=1.0, default=0.7, musical=(0.0, 1.0)),
+        P("env.release", "Release", unit="ms", rmin=1.0, rmax=15000.0, default=500.0, curve=Curve.EXP, formatter="ms", musical=(50.0, 3000.0)),
+        P("env.curve", "Curve", rmin=-8.0, rmax=8.0, default=-4.0, musical=(-4.0, 0.0)),
+        P("env.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=1.0, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.3, 1.0)),
+        P("env.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[],
+)
+
+
 CATALOG: dict[str, ModuleSpec] = {
     m.type: m for m in (PLAY, GEN, BAND, PITCH, TIME, COMB, GAIN, SDLY, VERB,
-                        CLOUDS, RINGS, BEN, BUCHLOID, VIZ)
+                        CLOUDS, RINGS, BEN, BUCHLOID, ENV, VIZ)
 }
 
 # Ordered lanes as drawn in the page-2 schematic (Source Rack -> ... -> Gain),
 # extended with the stereo delay + reverb at the tail.
 DEFAULT_LANE_ORDER = ["PLAY", "GEN", "BAND", "PITCH", "TIME", "COMB", "GAIN",
-                      "SDLY", "VERB", "CLOUDS", "RINGS", "BEN", "BUCHLOID", "VIZ"]
+                      "SDLY", "VERB", "CLOUDS", "RINGS", "BEN", "BUCHLOID", "ENV", "VIZ"]
 
 
 def spec(module_type: str) -> ModuleSpec:
