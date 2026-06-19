@@ -686,7 +686,7 @@ PLAITS = ModuleSpec(
     node_params=[
         P("plaits.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
         P("plaits.pitch", "Pitch", unit="note", rmin=0.0, rmax=127.0, default=60.0, formatter="noteName", musical=(36.0, 84.0)),
-        P("plaits.engine", "Engine", curve=Curve.ENUM, enum=[str(i) for i in range(16)], default=0, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("plaits.engine", "Engine", curve=Curve.ENUM, enum=[str(i) for i in range(16)], default=0, randomize=RandomizePolicy.SAFE, musical=(0.0, 15.0)),
         P("plaits.harm", "Harmonics", rmin=0.0, rmax=1.0, default=0.1, musical=(0.0, 1.0)),
         P("plaits.timbre", "Timbre", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),
         P("plaits.morph", "Morph", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),

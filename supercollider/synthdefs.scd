@@ -283,7 +283,7 @@
 		var trig = Changed.kr(enable) + Changed.kr(trigger);
 		var pl = MiPlaits.ar(
 			pitch: pitch,
-			engine: engine,
+			engine: engine.round(1),
 			harm: harm,
 			timbre: timbre,
 			morph: morph,
