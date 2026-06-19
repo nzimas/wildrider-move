@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atelier — Electroacoustic Instrument</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body data-contrast="normal">
+  <header id="topbar">
+    <div class="brand">ATELIER<span class="sub">electroacoustic workbench</span></div>
+    <div class="status">
+      <span id="conn" class="pill bad">engine: offline</span>
+      <span id="cpu" class="pill">cpu: –</span>
+      <span id="seed" class="pill" title="root seed (deterministic recall)">seed: –</span>
+    </div>
+    <div class="transport">
+      <button id="btn-engine" title="Reconnect / rebuild the DSP engine">↻ engine</button>
+      <button id="btn-audio" title="Toggle live audio stream">▶ audio</button>
+      <button id="btn-panic" class="danger" title="Global fade, free feedback, limiter reset">PANIC</button>
+      <button id="btn-reset" title="Reset modulation transport phases">reset xport</button>
+      <button id="btn-save" title="Save patch">save</button>
+      <button id="btn-load" title="Load patch">load</button>
+      <button id="btn-contrast" title="Toggle high-contrast accessibility mode">◐ contrast</button>
+    </div>
+    <audio id="player" hidden></audio>
+  </header>
+
+  <main>
+    <section id="detail" aria-label="Selected module"></section>
+    <section id="canvas-wrap" aria-label="Patch canvas">
+      <div id="canvas">
+        <svg id="wires" width="4000" height="2400"></svg>
+      </div>
+      <button id="btn-add" title="Add a module to the patch">＋ add module</button>
+    </section>
+    <aside id="side">
+      <div class="panel" id="rand-panel">
+        <h3>🎲 Randomizer</h3>
+        <div class="rand-amt-row">
+          <label for="rand-amt">amount</label>
+          <input type="range" id="rand-amt" min="0" max="1" step="0.01" value="0.3">
+          <span class="rand-amt-val" id="rand-amt-val">30%</span>
+        </div>
+        <div class="rand-opts">
+          <label><input type="checkbox" id="rand-expert"> expert (unsafe ranges)</label>
+        </div>
+        <div class="rand-buttons">
+          <button id="btn-rand-all" title="Randomize — choose Patch, Params or Chain">🎲 Randomize</button>
+          <button id="btn-rand-module" title="Randomize the selected module's params">module</button>
+        </div>
+        <div class="rand-hint">Patch = rewire + params · Params = params only · Chain = pick modules, new wiring (params kept) · amount sets intensity · locked (L) preserved · per-param 🎲 on each row</div>
+      </div>
+      <div class="panel" id="meters-panel">
+        <h3>VIZ — meters</h3>
+        <div id="meters"></div>
+      </div>
+      <div class="panel" id="macros-panel">
+        <h3>Macros</h3>
+        <div id="macros"></div>
+      </div>
+      <div class="panel" id="scenes-panel">
+        <h3>Scenes &amp; morph</h3>
+        <div id="scenes"></div>
+        <div class="row">
+          <button id="btn-capture">capture scene</button>
+        </div>
+        <div class="row morph">
+          <select id="morph-a"></select>
+          <input type="range" id="morph-t" min="0" max="1" step="0.001" value="0">
+          <select id="morph-b"></select>
+        </div>
+      </div>
+      <div class="panel" id="lfo-panel">
+        <h3>Modulation — LFOs</h3>
+        <div class="row">
+          <label>count <input type="number" id="lfo-count" min="1" max="30" value="8" style="width:56px"></label>
+          <button id="btn-lfo-rand" title="Randomize all LFO shapes, rates, depths and targets">🎲 randomize LFOs</button>
+        </div>
+        <div id="lfos"></div>
+      </div>
+      <div class="panel" id="mod-panel">
+        <h3>Polyadic sources</h3>
+        <div id="mod-sources"></div>
+        <div class="row">
+          <select id="src-type">
+            <option value="random_continuous">random continuous</option>
+            <option value="random_stepped">random stepped</option>
+            <option value="controlled_macro">controlled macro</option>
+            <option value="envelope">envelope</option>
+            <option value="clock">clock / phasor</option>
+            <option value="analysis">analysis follower</option>
+            <option value="gesture">gesture</option>
+          </select>
+          <button id="btn-add-src">+ source</button>
+        </div>
+        <div id="mod-routes"></div>
+      </div>
+    </aside>
+  </main>
+
+  <div id="modal" hidden><div class="modal-card" id="modal-card"></div></div>
+  <script src="/static/vendor/hls.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

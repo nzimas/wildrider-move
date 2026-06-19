@@ -1,0 +1,55 @@
+# Atelier-style electroacoustic instrument — full stack.
+#
+#   controller   FastAPI web UI on http://localhost:8099 + OSC bridge + state model
+#   supercollider headless DSP engine (JACK dummy backend) + MP3 audio stream
+#
+# Control layer reaches the browser on localhost:8099. Audio is streamed from the
+# SC container (Docker on macOS cannot access CoreAudio directly).
+services:
+  supercollider:
+    build: ./supercollider
+    container_name: atelier-sc
+    # JACK uses POSIX shared memory; the default 64MB /dev/shm causes a bus error.
+    shm_size: "1gb"
+    environment:
+      ATELIER_SR: "48000"
+      ATELIER_CHANNELS: "2"        # set to 4 / 8 / N for multichannel
+      ATELIER_BLOCK: "256"
+      CONTROLLER_HOST: "controller"
+      CONTROLLER_PORT: "57140"
+      STREAM_PORT: "8200"
+      # sclang links Qt/QtWebEngine; run it headless with no X display and
+      # without the Chromium sandbox (required as root in a container).
+      QT_QPA_PLATFORM: "offscreen"
+      QTWEBENGINE_DISABLE_SANDBOX: "1"
+      QTWEBENGINE_CHROMIUM_FLAGS: "--no-sandbox --disable-gpu"
+      JACK_NO_AUDIO_RESERVATION: "1"
+    volumes:
+      - ./data:/data
+    expose:
+      - "57120/udp"
+      - "8200"
+    networks: [atelier]
+    restart: unless-stopped
+
+  controller:
+    build: ./controller
+    container_name: atelier-controller
+    depends_on: [supercollider]
+    ports:
+      - "127.0.0.1:8099:8099"      # web UI, localhost only
+    environment:
+      SC_HOST: "supercollider"
+      SC_PORT: "57120"             # sclang langPort inside the SC container
+      CONTROLLER_PORT: "57140"     # where SC sends telemetry back
+      SC_STREAM_URL: "http://supercollider:8200"
+      ATELIER_DATA: "/data"
+      ATELIER_CONTROL_RATE: "60"
+    volumes:
+      - ./data:/data
+    networks: [atelier]
+    restart: unless-stopped
+
+networks:
+  atelier:
+    driver: bridge
