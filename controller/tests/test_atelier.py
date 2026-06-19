@@ -329,6 +329,36 @@ def test_lfo_bank():
     assert sum(1 for rid in st.mod.routes if rid.endswith("_rt")) == 4
 
 
+def test_per_module_lfos():
+    st = _state()
+    gen = next(m for m in st.patch.modules.values() if m.type == "GEN")
+    # per-module LFOs are disabled by default and one exists per modulatable param
+    assert gen.per_module_lfos_enabled is False
+    assert "gen.amp" in gen.per_module_lfos
+    assert gen.per_module_lfos["gen.amp"]["enabled"] is False
+    # enable the bank and one LFO; it creates a route in the per-module engine
+    st.set_per_module_lfos_enabled(gen.id, True)
+    st.set_per_module_lfo(gen.id, "gen.amp", enabled=True, shape="sine", rate=2.0, depth=0.5)
+    assert gen.per_module_lfos_enabled is True
+    rt_id = st._pmod_rt_id(gen.id, "gen.amp")
+    assert rt_id in st.per_module_mod.routes
+    # ticking produces an offset for the target
+    for _ in range(30):
+        offs = st.per_module_mod.tick(0.02)
+    assert any(k[0] == gen.id and k[1] == "gen.amp" for k in offs)
+    # disabling the bank removes per-module routes
+    st.set_per_module_lfos_enabled(gen.id, False)
+    assert rt_id not in st.per_module_mod.routes
+    # persistence round-trips the settings
+    d = patch_to_dict(st)
+    st2 = _state()
+    patch_from_dict(st2, d)
+    gen2 = next(m for m in st2.patch.modules.values() if m.type == "GEN")
+    assert gen2.per_module_lfos_enabled is False
+    assert gen2.per_module_lfos["gen.amp"]["shape"] == "sine"
+    assert gen2.per_module_lfos["gen.amp"]["rate"] == pytest.approx(2.0)
+
+
 def test_panic_disarms_feedback():
     st = _state()
     from atelier.model import FeedbackEdge

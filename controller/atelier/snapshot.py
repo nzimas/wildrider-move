@@ -69,6 +69,8 @@ def module_state(state: StateManager, mid: str) -> dict[str, Any]:
         "x": m.x, "y": m.y,
         "has_input": m.spec.insert_capable, "has_output": m.spec.is_audio,
         "node_count": m.node_count,
+        "per_module_lfos_enabled": m.per_module_lfos_enabled,
+        "per_module_lfos": {k: dict(v) for k, v in m.per_module_lfos.items()},
         "global": {
             pid: {"base": s.base, "effective": s.effective, "display": s.display(),
                   "norm": s.meta.to_norm(s.base), "locked": s.locked}

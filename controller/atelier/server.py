@@ -272,6 +272,27 @@ def _c_lfo_randomize(_d):
     state.randomize_lfos()
 
 
+@command("set_per_module_lfos_enabled")
+def _c_set_per_module_lfos_enabled(d):
+    state.set_per_module_lfos_enabled(d["module"], bool(d["enabled"]))
+
+
+@command("set_per_module_lfo")
+def _c_set_per_module_lfo(d):
+    state.set_per_module_lfo(
+        d["module"], d["param"],
+        enabled=d.get("enabled") if "enabled" in d else None,
+        shape=d.get("shape"),
+        rate=float(d["rate"]) if "rate" in d else None,
+        depth=float(d["depth"]) if "depth" in d else None,
+    )
+
+
+@command("randomize_per_module_lfos")
+def _c_randomize_per_module_lfos(d):
+    state.randomize_per_module_lfos(d["module"])
+
+
 @command("capture_scene")
 def _c_capture_scene(d):
     state.capture_scene(d["id"], d.get("name", d["id"]))

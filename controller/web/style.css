@@ -211,6 +211,12 @@ main {
 .macro input { width: 100%; accent-color: var(--fill); }
 
 .chain-row { display: grid; grid-template-columns: 1fr 26px 24px 26px; gap: 6px; align-items: center; margin: 3px 0; }
+.module-lfo-grid { display: flex; flex-direction: column; gap: 4px; }
+.module-lfo-row { display: grid; grid-template-columns: 18px 90px 72px 1fr 1fr; gap: 6px; align-items: center; padding: 3px 5px; border-radius: 4px; border: 1px solid transparent; }
+.module-lfo-row.on { background: rgba(111,168,220,0.08); border-color: var(--border); }
+.module-lfo-row .lfo-label { font-size: 10px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.module-lfo-row input[type="range"] { width: 100%; }
+.module-lfo-row select { font-size: 11px; padding: 1px 3px; }
 .chain-row .chain-name { font-size: 12px; }
 .chain-row .chain-val { text-align: center; font-size: var(--readout); }
 .chain-row button { padding: 1px 6px; }

@@ -26,6 +26,7 @@ class StateManager:
     def __init__(self, bridge: OSCBridge | None = None):
         self.patch = Patch()
         self.mod = ModEngine(root_seed=self.patch.root_seed)
+        self.per_module_mod = ModEngine(root_seed=self.patch.root_seed)
         self.scenes = SceneEngine()
         self.control = ControlLayer()
         self.bridge = bridge or OSCBridge()
@@ -107,6 +108,7 @@ class StateManager:
         m = ModuleInstance(mid, module_type, lane_id, node_count)
         m.x, m.y = x, y
         self.patch.add_module(m)
+        self._rebuild_per_module_lfos(m)
         if m.spec.is_audio:
             self.bridge.module_new(m.id, m.type, self.patch.channel_count, m.node_count, 0)
             self._push_module(m)
@@ -119,12 +121,16 @@ class StateManager:
         self.bridge.module_free(mid)
         for rid in [r.id for r in self.mod.routes.values() if r.dest_module_id == mid]:
             self.mod.remove_route(rid)
+        self._remove_per_module_lfos(mid)
         self._sync_graph()
         self._notify({"type": "module_removed", "id": mid})
 
     def clear_patch(self) -> None:
         """Remove every module and connection, leaving lanes/LFOs/scenes intact."""
         self._teardown_modules()
+        self.per_module_mod.sources.clear()
+        self.per_module_mod.routes.clear()
+        self.per_module_mod._instances.clear()
         self._sync_graph()
         self._notify({"type": "patch_replaced"})
 
@@ -161,6 +167,7 @@ class StateManager:
         for r in self.mod.routes.values():
             if r.dest_module_id == mid:
                 self.mod.rebuild_route(r.id, m.node_count, m.node_positions())
+        self._rebuild_per_module_lfos(m)
         self._notify({"type": "module_nodes", "id": mid, "count": m.node_count})
 
     def set_bypass(self, mid: str, on: bool) -> None:
@@ -178,6 +185,108 @@ class StateManager:
         m.wet_dry = max(0.0, min(1.0, wet))
         self.bridge.module_wet(mid, m.wet_dry)
         self._notify({"type": "module_wet", "id": mid, "wet": m.wet_dry})
+
+    # ------------------------------------------------------------------ #
+    # Per-module LFO bank.
+    # ------------------------------------------------------------------ #
+    def _pmod_src_id(self, mid: str, pid: str) -> str:
+        return f"{mid}_pmod_{pid}"
+
+    def _pmod_rt_id(self, mid: str, pid: str) -> str:
+        return f"{mid}_pmod_rt_{pid}"
+
+    def _apply_lfo_shape(self, src: ModSource, shape: str) -> None:
+        if shape == "triangle":
+            src.type, src.shape = ModType.CLOCK, "tri"
+        elif shape in ("sh", "s&h", "random", "randstep"):
+            src.type = ModType.RANDOM_STEPPED
+        else:
+            src.type, src.shape = ModType.CLOCK, "sine"
+
+    def _sync_per_module_lfo(self, m: ModuleInstance, pid: str) -> None:
+        """Create/update/remove the ModSource/ModRoute for one per-module LFO."""
+        cfg = m.per_module_lfos.get(pid)
+        if cfg is None:
+            return
+        sid = self._pmod_src_id(m.id, pid)
+        rid = self._pmod_rt_id(m.id, pid)
+        active = m.per_module_lfos_enabled and cfg.get("enabled", False)
+        if not active:
+            self.per_module_mod.remove_route(rid)
+            self.per_module_mod.remove_source(sid)
+            return
+        src = self.per_module_mod.sources.get(sid)
+        shape = cfg.get("shape", "sine")
+        rate = cfg.get("rate", 0.5)
+        depth = cfg.get("depth", 0.3)
+        if src is None:
+            src = ModSource(
+                id=sid, type=ModType.CLOCK, label=f"{m.id} {pid}",
+                rate=rate, shape="sine", depth=1.0, bipolar=True, is_lfo=True)
+            self.per_module_mod.add_source(src)
+        self._apply_lfo_shape(src, shape)
+        src.rate = float(rate)
+        route = self.per_module_mod.routes.get(rid)
+        if route is None:
+            self.per_module_mod.add_route(
+                ModRoute(id=rid, source_id=sid, dest_module_id=m.id,
+                         dest_param_id=pid, node_scope=NodeScope.ALL_DECORRELATED,
+                         depth=float(depth)),
+                m.node_count)
+        else:
+            route.depth = float(depth)
+            route.enable = True
+            self.per_module_mod.rebuild_route(rid, m.node_count, m.node_positions())
+
+    def _remove_per_module_lfos(self, mid: str) -> None:
+        for pid in list(self.patch.modules.get(mid, ModuleInstance("", "", "")).per_module_lfos or []):
+            self.per_module_mod.remove_route(self._pmod_rt_id(mid, pid))
+            self.per_module_mod.remove_source(self._pmod_src_id(mid, pid))
+
+    def _rebuild_per_module_lfos(self, m: ModuleInstance) -> None:
+        for pid in m.per_module_lfos:
+            self._sync_per_module_lfo(m, pid)
+
+    def set_per_module_lfos_enabled(self, mid: str, enabled: bool) -> None:
+        m = self.patch.modules.get(mid)
+        if not m:
+            return
+        m.per_module_lfos_enabled = bool(enabled)
+        self._rebuild_per_module_lfos(m)
+        self._notify({"type": "per_module_lfos_enabled", "id": mid, "enabled": m.per_module_lfos_enabled})
+
+    def set_per_module_lfo(self, mid: str, pid: str,
+                           enabled: bool | None = None,
+                           shape: str | None = None,
+                           rate: float | None = None,
+                           depth: float | None = None) -> None:
+        m = self.patch.modules.get(mid)
+        if not m or pid not in m.per_module_lfos:
+            return
+        cfg = m.per_module_lfos[pid]
+        if enabled is not None:
+            cfg["enabled"] = bool(enabled)
+        if shape is not None:
+            cfg["shape"] = shape
+        if rate is not None:
+            cfg["rate"] = float(rate)
+        if depth is not None:
+            cfg["depth"] = float(depth)
+        self._sync_per_module_lfo(m, pid)
+        self._notify({"type": "per_module_lfo", "id": mid, "param": pid, "cfg": dict(cfg)})
+
+    def randomize_per_module_lfos(self, mid: str) -> None:
+        m = self.patch.modules.get(mid)
+        if not m:
+            return
+        shapes = ["sine", "triangle", "sh"]
+        for pid, cfg in m.per_module_lfos.items():
+            cfg["enabled"] = self.rng.random() < 0.5
+            cfg["shape"] = self.rng.choice(shapes)
+            cfg["rate"] = 0.03 * ((4.0 / 0.03) ** self.rng.random())
+            cfg["depth"] = self.rng.uniform(0.2, 0.8)
+        self._rebuild_per_module_lfos(m)
+        self._notify({"type": "per_module_lfos_randomized", "id": mid})
 
     def set_param(self, mid: str, pid: str, node: int | None, base: float) -> None:
         slot = self.patch.find_slot(mid, pid, node)
@@ -211,7 +320,11 @@ class StateManager:
         dt = max(1e-4, min(0.1, now - self._last_tick))
         self._last_tick = now
         # feed analysis followers from the latest SC analysis
-        offsets = self.mod.tick(dt, self.bridge.analysis)
+        patch_offsets = self.mod.tick(dt, self.bridge.analysis)
+        module_offsets = self.per_module_mod.tick(dt, self.bridge.analysis)
+        # Per-module LFOs override patch-matrix LFOs for conflicting targets.
+        offsets = dict(patch_offsets)
+        offsets.update(module_offsets)
         # group offsets per (module, param) so we can write node vectors
         touched: dict[tuple[str, str], dict[int, float]] = {}
         for (mid, pid, node), off in offsets.items():
@@ -450,6 +563,7 @@ class StateManager:
         self.patch.root_seed = seed
         self.rng = random.Random(seed)
         self.mod.set_root_seed(seed, self.patch.node_counts())
+        self.per_module_mod.set_root_seed(seed, self.patch.node_counts())
         self.bridge.reseed(seed)
         self._notify({"type": "reseed", "seed": seed})
 

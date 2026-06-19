@@ -252,6 +252,9 @@ function renderDetail() {
     root.append(tabs);
     for (const meta of spec.node_params) root.append(mkParam(m, meta, selNode));
   }
+
+  // per-module LFO bank
+  renderModuleLFOs(root, m, spec);
 }
 
 function slotOf(m, pid, node) {
@@ -304,6 +307,52 @@ function updateParam(ev) {
   if (!row) return;
   const ro = row.querySelector(".readout");
   if (ro) ro.textContent = ev.display;
+}
+
+function renderModuleLFOs(root, m, spec) {
+  const allParams = [...spec.global_params, ...spec.node_params].filter((p) => p.modulatable);
+  if (!allParams.length) return;
+  const bank = m.per_module_lfos || {};
+  const enabled = !!m.per_module_lfos_enabled;
+
+  root.append(el("div", "group-title", "module LFOs"));
+  const head = el("div", "row");
+  const en = el("button", enabled ? "active" : "", enabled ? "LFOs on" : "LFOs off");
+  en.onclick = () => send("set_per_module_lfos_enabled", { module: m.id, enabled: !enabled });
+  head.append(en);
+  const rnd = el("button", null, "🎲 randomize");
+  rnd.onclick = () => send("randomize_per_module_lfos", { module: m.id });
+  head.append(rnd);
+  root.append(head);
+
+  const grid = el("div", "module-lfo-grid");
+  for (const meta of allParams) {
+    const cfg = bank[meta.id] || { enabled: false, shape: "sine", rate: 0.5, depth: 0.3 };
+    const row = el("div", "module-lfo-row" + (cfg.enabled ? " on" : ""));
+    row.dataset.key = `${m.id}|${meta.id}`;
+
+    const cb = el("input"); cb.type = "checkbox"; cb.checked = !!cfg.enabled;
+    cb.onchange = () => send("set_per_module_lfo", { module: m.id, param: meta.id, enabled: cb.checked });
+
+    const label = el("span", "lfo-label", meta.label);
+
+    const sh = el("select");
+    LFO_SHAPES.forEach((s) => { const o = el("option", null, LFO_SHAPE_LABEL[s]); o.value = s; sh.append(o); });
+    sh.value = cfg.shape || "sine";
+    sh.onchange = () => send("set_per_module_lfo", { module: m.id, param: meta.id, shape: sh.value });
+
+    const rate = el("input"); rate.type = "range"; rate.min = 0; rate.max = 1; rate.step = 0.001;
+    rate.value = rateToNorm(cfg.rate || 0.5); rate.title = "rate";
+    rate.oninput = () => { const hz = normToRate(parseFloat(rate.value)); send("set_per_module_lfo", { module: m.id, param: meta.id, rate: hz }); };
+
+    const depth = el("input"); depth.type = "range"; depth.min = 0; depth.max = 1; depth.step = 0.001;
+    depth.value = Math.min(1, (cfg.depth || 0.3) / 1.5); depth.title = "depth";
+    depth.oninput = () => send("set_per_module_lfo", { module: m.id, param: meta.id, depth: parseFloat(depth.value) * 1.5 });
+
+    row.append(cb, label, sh, rate, depth);
+    grid.append(row);
+  }
+  root.append(grid);
 }
 
 function mkRange(val, oninput) {

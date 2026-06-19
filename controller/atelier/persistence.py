@@ -111,6 +111,12 @@ def patch_from_dict(state: StateManager, d: dict[str, Any]) -> None:
         state.mod.add_route(route, m.node_count if m else 1)
         if m:
             state.mod.rebuild_route(route.id, m.node_count, m.node_positions())
+    # Rebuild per-module LFO sources/routes from module settings.
+    state.per_module_mod.sources.clear()
+    state.per_module_mod.routes.clear()
+    state.per_module_mod._instances.clear()
+    for m in p.modules.values():
+        state._rebuild_per_module_lfos(m)
     state.scenes.load_list(d.get("scenes", []))
     if "control" in d:
         state.control.load_dict(d["control"])

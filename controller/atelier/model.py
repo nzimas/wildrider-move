@@ -109,6 +109,14 @@ class ModuleInstance:
         self.node_slots: list[dict[str, ParamSlot]] = []
         for _ in range(self.node_count):
             self.node_slots.append(self._fresh_node())
+        # Per-module LFO bank: one LFO per modulatable parameter.
+        # Disabled by default; each entry holds the UI/DSP settings for that param.
+        self.per_module_lfos_enabled: bool = False
+        self.per_module_lfos: dict[str, dict[str, Any]] = {
+            p.id: {"enabled": False, "shape": "sine", "rate": 0.5, "depth": 0.3}
+            for p in self.spec.node_params + self.spec.global_params
+            if p.modulatable
+        }
 
     def _fresh_node(self) -> dict[str, ParamSlot]:
         return {p.id: ParamSlot(meta=p) for p in self.spec.node_params}
@@ -151,6 +159,8 @@ class ModuleInstance:
             "node_locks": [
                 [k for k, s in nd.items() if s.locked] for nd in self.node_slots
             ],
+            "per_module_lfos_enabled": self.per_module_lfos_enabled,
+            "per_module_lfos": {k: dict(v) for k, v in self.per_module_lfos.items()},
         }
 
     @classmethod
@@ -178,6 +188,11 @@ class ModuleInstance:
                 for k in locks:
                     if k in m.node_slots[i]:
                         m.node_slots[i][k].locked = True
+        m.per_module_lfos_enabled = d.get("per_module_lfos_enabled", False)
+        saved = d.get("per_module_lfos", {})
+        for k in m.per_module_lfos:
+            if k in saved:
+                m.per_module_lfos[k].update(saved[k])
         return m
 
 
