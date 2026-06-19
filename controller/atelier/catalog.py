@@ -670,15 +670,49 @@ GATE = ModuleSpec(
 )
 
 
+# --------------------------------------------------------------------------- #
+# PLAITS — Mutable Instruments Plaits macro-oscillator
+# --------------------------------------------------------------------------- #
+PLAITS = ModuleSpec(
+    type="PLAITS",
+    role="Mutable Instruments Plaits macro-oscillator: 16 synthesis models with internal LPG/VCA.",
+    node_meaning="Plaits voice.",
+    synthdef="plaits",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=4,
+    cpu_per_node=2.5,
+    gestures=["macro-osc", "fm", "wavetable", "physical", "percussion"],
+    node_params=[
+        P("plaits.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("plaits.pitch", "Pitch", unit="note", rmin=0.0, rmax=127.0, default=60.0, formatter="noteName", musical=(36.0, 84.0)),
+        P("plaits.engine", "Engine", curve=Curve.ENUM, enum=[str(i) for i in range(16)], default=0, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("plaits.harm", "Harmonics", rmin=0.0, rmax=1.0, default=0.1, musical=(0.0, 1.0)),
+        P("plaits.timbre", "Timbre", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),
+        P("plaits.morph", "Morph", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),
+        P("plaits.trigger", "Trigger", curve=Curve.ENUM, enum=["off", "on"], default=0, randomize=RandomizePolicy.OFF),
+        P("plaits.level", "Level", rmin=0.0, rmax=1.0, default=1.0, musical=(0.0, 1.0)),
+        P("plaits.fm_mod", "FM Mod", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.5, 0.5)),
+        P("plaits.timb_mod", "Timbre Mod", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.5, 0.5)),
+        P("plaits.morph_mod", "Morph Mod", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.5, 0.5)),
+        P("plaits.decay", "LPG Decay", rmin=0.0, rmax=1.0, default=0.5, musical=(0.1, 0.9)),
+        P("plaits.lpg_colour", "LPG Colour", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),
+        P("plaits.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.5, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.3, 0.9)),
+        P("plaits.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[],
+)
+
+
 CATALOG: dict[str, ModuleSpec] = {
     m.type: m for m in (PLAY, GEN, BAND, PITCH, TIME, COMB, GAIN, SDLY, VERB,
-                        CLOUDS, RINGS, BEN, BUCHLOID, ENV, GATE, VIZ)
+                        CLOUDS, RINGS, BEN, BUCHLOID, ENV, GATE, PLAITS, VIZ)
 }
 
 # Ordered lanes as drawn in the page-2 schematic (Source Rack -> ... -> Gain),
 # extended with the stereo delay + reverb at the tail.
 DEFAULT_LANE_ORDER = ["PLAY", "GEN", "BAND", "PITCH", "TIME", "COMB", "GAIN",
-                      "SDLY", "VERB", "CLOUDS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "VIZ"]
+                      "SDLY", "VERB", "CLOUDS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "PLAITS", "VIZ"]
 
 
 def spec(module_type: str) -> ModuleSpec:

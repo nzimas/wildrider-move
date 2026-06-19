@@ -22,13 +22,13 @@ RUN mkdir -p /scsdk/external_libraries \
     && ln -s /usr/include/SuperCollider /scsdk/include \
     && ln -s /usr/include /scsdk/external_libraries/libsndfile
 WORKDIR /src/build
-# Build only the two plugins we port (avoids unrelated plugins' build issues).
+# Build only the plugins we port (avoids unrelated plugins' build issues).
 RUN cmake .. -DSC_PATH=/scsdk -DCMAKE_BUILD_TYPE=Release \
-    && make -j"$(nproc)" MiClouds MiRings
+    && make -j"$(nproc)" MiClouds MiRings MiPlaits
 # Plugins build as .scx (scsynth loads .scx too); collect them + the .sc classes.
 RUN mkdir -p /miugens \
     && find /src/build \( -name "*.scx" -o -name "*.so" \) -exec cp {} /miugens/ \; \
-    && cp /src/sc/Classes/MiClouds.sc /src/sc/Classes/MiRings.sc /miugens/
+    && cp /src/sc/Classes/MiClouds.sc /src/sc/Classes/MiRings.sc /src/sc/Classes/MiPlaits.sc /miugens/
 
 # ---- Stage 2: the headless engine runtime -----------------------------------
 # Headless SuperCollider engine + JACK dummy backend + ffmpeg audio streamer.

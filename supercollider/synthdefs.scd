@@ -270,6 +270,36 @@
 		sig = ~spread.(sig, nchan, pan);
 		Out.ar(out, ~killbad.(XFade2.ar(dry, sig, (wet * 2 - 1)) * (1 - bypass) + (dry * bypass)));
 	}).add;
+
+	// ---- PLAITS: Mutable Instruments Plaits macro-oscillator ----
+	// Port of the v7b1 MiPlaits UGen. Trigger fires on enable rising edge;
+	// an external ASR envelope gated by enable guarantees sustain while on.
+	SynthDef(("plaits" ++ suf).asSymbol, { |out = 0, in = 0,
+		pitch = 60, engine = 0, harm = 0.1, timbre = 0.5, morph = 0.5,
+		trigger = 0, level = 1, fm_mod = 0, timb_mod = 0, morph_mod = 0,
+		decay = 0.5, lpg_colour = 0.5,
+		amp = 0.5, pan = 0,
+		bypass = 0, wet = 1, enable = 1|
+		var trig = Changed.kr(enable) + Changed.kr(trigger);
+		var pl = MiPlaits.ar(
+			pitch: pitch,
+			engine: engine,
+			harm: harm,
+			timbre: timbre,
+			morph: morph,
+			trigger: trig,
+			level: level,
+			fm_mod: fm_mod,
+			timb_mod: timb_mod,
+			morph_mod: morph_mod,
+			decay: decay,
+			lpg_colour: lpg_colour,
+			mul: 1
+		);
+		var env = EnvGen.kr(Env.asr(0.005, 1, 0.05), enable);
+		var sig = Balance2.ar(pl[0], pl[1], pan, amp * env);
+		Out.ar(out, ~killbad.(sig * (1 - bypass) * wet));
+	}).add;
 	// ---- BAND: band / spectral window (IIR realization first version) ----
 	SynthDef(("band" ++ suf).asSymbol, { |out = 0, in = 0, centerHz = 800,
 		bandwidth = 400, gain = 0, mode = 0, freeze = 0, smear = 0,
