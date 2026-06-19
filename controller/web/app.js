@@ -535,6 +535,59 @@ $("btn-rand-module").onclick = () => {
   send("randomize", { scope: "module", module: sel, amount: randAmount(), expert: randExpert() });
 };
 
+// ---------------------------------------------------------------- patch save / load (modal-style)
+async function openSaveModal() {
+  const card = $("modal-card"); card.innerHTML = "";
+  card.append(el("h3", null, "Save patch"));
+  const current = S ? S.global.name : "untitled";
+  const input = el("input"); input.type = "text"; input.value = current; input.placeholder = "patch name";
+  card.append(rowLabel("name", input));
+  const list = await (await fetch("/api/patches")).json();
+  if (list.length) {
+    card.append(el("div", "rand-hint", `Existing patches: ${list.join(", ")}`));
+  }
+  const actions = el("div", "row");
+  const cancel = el("button", null, "cancel"); cancel.onclick = closeModal;
+  const save = el("button", "active", "save");
+  save.onclick = async () => {
+    const name = input.value.trim();
+    if (!name) return;
+    await fetch("/api/patch/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    closeModal();
+  };
+  input.onkeydown = (e) => { if (e.key === "Enter") save.onclick(); };
+  actions.append(cancel, save); card.append(actions);
+  $("modal").hidden = false;
+  input.focus(); input.select();
+}
+
+async function openLoadModal() {
+  const card = $("modal-card"); card.innerHTML = "";
+  card.append(el("h3", null, "Load patch"));
+  const list = await (await fetch("/api/patches")).json();
+  if (!list.length) {
+    card.append(el("p", "rand-hint", "No saved patches yet."));
+  } else {
+    const box = el("div", "rand-choice");
+    box.style.maxHeight = "60vh";
+    box.style.overflowY = "auto";
+    list.forEach((name) => {
+      const b = el("button");
+      b.innerHTML = `${name}<span class="sub">click to load</span>`;
+      b.onclick = async () => {
+        await fetch("/api/patch/load", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+        closeModal();
+      };
+      box.append(b);
+    });
+    card.append(box);
+  }
+  const actions = el("div", "row");
+  const cancel = el("button", null, "cancel"); cancel.onclick = closeModal;
+  actions.append(cancel); card.append(actions);
+  $("modal").hidden = false;
+}
+
 // ---------------------------------------------------------------- transport
 $("btn-panic").onclick = () => send("panic");
 $("btn-reset").onclick = () => send("reset_transport");
@@ -543,15 +596,8 @@ $("btn-engine").onclick = () => send("engine_reconnect");
 $("conn").style.cursor = "pointer";
 $("conn").title = "Click to reconnect / rebuild the engine";
 $("conn").onclick = () => send("engine_reconnect");
-$("btn-save").onclick = async () => {
-  const name = prompt("Patch name", S ? S.global.name : "untitled");
-  if (name) await fetch("/api/patch/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
-};
-$("btn-load").onclick = async () => {
-  const list = await (await fetch("/api/patches")).json();
-  const name = prompt("Load which patch?\n" + list.join("\n"), list[0] || "");
-  if (name) await fetch("/api/patch/load", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
-};
+$("btn-save").onclick = openSaveModal;
+$("btn-load").onclick = openLoadModal;
 $("btn-contrast").onclick = () => {
   const b = document.body;
   b.dataset.contrast = b.dataset.contrast === "high" ? "normal" : "high";

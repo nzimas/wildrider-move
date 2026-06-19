@@ -48,6 +48,7 @@ select {
 select:hover { border-color: var(--accent); }
 select option { background: var(--panel); color: var(--ink); }
 input[type="number"] { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px; padding: 2px 5px; }
+input[type="text"] { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; width: 100%; box-sizing: border-box; }
 
 #topbar {
   display: flex; align-items: center; gap: 14px; padding: 8px 14px;

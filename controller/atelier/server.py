@@ -112,12 +112,17 @@ async def get_state() -> JSONResponse:
 
 @app.get("/api/patches")
 async def list_patches() -> JSONResponse:
-    return JSONResponse(sorted(p.name for p in PATCH_DIR.glob("*.json")))
+    return JSONResponse(sorted(p.stem for p in PATCH_DIR.glob("*.json")))
+
+
+def _patch_name(raw: str) -> str:
+    """Normalize patch name by stripping a trailing .json extension."""
+    return raw[:-5] if raw.lower().endswith(".json") else raw
 
 
 @app.post("/api/patch/save")
 async def api_save(body: dict) -> JSONResponse:
-    name = body.get("name", state.patch.name or "untitled")
+    name = _patch_name(body.get("name", state.patch.name or "untitled"))
     state.patch.name = name
     save_patch(state, str(PATCH_DIR / f"{name}.json"))
     return JSONResponse({"ok": True, "name": name})
@@ -125,7 +130,7 @@ async def api_save(body: dict) -> JSONResponse:
 
 @app.post("/api/patch/load")
 async def api_load(body: dict) -> JSONResponse:
-    name = body["name"]
+    name = _patch_name(body["name"])
     load_patch(state, str(PATCH_DIR / f"{name}.json"))
     hub.push({"type": "reload", "snapshot": full_snapshot(state)})
     return JSONResponse({"ok": True})
