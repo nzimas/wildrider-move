@@ -186,6 +186,11 @@ def _c_remove_module(d):
     state.remove_module(d["module"])
 
 
+@command("clear_patch")
+def _c_clear_patch(_d):
+    state.clear_patch()
+
+
 @command("add_connection")
 def _c_add_connection(d):
     state.add_connection(d["src"], d["dst"])

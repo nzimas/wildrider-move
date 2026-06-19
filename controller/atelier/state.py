@@ -122,6 +122,12 @@ class StateManager:
         self._sync_graph()
         self._notify({"type": "module_removed", "id": mid})
 
+    def clear_patch(self) -> None:
+        """Remove every module and connection, leaving lanes/LFOs/scenes intact."""
+        self._teardown_modules()
+        self._sync_graph()
+        self._notify({"type": "patch_replaced"})
+
     # -- connection graph editing ----------------------------------------- #
     def add_connection(self, src: str, dst: str, cid: str | None = None):
         c = self.patch.add_connection(src, dst, cid)

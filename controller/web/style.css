@@ -94,8 +94,14 @@ main {
 #wires { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 1; }
 #wires path { fill: none; stroke: var(--accent); stroke-width: 2.5; opacity: .8; pointer-events: stroke; cursor: pointer; }
 #wires path.temp { stroke-dasharray: 5 4; opacity: .9; }
-#btn-add { position: absolute; left: 14px; top: 14px; z-index: 5;
+.canvas-btn { position: absolute; left: 14px; z-index: 5;
+  width: 34px; height: 34px; padding: 0; font-size: 18px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
   background: var(--accent); color: #000; font-weight: 700; border-color: var(--accent); }
+.canvas-btn.danger { background: var(--panel2); color: var(--bad); border-color: var(--bad); }
+.canvas-btn.danger:hover { background: var(--bad); color: #000; border-color: var(--bad); }
+#btn-add { top: 14px; }
+#btn-clear { top: 54px; }
 
 .node {
   position: absolute; width: 156px; z-index: 2;

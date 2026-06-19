@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Wildrider — Electroacoustic Instrument</title>
-  <link rel="stylesheet" href="/static/style.css?v=5" />
+  <link rel="stylesheet" href="/static/style.css?v=6" />
 </head>
 <body data-contrast="normal">
   <header id="topbar">
@@ -32,7 +32,8 @@
       <div id="canvas">
         <svg id="wires" width="4000" height="2400"></svg>
       </div>
-      <button id="btn-add" title="Add a module to the patch">＋ add module</button>
+      <button id="btn-add" class="canvas-btn" title="Add a module to the patch">＋</button>
+      <button id="btn-clear" class="canvas-btn danger" title="Clear the entire patch">🧽</button>
     </section>
     <aside id="side">
       <div class="panel" id="rand-panel">
@@ -101,6 +102,6 @@
 
   <div id="modal" hidden><div class="modal-card" id="modal-card"></div></div>
   <script src="/static/vendor/hls.min.js"></script>
-  <script src="/static/app.js?v=5"></script>
+  <script src="/static/app.js?v=6"></script>
 </body>
 </html>

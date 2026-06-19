@@ -624,4 +624,30 @@ $("btn-audio").onclick = () => {
   $("btn-audio").classList.contains("active") ? stopAudio() : startAudio();
 };
 
+// clear patch
+$("btn-clear").onclick = () => {
+  const card = $("modal-card"); card.innerHTML = "";
+  card.append(el("h3", null, "Clear patch?"));
+  card.append(el("p", null, "This removes every module and connection from the canvas."));
+  const row = el("div", "row");
+  const cancel = el("button", null, "cancel"); cancel.onclick = closeModal;
+  const ok = el("button", "danger", "clear");
+  ok.onclick = () => { send("clear_patch"); closeModal(); sel = null; renderDetail(); };
+  row.append(cancel, ok); card.append(row);
+  $("modal").hidden = false;
+};
+
+// keyboard shortcuts
+document.addEventListener("keydown", (e) => {
+  if ($("modal").hidden === false) return;
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (e.key === "Backspace" && sel) {
+    e.preventDefault();
+    send("remove_module", { module: sel });
+    sel = null;
+    renderDetail();
+  }
+});
+
 connect();
