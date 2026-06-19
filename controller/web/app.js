@@ -589,8 +589,6 @@ async function openLoadModal() {
 }
 
 // ---------------------------------------------------------------- transport
-$("btn-panic").onclick = () => send("panic");
-$("btn-reset").onclick = () => send("reset_transport");
 $("btn-engine").onclick = () => send("engine_reconnect");
 // the status pill is also a one-click reconnect
 $("conn").style.cursor = "pointer";
