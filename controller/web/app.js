@@ -589,8 +589,7 @@ async function openLoadModal() {
 }
 
 // ---------------------------------------------------------------- transport
-$("btn-engine").onclick = () => send("engine_reconnect");
-// the status pill is also a one-click reconnect
+// the status pill is a one-click reconnect
 $("conn").style.cursor = "pointer";
 $("conn").title = "Click to reconnect / rebuild the engine";
 $("conn").onclick = () => send("engine_reconnect");
