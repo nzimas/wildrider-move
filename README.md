@@ -1,7 +1,7 @@
-# Atelier — Electroacoustic Instrument
+# Wildrider — Electroacoustic Instrument
 
 A dockerized, semi-modular sound-design workbench in the spirit of **INA-GRM
-Tools Atelier**, implementing the *SuperCollider Modular Sound-Design Synthesizer
+Tools Wildrider**, implementing the *SuperCollider Modular Sound-Design Synthesizer
 Blueprint*. SuperCollider carries the DSP; a Python control layer holds the
 authoritative patch state and serves a web control surface on
 **http://localhost:8099**. Audio is streamed from the engine to the browser.

@@ -1,4 +1,4 @@
-/* Atelier control surface.
+/* Wildrider control surface.
    Accessibility (section 8): a high-contrast option, never relying on colour
    alone (state also shown as text), large parameter readout mode, keyboard
    operability. The [data-contrast="high"] attribute on <body> switches palettes. */

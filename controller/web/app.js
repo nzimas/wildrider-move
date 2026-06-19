@@ -1,4 +1,4 @@
-// Atelier control surface client.
+// Wildrider control surface client.
 // Renders the whole instrument from the server's machine-describable snapshot
 // (catalog metadata + live patch/modulation/scene/control state) and drives it
 // over a websocket. No module knowledge is hard-coded here.

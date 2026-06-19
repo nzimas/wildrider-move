@@ -34,7 +34,7 @@ SC_PORT = int(os.environ.get("SC_PORT", "57130"))
 STREAM_URL = os.environ.get("SC_STREAM_URL", "http://127.0.0.1:8200")
 CONTROL_RATE = float(os.environ.get("ATELIER_CONTROL_RATE", "60"))  # Hz
 
-app = FastAPI(title="Atelier-style Electroacoustic Instrument")
+app = FastAPI(title="Wildrider-style Electroacoustic Instrument")
 
 bridge = OSCBridge(sc_host=SC_HOST, sc_port=SC_PORT)
 state = StateManager(bridge=bridge)
