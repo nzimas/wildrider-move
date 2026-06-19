@@ -137,6 +137,71 @@
 		Out.ar(out, ~killbad.(sig * (1 - bypass) * wet));
 	}).add;
 
+
+	// ---- BUCHLOID: west-coast complex oscillator / FM / wave-fold voice ----
+	// Port of markwheeler/passersby's Engine_Passersby.sc synth voice.
+	// Simplified for Wildrider: no internal LFOs/reverb; ASR envelope gated by
+	// enable so each node is a sustained drone voice.
+	SynthDef(("buchloid" ++ suf).asSymbol, { |out = 0, in = 0,
+		freq = 220, glide = 0, fm1Ratio = 0.66, fm2Ratio = 3.3,
+		fm1Amount = 0, fm2Amount = 0, waveShape = 0, waveFolds = 0,
+		timbre = 0, attack = 0.04, peak = 10000, decay = 1,
+		pressure = 0, velocity = 0.7, amp = 0.5, pan = 0,
+		bypass = 0, wet = 1, enable = 1|
+		var i_nyquist = SampleRate.ir * 0.5, signal;
+		var controlLag = 0.005, i_numHarmonics = 44;
+		var modFreq, mod1, mod2, mod1Index, mod2Index, mod1Freq, mod2Freq;
+		var sinOsc, triOsc, additiveOsc, additivePhase;
+		var filterEnvVel, filterEnvLow, asrEnvelope, asrFilterFreq, asrSignal;
+		var gate = enable;
+		var atk = attack * 0.001;
+		var dec = decay * 0.001;
+		freq = Lag.kr(freq, 0.007 + glide).clip(20, i_nyquist);
+		fm1Ratio = Lag.kr(fm1Ratio, controlLag);
+		fm2Ratio = Lag.kr(fm2Ratio, controlLag);
+		fm1Amount = Lag.kr(fm1Amount.squared, controlLag);
+		fm2Amount = Lag.kr(fm2Amount.squared, controlLag);
+		waveShape = Lag.kr(waveShape, controlLag);
+		waveFolds = Lag.kr(waveFolds, controlLag);
+		atk = Lag.kr(atk, controlLag);
+		peak = Lag.kr(peak, controlLag);
+		dec = Lag.kr(dec, controlLag);
+		mod1Index = fm1Amount * 22;
+		mod1Freq = freq * fm1Ratio * LFNoise2.kr(freq: 0.1, mul: 0.001, add: 1);
+		mod1 = SinOsc.ar(freq: mod1Freq, phase: 0, mul: mod1Index * mod1Freq, add: 0);
+		mod2Index = fm2Amount * 12;
+		mod2Freq = freq * fm2Ratio * LFNoise2.kr(freq: 0.1, mul: 0.005, add: 1);
+		mod2 = SinOsc.ar(freq: mod2Freq, phase: 0, mul: mod2Index * mod2Freq, add: 0);
+		modFreq = freq + mod1 + mod2;
+		sinOsc = SinOsc.ar(freq: modFreq, phase: 0, mul: 0.5);
+		triOsc = VarSaw.ar(freq: modFreq, iphase: 0, width: 0.5, mul: 0.5);
+		additivePhase = LFSaw.ar(freq: modFreq, iphase: 1, mul: pi, add: pi);
+		additiveOsc = Mix.fill(i_numHarmonics, { |index|
+			var harmonic, harmonicFreq, harmonicCutoff, attenuation;
+			harmonic = index + 1;
+			harmonicFreq = freq * harmonic;
+			harmonicCutoff = i_nyquist - harmonicFreq;
+			attenuation = Select.kr(index, [1,
+				(harmonicCutoff - (harmonicFreq * 0.25) - harmonicFreq).expexp(0.000001, harmonicFreq * 0.5, 0.000001, 1)]);
+			(sin(additivePhase * harmonic % 2pi) / harmonic) * attenuation * (harmonic % 2 + waveShape.linlin(0.666666, 1, 0, 1)).min(1);
+		});
+		signal = LinSelectX.ar(waveShape * 3, [sinOsc, triOsc, additiveOsc]);
+		signal = Fold.ar(in: signal * (1 + (timbre * 0.5) + (waveFolds * 2)), lo: -0.5, hi: 0.5);
+		signal = LPF.ar(in: signal, freq: 12000);
+		signal = signal + PinkNoise.ar(mul: 0.003);
+		filterEnvVel = velocity.linlin(0, 1, 0.5, 1);
+		filterEnvLow = (peak * filterEnvVel).min(300);
+		asrEnvelope = EnvGen.ar(envelope: Env.new(levels: [0, 1, 0], times: [atk, dec], curve: -4, releaseNode: 1), gate: gate);
+		asrFilterFreq = asrEnvelope.linlin(0, 1, filterEnvLow, peak * filterEnvVel);
+		asrSignal = RLPF.ar(in: signal, freq: asrFilterFreq, rq: 0.95);
+		asrSignal = RLPF.ar(in: asrSignal, freq: asrFilterFreq, rq: 0.95);
+		asrSignal = asrSignal * EnvGen.ar(envelope: Env.asr(attackTime: atk, sustainLevel: 1, releaseTime: dec, curve: -4), gate: gate);
+		signal = asrSignal * velocity.linlin(0, 1, 0.2, 1);
+		signal = tanh(signal * pressure.linlin(0, 1, 1.5, 3) * amp).softclip;
+		signal = ~spread.(signal * enable, nchan, pan);
+		Out.ar(out, ~killbad.(signal * (1 - bypass) * wet));
+	}).add;
+
 	// ---- BAND: band / spectral window (IIR realization first version) ----
 	SynthDef(("band" ++ suf).asSymbol, { |out = 0, in = 0, centerHz = 800,
 		bandwidth = 400, gain = 0, mode = 0, freeze = 0, smear = 0,

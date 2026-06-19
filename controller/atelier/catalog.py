@@ -565,15 +565,51 @@ BEN = ModuleSpec(
 )
 
 
+# --------------------------------------------------------------------------- #
+# BUCHLOID — west-coast complex oscillator / FM voice (port of markwheeler/passersby)
+# --------------------------------------------------------------------------- #
+BUCHLOID = ModuleSpec(
+    type="BUCHLOID",
+    role="West-coast complex oscillator with FM, wave folding and resonant lowpass gate.",
+    node_meaning="Buchloid voice.",
+    synthdef="buchloid",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=4,
+    cpu_per_node=2.2,
+    gestures=["complex-osc", "fm", "wave-fold", "lpg"],
+    node_params=[
+        P("buchloid.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("buchloid.freq", "Freq", unit="Hz", rmin=20.0, rmax=2000.0, default=220.0, curve=Curve.EXP, musical=(40.0, 880.0), formatter="Hz"),
+        P("buchloid.glide", "Glide", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.3)),
+        P("buchloid.fm1Ratio", "FM1 Ratio", rmin=0.1, rmax=10.0, default=0.66, curve=Curve.EXP, musical=(0.5, 4.0)),
+        P("buchloid.fm2Ratio", "FM2 Ratio", rmin=0.1, rmax=20.0, default=3.3, curve=Curve.EXP, musical=(1.0, 8.0)),
+        P("buchloid.fm1Amount", "FM1 Amt", default=0.0, musical=(0.0, 0.5)),
+        P("buchloid.fm2Amount", "FM2 Amt", default=0.0, musical=(0.0, 0.5)),
+        P("buchloid.waveShape", "Wave Shape", default=0.0, musical=(0.0, 1.0)),
+        P("buchloid.waveFolds", "Wave Folds", rmin=0.0, rmax=3.0, default=0.0, musical=(0.0, 1.5)),
+        P("buchloid.timbre", "Timbre", default=0.0, musical=(0.0, 1.0)),
+        P("buchloid.attack", "Attack", unit="ms", rmin=3.0, rmax=8000.0, default=40.0, curve=Curve.EXP, formatter="ms", musical=(5.0, 1000.0)),
+        P("buchloid.peak", "Filter Peak", unit="Hz", rmin=100.0, rmax=10000.0, default=10000.0, curve=Curve.EXP, formatter="Hz", musical=(500.0, 8000.0)),
+        P("buchloid.decay", "Decay", unit="ms", rmin=3.0, rmax=8000.0, default=1000.0, curve=Curve.EXP, formatter="ms", musical=(100.0, 3000.0)),
+        P("buchloid.pressure", "Pressure", default=0.0, musical=(0.0, 1.0)),
+        P("buchloid.velocity", "Velocity", default=0.7, musical=(0.2, 1.0)),
+        P("buchloid.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.5, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.3, 0.9)),
+        P("buchloid.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[],
+)
+
+
 CATALOG: dict[str, ModuleSpec] = {
     m.type: m for m in (PLAY, GEN, BAND, PITCH, TIME, COMB, GAIN, SDLY, VERB,
-                        CLOUDS, RINGS, BEN, VIZ)
+                        CLOUDS, RINGS, BEN, BUCHLOID, VIZ)
 }
 
 # Ordered lanes as drawn in the page-2 schematic (Source Rack -> ... -> Gain),
 # extended with the stereo delay + reverb at the tail.
 DEFAULT_LANE_ORDER = ["PLAY", "GEN", "BAND", "PITCH", "TIME", "COMB", "GAIN",
-                      "SDLY", "VERB", "CLOUDS", "RINGS", "BEN", "VIZ"]
+                      "SDLY", "VERB", "CLOUDS", "RINGS", "BEN", "BUCHLOID", "VIZ"]
 
 
 def spec(module_type: str) -> ModuleSpec:
