@@ -628,15 +628,57 @@ ENV = ModuleSpec(
 )
 
 
+# --------------------------------------------------------------------------- #
+# GATE — signal-based rhythmic gate / chopper
+# --------------------------------------------------------------------------- #
+GATE = ModuleSpec(
+    type="GATE",
+    role="Clock-driven 8-step rhythmic gate: swing, jitter, probability, A/D shaping, invert/ducking and smoothing.",
+    node_meaning="Gate voice.",
+    synthdef="gate",
+    insert_capable=True,
+    generative_capable=False,
+    max_nodes=4,
+    cpu_per_node=1.5,
+    gestures=["gate", "chopper", "sequencer", "duck"],
+    node_params=[
+        P("gate.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("gate.freq", "Clock", unit="Hz", rmin=0.1, rmax=100.0, default=4.0, curve=Curve.EXP, formatter="Hz", musical=(0.5, 16.0)),
+        P("gate.phase", "Phase", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 1.0)),
+        P("gate.swing", "Swing", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.5)),
+        P("gate.duty", "Duty", rmin=0.01, rmax=0.99, default=0.5, musical=(0.2, 0.8)),
+        P("gate.attack", "Attack", unit="ms", rmin=0.1, rmax=500.0, default=5.0, curve=Curve.EXP, formatter="ms", musical=(1.0, 50.0)),
+        P("gate.decay", "Decay", unit="ms", rmin=0.1, rmax=1000.0, default=20.0, curve=Curve.EXP, formatter="ms", musical=(5.0, 200.0)),
+        P("gate.shape", "Shape", curve=Curve.ENUM, enum=["linear", "exp", "log"], default=0, randomize=RandomizePolicy.OFF),
+        P("gate.step0", "Step 1", rmin=0.0, rmax=1.0, default=1.0, musical=(0.0, 1.0)),
+        P("gate.step1", "Step 2", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 1.0)),
+        P("gate.step2", "Step 3", rmin=0.0, rmax=1.0, default=1.0, musical=(0.0, 1.0)),
+        P("gate.step3", "Step 4", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 1.0)),
+        P("gate.step4", "Step 5", rmin=0.0, rmax=1.0, default=1.0, musical=(0.0, 1.0)),
+        P("gate.step5", "Step 6", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 1.0)),
+        P("gate.step6", "Step 7", rmin=0.0, rmax=1.0, default=1.0, musical=(0.0, 1.0)),
+        P("gate.step7", "Step 8", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 1.0)),
+        P("gate.probability", "Probability", rmin=0.0, rmax=1.0, default=1.0, musical=(0.5, 1.0)),
+        P("gate.jitter", "Jitter", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.5)),
+        P("gate.wet", "Wet", rmin=0.0, rmax=1.0, default=1.0, musical=(0.0, 1.0)),
+        P("gate.invert", "Invert", curve=Curve.ENUM, enum=["off", "on"], default=0, randomize=RandomizePolicy.OFF),
+        P("gate.smoothing", "Smooth", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.5)),
+        P("gate.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=1.0, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.3, 1.0)),
+        P("gate.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[],
+)
+
+
 CATALOG: dict[str, ModuleSpec] = {
     m.type: m for m in (PLAY, GEN, BAND, PITCH, TIME, COMB, GAIN, SDLY, VERB,
-                        CLOUDS, RINGS, BEN, BUCHLOID, ENV, VIZ)
+                        CLOUDS, RINGS, BEN, BUCHLOID, ENV, GATE, VIZ)
 }
 
 # Ordered lanes as drawn in the page-2 schematic (Source Rack -> ... -> Gain),
 # extended with the stereo delay + reverb at the tail.
 DEFAULT_LANE_ORDER = ["PLAY", "GEN", "BAND", "PITCH", "TIME", "COMB", "GAIN",
-                      "SDLY", "VERB", "CLOUDS", "RINGS", "BEN", "BUCHLOID", "ENV", "VIZ"]
+                      "SDLY", "VERB", "CLOUDS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "VIZ"]
 
 
 def spec(module_type: str) -> ModuleSpec:

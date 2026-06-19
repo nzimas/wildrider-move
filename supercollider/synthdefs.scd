@@ -227,6 +227,49 @@
 		sig = ~spread.(sig * enable, nchan, pan);
 		Out.ar(out, ~killbad.(XFade2.ar(dry, sig, (wet * 2 - 1)) * (1 - bypass) + (dry * bypass)));
 	}).add;
+
+	// ---- GATE: signal-based rhythmic gate / chopper ----
+	// Clock-driven 8-step gate with swing, jitter, probability, attack/decay
+	// shaping, invert (ducking), and smoothing. Step values 0..1 scale each
+	// step's gate depth; probability globally decides whether a step fires.
+	SynthDef(("gate" ++ suf).asSymbol, { |out = 0, in = 0,
+		freq = 4, phase = 0, swing = 0, duty = 0.5,
+		attack = 5, decay = 20, shape = 0,
+		step0 = 1, step1 = 0, step2 = 1, step3 = 0,
+		step4 = 1, step5 = 0, step6 = 1, step7 = 0,
+		probability = 1, jitter = 0,
+		wet = 1, invert = 0, smoothing = 0,
+		amp = 1, pan = 0,
+		bypass = 0, enable = 1|
+		var dry = In.ar(in, nchan);
+		var period = 1.0 / freq.max(0.001);
+		var curve = Select.kr(shape.clip(0, 2), [0, -4, 4]);
+		var rawTrig = Impulse.ar(freq, phase);
+		var jitterAmt = jitter * period * 0.5;
+		var jitteredTrig = DelayC.ar(rawTrig, period, TRand.ar(0, jitterAmt, rawTrig));
+		var stepIdx = PulseCount.ar(jitteredTrig) % 8;
+		var isOdd = stepIdx % 2;
+		var swingDelay = K2A.ar(swing * period * 0.5);
+		var swungTrig = DelayC.ar(jitteredTrig, period * 0.5, Select.ar(isOdd, [DC.ar(0), swingDelay]));
+		var finalStep = PulseCount.ar(swungTrig) % 8;
+		var gateLevel = Select.ar(finalStep, [K2A.ar(step0), K2A.ar(step1), K2A.ar(step2), K2A.ar(step3), K2A.ar(step4), K2A.ar(step5), K2A.ar(step6), K2A.ar(step7)]);
+		var probGate = Latch.ar((TRand.ar(0, 1, swungTrig) < probability), swungTrig);
+		var gateTime = (duty * period).max(0.001);
+		var env = EnvGen.ar(
+			Env.new(
+				[0, 1, 1, 0],
+				[attack * 0.001, gateTime, decay * 0.001],
+				curve
+			),
+			swungTrig
+		) * gateLevel * probGate;
+		var invGate = Select.ar(invert, [env, 1 - env]);
+		var cutoff = (1 - smoothing).linexp(0, 1, 20, 20000).clip(20, 20000);
+		var smoothGate = LPF.ar(invGate, cutoff);
+		var sig = dry * smoothGate * amp * enable;
+		sig = ~spread.(sig, nchan, pan);
+		Out.ar(out, ~killbad.(XFade2.ar(dry, sig, (wet * 2 - 1)) * (1 - bypass) + (dry * bypass)));
+	}).add;
 	// ---- BAND: band / spectral window (IIR realization first version) ----
 	SynthDef(("band" ++ suf).asSymbol, { |out = 0, in = 0, centerHz = 800,
 		bandwidth = 400, gain = 0, mode = 0, freeze = 0, smear = 0,
