@@ -159,9 +159,8 @@ main {
 .param .readout { font-size: var(--readout); text-align: right; }
 .param input[type=range] { width: 100%; accent-color: var(--fill); }
 .param select { width: 100%; }
-.param .lk, .param .md, .param .dice { padding: 1px 5px; font-size: 10px; }
+.param .lk, .param .dice { padding: 1px 5px; font-size: 10px; }
 .param .lk.on { background: var(--warn); color: #000; }
-.param .md.on { background: var(--accent); color: #000; }
 .param .dice:hover { background: var(--good); color: #000; }
 
 /* Randomizer — the centrepiece. */

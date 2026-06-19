@@ -282,16 +282,10 @@ function mkParam(m, meta, node) {
     row.append(el("span", "readout", slot.display));
   }
 
-  const lk = el("button", "lk" + (slot.locked ? " on" : ""), "L");
+  const lk = el("button", "lk" + (slot.locked ? " on" : ""), slot.locked ? "🔒" : "🔓");
   lk.title = "Lock: exclude from randomize / scene recall";
   lk.onclick = () => send("set_lock", { module: m.id, param: meta.id, node, locked: !slot.locked });
   row.append(lk);
-
-  const md = el("button", "md", "~");
-  md.title = meta.modulatable ? "Modulate this parameter (polyadic)" : "Not modulatable";
-  md.disabled = !meta.modulatable;
-  md.onclick = () => openRouteModal(m.id, meta.id);
-  row.append(md);
 
   const dice = el("button", "dice", "🎲");
   dice.title = "Randomize this parameter (uses the randomizer amount)";
@@ -487,34 +481,6 @@ $("btn-add-src").onclick = () => {
   send("add_mod_source", { id, type, label: type.split("_")[0] });
 };
 
-function openRouteModal(moduleId, paramId) {
-  const card = $("modal-card"); card.innerHTML = "";
-  card.append(el("h3", null, `Modulate ${moduleId}.${paramId.split(".").pop()}`));
-  const srcSel = el("select");
-  for (const s of (S.mod_sources || [])) { const o = el("option", null, s.label || s.id); o.value = s.id; srcSel.append(o); }
-  if (!(S.mod_sources || []).length) { const o = el("option", null, "(add a source first)"); o.value = ""; srcSel.append(o); }
-  const scopeSel = el("select");
-  ["allDecorrelated", "allSame", "alternating", "selected", "spatiallyWeighted", "randomSubset", "onePerNode"]
-    .forEach((v) => { const o = el("option", null, v); o.value = v; scopeSel.append(o); });
-  const depth = el("input"); depth.type = "number"; depth.value = 0.5; depth.step = 0.05; depth.min = -2; depth.max = 2;
-
-  card.append(rowLabel("source", srcSel));
-  card.append(rowLabel("node scope", scopeSel));
-  card.append(rowLabel("depth (-2..2)", depth));
-  const actions = el("div", "row");
-  const ok = el("button", "active", "connect");
-  ok.onclick = () => {
-    if (!srcSel.value) { closeModal(); return; }
-    send("add_mod_route", {
-      id: "route_" + Date.now(), source: srcSel.value, module: moduleId,
-      param: paramId, scope: scopeSel.value, depth: parseFloat(depth.value),
-    });
-    closeModal();
-  };
-  const cancel = el("button", null, "cancel"); cancel.onclick = closeModal;
-  actions.append(cancel, ok); card.append(actions);
-  $("modal").hidden = false;
-}
 function rowLabel(label, control) { const r = el("div", "row"); r.append(el("label", null, label), control); return r; }
 function closeModal() { $("modal").hidden = true; }
 
