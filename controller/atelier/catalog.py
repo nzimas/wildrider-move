@@ -531,16 +531,49 @@ RINGS = ModuleSpec(
     ],
 )
 
+# --------------------------------------------------------------------------- #
+# BEN — Benjolis-inspired chaotic oscillator (port of scazan/benjolis)
+# --------------------------------------------------------------------------- #
+BEN = ModuleSpec(
+    type="BEN",
+    role="Chaotic twin-oscillator / rungler voice inspired by Rob Hordijk's Benjolin.",
+    node_meaning="Benjolis voice.",
+    synthdef="ben",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=4,
+    cpu_per_node=1.6,
+    gestures=["rungler-chaos", "pwm-scream", "filter-sweep", "self-patching"],
+    node_params=[
+        P("ben.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("ben.freq1", "Osc 1 Freq", unit="Hz", rmin=20.0, rmax=2000.0, default=40.0, curve=Curve.EXP, musical=(30.0, 300.0), formatter="Hz"),
+        P("ben.freq2", "Osc 2 Freq", unit="Hz", rmin=0.1, rmax=200.0, default=4.0, curve=Curve.EXP, musical=(0.5, 30.0), formatter="Hz"),
+        P("ben.scale", "Rungler Scale", default=1.0, musical=(0.2, 1.0)),
+        P("ben.rungler1", "Rungler 1", default=0.16, musical=(0.0, 0.5)),
+        P("ben.rungler2", "Rungler 2", default=0.0, musical=(0.0, 0.5)),
+        P("ben.runglerFilt", "Filter Rungler", default=9.0, musical=(0.0, 24.0)),
+        P("ben.loop", "Loop", default=0.0, musical=(0.0, 1.0)),
+        P("ben.filtFreq", "Filter Freq", unit="Hz", rmin=20.0, rmax=12000.0, default=40.0, curve=Curve.EXP, musical=(40.0, 4000.0), formatter="Hz"),
+        P("ben.q", "Resonance", default=0.82, musical=(0.1, 0.98)),
+        P("ben.gain", "Filter Gain", rmin=0.0, rmax=4.0, default=1.0, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS),
+        P("ben.filterType", "Filter Type", curve=Curve.ENUM, enum=["lowpass", "highpass", "stateVar", "dfm1"], default=0, modulatable=False),
+        P("ben.outSignal", "Output", curve=Curve.ENUM, enum=["tri1", "pulse1", "tri2", "pulse2", "pwm", "rungler", "filter"], default=6, modulatable=False),
+        P("ben.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.5, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.3, 0.9)),
+        P("ben.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[],
+)
+
 
 CATALOG: dict[str, ModuleSpec] = {
     m.type: m for m in (PLAY, GEN, BAND, PITCH, TIME, COMB, GAIN, SDLY, VERB,
-                        CLOUDS, RINGS, VIZ)
+                        CLOUDS, RINGS, BEN, VIZ)
 }
 
 # Ordered lanes as drawn in the page-2 schematic (Source Rack -> ... -> Gain),
 # extended with the stereo delay + reverb at the tail.
 DEFAULT_LANE_ORDER = ["PLAY", "GEN", "BAND", "PITCH", "TIME", "COMB", "GAIN",
-                      "SDLY", "VERB", "CLOUDS", "RINGS", "VIZ"]
+                      "SDLY", "VERB", "CLOUDS", "RINGS", "BEN", "VIZ"]
 
 
 def spec(module_type: str) -> ModuleSpec:
