@@ -82,137 +82,108 @@ class ModuleSpec:
 
 
 # --------------------------------------------------------------------------- #
-# 5.1 PLAY — sampler / live recorder / virtual tape / region looper / resampler
+# FBANK — 10-band resonant stereo filterbank (Erica Synths Resonant Filterbank)
 # --------------------------------------------------------------------------- #
-PLAY = ModuleSpec(
-    type="PLAY",
-    role="Sampler, live recorder, virtual tape, region looper, resampler.",
-    node_meaning="Playhead / region reader.",
-    synthdef="play",
+_FBANK_FREQS = ["29 Hz", "61 Hz", "115 Hz", "218 Hz", "411 Hz",
+                "777 Hz", "1.5 kHz", "2.8 kHz", "5.2 kHz", "11 kHz"]
+
+
+def _fbank_global_params() -> list[ParamMetadata]:
+    ps: list[ParamMetadata] = []
+    # ten band boost/cut sliders — 1.0 = flat (centre detent), 0 = full cut, 2 = boost
+    for i, lbl in enumerate(_FBANK_FREQS, start=1):
+        ps.append(P(f"fbank.gain{i}", lbl, rmin=0.0, rmax=2.0, default=1.0,
+                    formatter="float2", musical=(0.3, 1.8)))
+    ps += [
+        P("fbank.resonance", "Resonance", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR,
+          formatter="percent1", danger=DangerClass.FEEDBACK, musical=(-0.7, 0.7)),
+        P("fbank.inputGain", "Input Gain", unit="dB", rmin=0.0, rmax=24.0, default=0.0,
+          formatter="dBValue", musical=(0.0, 12.0)),
+        P("fbank.spread", "Spread", rmin=0.0, rmax=1.0, default=0.0, formatter="percent1", musical=(0.0, 0.8)),
+        P("fbank.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=1.0, curve=Curve.DB,
+          formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.5, 1.1)),
+    ]
+    # per-band feedback-loop enables — choose which bands ring / self-oscillate.
+    # ON by default (the resonance/feedback character is the whole point); on/off is
+    # fully randomizable at every level (per-param 🎲, section, module, patch, guided).
+    for i, lbl in enumerate(_FBANK_FREQS, start=1):
+        ps.append(P(f"fbank.fb{i}", f"FB {lbl}", curve=Curve.ENUM, enum=["off", "on"],
+                    default=1, randomize=RandomizePolicy.WIDE, modulatable=False))
+    return ps
+
+
+FBANK = ModuleSpec(
+    type="FBANK",
+    role="10-band resonant stereo filterbank: per-band boost/cut, self-oscillating resonance feedback, spectral spread.",
+    node_meaning="Resonant filterbank (single instance).",
+    synthdef="fbank",
     insert_capable=True,
-    generative_capable=True,
-    max_nodes=16,
-    cpu_per_node=1.2,
-    gestures=["capture", "overdub", "freeze", "scan", "splice",
-              "throw-to-buffer", "granular-by-region"],
-    node_params=[
-        P("play.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
-        P("play.bufferID", "Buffer", curve=Curve.ENUM, enum=["A", "B", "C", "D"], default=0, randomize=RandomizePolicy.OFF),
-        P("play.regionStart", "Region Start", unit="%", formatter="percent1", default=0.0, randomize=RandomizePolicy.WIDE),
-        P("play.regionLength", "Region Length", unit="%", formatter="percent1", default=1.0, musical=(0.05, 1.0)),
-        P("play.rate", "Rate", rmin=-4.0, rmax=4.0, default=1.0, curve=Curve.BIPOLAR, musical=(0.5, 2.0), formatter="float2"),
-        P("play.rateMode", "Rate Mode", curve=Curve.ENUM, enum=["absolute", "ratio", "tempo"], default=0, randomize=RandomizePolicy.OFF),
-        P("play.direction", "Direction", curve=Curve.ENUM, enum=["forward", "reverse", "alternate"], default=0),
-        P("play.phaseOffset", "Phase", unit="%", formatter="percent1", default=0.0),
-        P("play.loopMode", "Loop", curve=Curve.ENUM, enum=["oneshot", "loop", "pingpong", "scrub"], default=1),
-        P("play.envAttack", "Attack", unit="ms", rmin=0.0, rmax=4000.0, default=5.0, curve=Curve.EXP, formatter="ms"),
-        P("play.envRelease", "Release", unit="ms", rmin=0.0, rmax=8000.0, default=50.0, curve=Curve.EXP, formatter="ms"),
-        P("play.envSlant", "Env Slant", rmin=0.0, rmax=1.0, default=0.5),
-        P("play.xfade", "Loop Xfade", unit="ms", rmin=0.0, rmax=2000.0, default=20.0, curve=Curve.EXP, formatter="ms"),
-        P("play.jitterTime", "Jitter Time", unit="ms", rmin=0.0, rmax=500.0, default=0.0, formatter="ms"),
-        P("play.jitterRate", "Jitter Rate", unit="Hz", rmin=0.0, rmax=50.0, default=0.0, formatter="Hz"),
-        P("play.startScatter", "Start Scatter", unit="%", formatter="percent1", default=0.0),
-        P("play.grainWindow", "Grain Window", unit="ms", rmin=1.0, rmax=2000.0, default=120.0, curve=Curve.EXP, formatter="ms"),
-        P("play.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.8, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.45, 0.9)),
-        P("play.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
-    ],
-    global_params=[
-        P("play.captureSource", "Capture Source", curve=Curve.ENUM, enum=["input", "master", "lane", "bus"], default=0, randomize=RandomizePolicy.OFF, modulatable=False),
-        P("play.captureMode", "Capture Mode", curve=Curve.ENUM, enum=["replace", "append", "overdub", "ring"], default=0, randomize=RandomizePolicy.OFF, modulatable=False),
-        P("play.preRoll", "Pre-roll", unit="ms", rmin=0.0, rmax=2000.0, default=0.0, formatter="ms", modulatable=False),
-        P("play.normalizeCapture", "Normalize", curve=Curve.ENUM, enum=["off", "on"], default=0, modulatable=False),
-        P("play.syncToTempo", "Sync To Tempo", curve=Curve.ENUM, enum=["off", "on"], default=0, modulatable=False),
-        P("play.quantizeRegion", "Quantize Region", curve=Curve.ENUM, enum=["off", "1/16", "1/8", "1/4", "bar"], default=0),
-        P("play.maxVoices", "Max Voices", curve=Curve.ENUM, enum=[str(n) for n in range(1, 17)], default=7, randomize=RandomizePolicy.OFF, danger=DangerClass.CPU, modulatable=False),
-        P("play.interpolationMode", "Interpolation", curve=Curve.ENUM, enum=["none", "linear", "cubic"], default=2, modulatable=False),
-        P("play.antiClick", "Anti-Click", unit="ms", rmin=0.0, rmax=50.0, default=3.0, formatter="ms", modulatable=False),
-    ],
+    generative_capable=True,    # self-oscillates with resonance (no-input mixing)
+    max_nodes=1,
+    cpu_per_node=2.2,
+    gestures=["graphic-eq", "resonate", "self-oscillate", "no-input-mix", "spectral-spread"],
+    node_params=[],
+    global_params=_fbank_global_params(),
 )
 
 # --------------------------------------------------------------------------- #
-# 5.2 GEN — continuously sounding generator bank
+# 5.2 DX7 — exact 6-operator FM voice (port of everythingwillbetakenaway/
+# DX7-Supercollider). Each node is one DX7 voice playing a held note; the whole
+# DX7 envelope/algorithm math runs in sclang from the loaded preset bank. A
+# bundled 16,384-preset factory bank ships with the engine; user .syx banks load
+# at runtime. Param ids match the SynthDef arg names so the engine receives them.
 # --------------------------------------------------------------------------- #
-GEN = ModuleSpec(
-    type="GEN",
-    role="Continuous generator bank: drones, impulses, noise, excitation.",
-    node_meaning="Oscillator / noise / exciter voice.",
-    synthdef="gen",
+def _dx7_operator_params() -> list[ParamMetadata]:
+    """The per-operator timbre controls (manual mode). Six operators, each with
+    frequency ratio (coarse/fine/detune) and output level — these, with the
+    algorithm + feedback, are what shape the FM spectrum. All randomizable +
+    modulatable. Op1 is the default carrier; op2 modulates it on algorithm 1."""
+    out: list[ParamMetadata] = []
+    for n in range(1, 7):
+        lvl = 99.0 if n == 1 else (75.0 if n == 2 else 0.0)
+        out += [
+            P(f"dx7.op{n}Coarse", f"Op{n} Ratio", rmin=0.0, rmax=31.0, default=1.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.SAFE, musical=(0.0, 14.0)),
+            P(f"dx7.op{n}Fine", f"Op{n} Fine", rmin=0.0, rmax=99.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE),
+            P(f"dx7.op{n}Detune", f"Op{n} Detune", rmin=0.0, rmax=14.0, default=7.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.SAFE, musical=(3.0, 11.0)),
+            P(f"dx7.op{n}Level", f"Op{n} Level", rmin=0.0, rmax=99.0, default=lvl, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE, musical=(0.0, 99.0)),
+        ]
+    return out
+
+
+DX7 = ModuleSpec(
+    type="DX7",
+    role="Yamaha DX7 6-operator FM voice: 16,384 factory presets, or a hand-tweakable manual patch.",
+    node_meaning="DX7 FM voice (one held note).",
+    synthdef="dx7",
     insert_capable=False,
     generative_capable=True,
-    max_nodes=32,
-    cpu_per_node=0.8,
-    gestures=["stack", "swarm", "excite-combs", "tune-cloud", "mutate-spectrum"],
+    max_nodes=8,
+    cpu_per_node=2.6,
+    gestures=["fm-bank", "preset-morph", "detuned-stack", "arp"],
     node_params=[
-        P("gen.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
-        P("gen.waveform", "Waveform", curve=Curve.ENUM, enum=["sine", "tri", "saw", "pulse", "fold", "noise", "impulse", "fm"], default=0),
-        P("gen.freq", "Freq", unit="Hz", rmin=20.0, rmax=12000.0, default=110.0, curve=Curve.EXP, musical=(40.0, 880.0), formatter="Hz"),
-        P("gen.ratio", "Ratio", rmin=0.25, rmax=16.0, default=1.0, curve=Curve.EXP, musical=(0.5, 8.0)),
-        P("gen.detune", "Detune", unit="semitone", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, formatter="semitone"),
-        P("gen.phase", "Phase", unit="%", formatter="percent1", default=0.0),
-        P("gen.pulseWidth", "Pulse Width", default=0.5, musical=(0.1, 0.9)),
-        P("gen.fold", "Fold", rmin=1.0, rmax=8.0, default=1.0, curve=Curve.EXP, musical=(1.0, 4.0)),
-        P("gen.noiseColor", "Noise Color", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
-        # DX7-style 6-operator FM voice (FM7.ar, the heart of the DX7-Supercollider
-        # project). Active when waveform == "fm".
-        P("gen.fmRatioA", "FM Ratio A", rmin=0.25, rmax=16.0, default=1.0, curve=Curve.EXP, musical=(1.0, 7.0)),
-        P("gen.fmRatioB", "FM Ratio B", rmin=0.25, rmax=16.0, default=2.0, curve=Curve.EXP, musical=(1.0, 7.0)),
-        P("gen.fmRatioC", "FM Ratio C", rmin=0.25, rmax=16.0, default=3.0, curve=Curve.EXP, musical=(1.0, 7.0)),
-        P("gen.fmIndex", "FM Index", rmin=0.0, rmax=12.0, default=2.0, curve=Curve.EXP, musical=(0.8, 5.0)),
-        P("gen.fmFeedback", "FM Feedback", rmin=0.0, rmax=2.0, default=0.0, musical=(0.0, 0.6)),
-        P("gen.chaosAmount", "Chaos", default=0.0, musical=(0.0, 0.4)),
-        P("gen.driftDepth", "Drift Depth", unit="semitone", rmin=0.0, rmax=2.0, default=0.0, formatter="semitone", musical=(0.0, 0.5)),
-        P("gen.driftRate", "Drift Rate", unit="Hz", rmin=0.01, rmax=20.0, default=0.3, curve=Curve.EXP, formatter="Hz"),
-        P("gen.gate", "Gate", curve=Curve.ENUM, enum=["closed", "open"], default=1, rate=Rate.TRIGGER, randomize=RandomizePolicy.OFF),
-        P("gen.attack", "Attack", unit="ms", rmin=0.0, rmax=8000.0, default=200.0, curve=Curve.EXP, formatter="ms", musical=(5.0, 2000.0)),
-        P("gen.release", "Release", unit="ms", rmin=0.0, rmax=16000.0, default=800.0, curve=Curve.EXP, formatter="ms", musical=(50.0, 4000.0)),
-        P("gen.duckAmount", "Duck", default=0.0),
-        P("gen.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.5, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.35, 0.85)),
-        P("gen.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+        P("dx7.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("dx7.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
+        P("dx7.velocity", "Velocity", rmin=0.0, rmax=127.0, default=100.0, rate=Rate.DISCRETE, formatter="int", musical=(40.0, 120.0)),
+        P("dx7.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.7, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.35, 0.9)),
+        P("dx7.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
     ],
     global_params=[
-        P("gen.tuningRoot", "Tuning Root", unit="Hz", rmin=20.0, rmax=2000.0, default=110.0, curve=Curve.EXP, formatter="Hz", modulatable=False),
-        P("gen.scaleMode", "Scale", curve=Curve.ENUM, enum=["free", "chromatic", "major", "minor", "wholetone", "harmonic"], default=0),
-        P("gen.stackMode", "Stack", curve=Curve.ENUM, enum=["unison", "octaves", "harmonics", "spread"], default=0),
-        P("gen.voiceDistribution", "Voice Dist", curve=Curve.ENUM, enum=["unison", "spread", "random"], default=1),
-        P("gen.continuousGate", "Continuous Gate", curve=Curve.ENUM, enum=["off", "on"], default=1, modulatable=False),
-        P("gen.duckResponse", "Duck Response", unit="ms", rmin=1.0, rmax=1000.0, default=80.0, curve=Curve.EXP, formatter="ms"),
-        P("gen.randomPitchPolicy", "Random Pitch", curve=Curve.ENUM, enum=["off", "inScale", "free"], default=1),
-    ],
-)
-
-# --------------------------------------------------------------------------- #
-# 5.3 BAND — spectral / band sculpting, isolator, notch field, spatialized bands
-# --------------------------------------------------------------------------- #
-BAND = ModuleSpec(
-    type="BAND",
-    role="Spectral/band sculpting, isolator, notch field, spatialized bands.",
-    node_meaning="Band or spectral window.",
-    synthdef="band",
-    insert_capable=True,
-    generative_capable=False,
-    max_nodes=24,
-    cpu_per_node=1.5,
-    gestures=["draw-spectral-mask", "isolate", "invert", "band-randomize"],
-    node_params=[
-        P("band.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
-        P("band.centerHz", "Center", unit="Hz", rmin=20.0, rmax=18000.0, default=800.0, curve=Curve.EXP, musical=(60.0, 8000.0), formatter="Hz"),
-        P("band.bandwidth", "Bandwidth", unit="Hz", rmin=10.0, rmax=8000.0, default=400.0, curve=Curve.EXP, formatter="Hz", musical=(300.0, 4000.0)),
-        P("band.gain", "Gain", unit="dB", rmin=-60.0, rmax=18.0, default=0.0, curve=Curve.LINEAR, formatter="dBValue", danger=DangerClass.LOUDNESS, musical=(-9.0, 6.0)),
-        P("band.slope", "Slope", rmin=0.0, rmax=1.0, default=0.5),
-        P("band.bump", "Bump", rmin=0.0, rmax=1.0, default=0.0),
-        P("band.mode", "Mode", curve=Curve.ENUM, enum=["pass", "notch", "shelf", "isolate"], default=0),
-        P("band.freeze", "Freeze", curve=Curve.ENUM, enum=["off", "on"], default=0, rate=Rate.TRIGGER),
-        P("band.smear", "Smear", default=0.0),
-        P("band.spatialPos", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
-    ],
-    global_params=[
-        P("band.engineMode", "Engine", curve=Curve.ENUM, enum=["IIR", "FIR", "FFT"], default=0, randomize=RandomizePolicy.OFF, danger=DangerClass.CPU, modulatable=False),
-        P("band.fftSize", "FFT Size", curve=Curve.ENUM, enum=["512", "1024", "2048", "4096"], default=1, danger=DangerClass.CPU, modulatable=False),
-        P("band.overlap", "Overlap", curve=Curve.ENUM, enum=["2", "4", "8"], default=1, danger=DangerClass.CPU, modulatable=False),
-        P("band.window", "Window", curve=Curve.ENUM, enum=["hann", "hamming", "blackman"], default=0, modulatable=False),
-        P("band.maskInvert", "Mask Invert", curve=Curve.ENUM, enum=["off", "on"], default=0),
-        P("band.preserveLoudness", "Preserve Loudness", curve=Curve.ENUM, enum=["off", "on"], default=1),
-        P("band.latencyMode", "Latency", curve=Curve.ENUM, enum=["live", "balanced", "highQuality"], default=1, modulatable=False),
+        # Voice source: "factory" picks one of 16,384 bundled presets; "manual"
+        # builds the voice live from the operator/LFO controls below.
+        P("dx7.mode", "Mode", curve=Curve.ENUM, enum=["factory", "manual"], default=0, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("dx7.preset", "Preset", rmin=0.0, rmax=16383.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE),
+        P("dx7.transpose", "Transpose", unit="semitone", rmin=-24.0, rmax=24.0, default=0.0, rate=Rate.DISCRETE, formatter="semitone", randomize=RandomizePolicy.SAFE, musical=(-12.0, 12.0)),
+        # DX7 is a pure (drone) sound source: timing/dynamics come from downstream
+        # ENV / GATE modules and (future) MIDI generators, not an internal clock.
+        # Manual-mode timbre controls (inert in factory mode).
+        P("dx7.algorithm", "Algorithm", rmin=0.0, rmax=31.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE, musical=(0.0, 31.0)),
+        P("dx7.feedback", "Feedback", rmin=0.0, rmax=7.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE, musical=(0.0, 7.0)),
+        P("dx7.lfoRate", "LFO Rate", rmin=0.0, rmax=99.0, default=35.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE),
+        P("dx7.lfoWave", "LFO Wave", curve=Curve.ENUM, enum=["triangle", "saw down", "saw up", "square", "sine", "s&h"], default=0, randomize=RandomizePolicy.WIDE),
+        P("dx7.lfoPMD", "LFO Pitch Mod", rmin=0.0, rmax=99.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.SAFE, musical=(0.0, 40.0)),
+        P("dx7.lfoAMD", "LFO Amp Mod", rmin=0.0, rmax=99.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.SAFE, musical=(0.0, 50.0)),
+        P("dx7.lfoPMS", "LFO Pitch Sens", rmin=0.0, rmax=7.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.SAFE, musical=(0.0, 5.0)),
+        *_dx7_operator_params(),
     ],
 )
 
@@ -704,15 +675,74 @@ PLAITS = ModuleSpec(
 )
 
 
+# --------------------------------------------------------------------------- #
+# DISTORT — versatile multi-stage distortion / saturation / waveshaper
+# --------------------------------------------------------------------------- #
+DISTORT = ModuleSpec(
+    type="DISTORT",
+    role="Multi-algorithm distortion: tube warmth to wavefolding, bitcrush and screaming feedback.",
+    node_meaning="Distortion / waveshaper stage (stack for parallel characters).",
+    synthdef="distort",
+    insert_capable=True,
+    generative_capable=False,
+    max_nodes=4,
+    cpu_per_node=1.7,
+    gestures=["saturate", "fuzz", "wavefold", "bitcrush", "scream", "parallel-texture"],
+    node_params=[
+        P("distort.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("distort.drive", "Drive", rmin=1.0, rmax=64.0, default=2.0, curve=Curve.EXP, musical=(1.5, 24.0)),
+        P("distort.type", "Type", curve=Curve.ENUM, enum=["tube", "soft", "fuzz", "fold", "wrap", "diode", "sine", "cheby"], default=0),
+        P("distort.bias", "Bias", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.6)),
+        P("distort.fold", "Fold", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.8)),
+        P("distort.tone", "Tone", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.6, 0.7)),
+        P("distort.crush", "Bit Crush", rmin=1.0, rmax=24.0, default=24.0, rate=Rate.DISCRETE, formatter="int", musical=(5.0, 24.0)),
+        P("distort.downsample", "Downsample", rmin=1.0, rmax=64.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(1.0, 16.0)),
+        P("distort.feedback", "Feedback", rmin=0.0, rmax=0.98, default=0.0, musical=(0.0, 0.6), danger=DangerClass.FEEDBACK, formatter="percent1"),
+        P("distort.lowCut", "Low Cut", unit="Hz", rmin=20.0, rmax=2000.0, default=20.0, curve=Curve.EXP, formatter="Hz", musical=(20.0, 400.0)),
+        P("distort.highCut", "High Cut", unit="Hz", rmin=200.0, rmax=19000.0, default=18000.0, curve=Curve.EXP, formatter="Hz", musical=(2500.0, 16000.0)),
+        P("distort.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.7, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.35, 0.9)),
+        P("distort.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[],
+)
+
+
+# --------------------------------------------------------------------------- #
+# SEQ — MIDI sequencer / clock source (control-only; drives modules over the MIDI
+# graph). No audio synth, no DSP params: its bespoke clock + Turing-machine lanes
+# live in the SeqEngine (seq.py) and are edited via dedicated commands/UI. Lanes
+# are built dynamically from whatever modules its MIDI-out is connected to.
+# --------------------------------------------------------------------------- #
+SEQ = ModuleSpec(
+    type="SEQ",
+    role="MIDI sequencer & clock: Turing-machine note + CC lanes, polymetric, driving connected modules.",
+    node_meaning="Sequencer (control source).",
+    synthdef="seq",
+    insert_capable=False,
+    generative_capable=False,
+    max_nodes=1,
+    is_audio=False,
+    cpu_per_node=0.0,
+    gestures=["turing-machine", "polymeter", "cc-lanes", "clock"],
+    node_params=[],
+    # Global, modulatable clock controls (the SeqEngine reads these each tick, so the
+    # module-LFO bank can wobble tempo / thin out density / freeze-and-evolve mutation).
+    global_params=[
+        P("seq.tempo", "Tempo", unit="bpm", rmin=20.0, rmax=300.0, default=120.0, formatter="float2", musical=(70.0, 170.0)),
+        P("seq.density", "Density", rmin=0.0, rmax=2.0, default=1.0, formatter="percent0", musical=(0.4, 1.4)),
+        P("seq.mutation", "Mutation", rmin=0.0, rmax=2.0, default=1.0, formatter="percent0", musical=(0.0, 1.5)),
+    ],
+)
+
+
 CATALOG: dict[str, ModuleSpec] = {
-    m.type: m for m in (PLAY, GEN, BAND, PITCH, TIME, COMB, GAIN, SDLY, VERB,
-                        CLOUDS, RINGS, BEN, BUCHLOID, ENV, GATE, PLAITS, VIZ)
+    m.type: m for m in (SEQ, DX7, FBANK, PITCH, TIME, COMB, GAIN, SDLY, VERB,
+                        CLOUDS, RINGS, BEN, BUCHLOID, ENV, GATE, PLAITS, DISTORT, VIZ)
 }
 
-# Ordered lanes as drawn in the page-2 schematic (Source Rack -> ... -> Gain),
-# extended with the stereo delay + reverb at the tail.
-DEFAULT_LANE_ORDER = ["PLAY", "GEN", "BAND", "PITCH", "TIME", "COMB", "GAIN",
-                      "SDLY", "VERB", "CLOUDS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "PLAITS", "VIZ"]
+# Ordered lanes (source -> processors -> spatial tail).
+DEFAULT_LANE_ORDER = ["SEQ", "DX7", "FBANK", "PITCH", "TIME", "COMB", "GAIN",
+                      "SDLY", "VERB", "CLOUDS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "PLAITS", "DISTORT", "VIZ"]
 
 
 def spec(module_type: str) -> ModuleSpec:

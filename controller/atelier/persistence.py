@@ -34,6 +34,8 @@ def patch_to_dict(state: StateManager) -> dict[str, Any]:
         "spatial": p.spatial.to_dict(),
         "lanes": [ln.to_dict() for ln in p.lanes.values()],
         "connections": list(p.connections),
+        "midi_connections": list(p.midi_connections),
+        "seq": state.seq.to_dict(),
         "modules": [m.to_dict() for m in p.modules.values()],
         "feedback_edges": [fb.to_dict() for fb in p.feedback_edges.values()],
         "recorders": [r.to_dict() for r in p.recorders.values()],
@@ -95,6 +97,7 @@ def patch_from_dict(state: StateManager, d: dict[str, Any]) -> None:
     for md in d.get("modules", []):
         p.modules[md["id"]] = ModuleInstance.from_dict(md)
     p.connections = list(d.get("connections", []))
+    p.midi_connections = list(d.get("midi_connections", []))
     p.feedback_edges = {fb["id"]: FeedbackEdge(**fb) for fb in d.get("feedback_edges", [])}
     p.recorders = {r["id"]: Recorder(**r) for r in d.get("recorders", [])} or p.recorders
 
@@ -118,6 +121,7 @@ def patch_from_dict(state: StateManager, d: dict[str, Any]) -> None:
     for m in p.modules.values():
         state._rebuild_per_module_lfos(m)
     state.scenes.load_list(d.get("scenes", []))
+    state.seq.load_dict(d.get("seq", {}))
     if "control" in d:
         state.control.load_dict(d["control"])
     # rebuild the DSP graph from the freshly loaded authoritative state

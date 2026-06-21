@@ -18,6 +18,7 @@
 ~ctrlPort = ("CONTROLLER_PORT".getenv ? "57140").asInteger;
 ~nchan = 2;
 ~modules = IdentityDictionary.new;
+~dx7mods = IdentityDictionary.new;  // mid -> DX7 voice state (vr, mod buses, LFO, per-node note/vel)
 ~lanes = IdentityDictionary.new;   // laneIndex -> List of module ids (in order)
 ~feedback = IdentityDictionary.new;
 ~built = false;
@@ -95,6 +96,11 @@
 	s.options.memSize = 256 * 1024;
 	s.options.maxNodes = 4096;
 	s.waitForBoot({
+		// DISTORT: a Chebyshev transfer-function buffer for the Shaper waveshaper
+		// (rich, controlled harmonic series). Allocated before ~buildDefs so the
+		// SynthDef can bake its bufnum; content fills async, ready before audio runs.
+		~distChebyBuf = Buffer.alloc(s, 1024, 1);
+		~distChebyBuf.cheby([1, 0, 0.4, 0, 0.3, 0, 0.2, 0, 0.15, 0, 0.1]);
 		~buildDefs.(channels);
 		// patch cord: sum one bus into another (NaN-killed), used for all routing
 		SynthDef(("cord_" ++ channels).asSymbol, { |inb = 0, outb = 0, gain = 1|
@@ -109,6 +115,10 @@
 		SynthDef(("master_" ++ channels).asSymbol, { |in = 0, out = 0|
 			Out.ar(out, Limiter.ar(~killbad.(In.ar(in, channels)), 0.95, 0.01));
 		}).add;
+		s.sync;
+		// DX7: allocate LFO wavetable buffers + load the bundled factory bank once.
+		~dx7_allocBufs.(s);
+		~dx7_factory.isNil.if { ~dx7_loadFactory.(~dx7afxPath ? "DX7.afx") };
 		s.sync;
 		~ensureGroups.value;
 		~inBus = Bus.audio(s, channels);
@@ -127,6 +137,75 @@
 	});
 };
 
+// ---- DX7 voice helpers --------------------------------------------------
+// Recompute one node's ~150 FM/envelope args from the module's current preset
+// (vr) + that node's note/velocity, and push them onto the persistent synth.
+~dx7RecalcNode = { |mid, node|
+	var st = ~dx7mods[mid.asSymbol], info = ~modules[mid.asSymbol];
+	(st.notNil and: { info.notNil } and: { node < info[\nodes].size }).if {
+		var nt = ((st[\notes][node] ? 60) + st[\transpose]).clip(0, 127).round.asInteger;
+		var vl = (st[\vels][node] ? 100).clip(0, 127).round.asInteger;
+		info[\nodes][node].set(*~dx7_voiceArgs.(st[\vr], nt, vl));
+	};
+};
+~dx7RecalcAll = { |mid|
+	var info = ~modules[mid.asSymbol];
+	info.notNil.if { info[\nodes].size.do { |n| ~dx7RecalcNode.(mid, n) } };
+};
+// Rebuild vr for the module's current mode (factory preset or manual controls),
+// refresh the global LFO synth, then recompute every voice.
+~dx7ApplyVoice = { |mid|
+	var st = ~dx7mods[mid.asSymbol];
+	st.notNil.if {
+		(st[\mode] == 1).if({
+			st[\vr] = ~dx7_buildManualVr.(st[\manual]);
+		}, {
+			(~dx7_factory.notNil).if {
+				~dx7_loadPreset.(st[\vr], ~dx7_factory[st[\preset] % (~dx7_factory.size.max(1))]);
+			};
+		});
+		st[\lfo].notNil.if { st[\lfo].set(*~dx7_lfoArgs.(st[\vr])) };
+		~dx7RecalcAll.(mid);
+	};
+};
+// Intercept set/setvec for the params that drive a voice recompute (mode, preset,
+// transpose, note, velocity, and the manual timbre controls). Everything else —
+// amp/pan/enable/gate — is a direct SynthDef arg. Returns true when the param was
+// consumed here.
+~dx7HandleSet = { |mid, st, pname, node, value|
+	var consumed = true;
+	pname.asString.switch(
+		"mode",      { st[\mode] = value.round.asInteger; ~dx7ApplyVoice.(mid); },
+		"preset",    { st[\preset] = value.round.asInteger; (st[\mode] == 0).if { ~dx7ApplyVoice.(mid) }; },
+		"transpose", { st[\transpose] = value.round.asInteger; ~dx7RecalcAll.(mid); },
+		"note", {
+			(node < 0).if(
+				{ st[\notes].size.do { |n| st[\notes][n] = value; ~dx7RecalcNode.(mid, n) } },
+				{ (node < st[\notes].size).if { st[\notes][node] = value; ~dx7RecalcNode.(mid, node) } });
+		},
+		"velocity", {
+			(node < 0).if(
+				{ st[\vels].size.do { |n| st[\vels][n] = value; ~dx7RecalcNode.(mid, n) } },
+				{ (node < st[\vels].size).if { st[\vels][node] = value; ~dx7RecalcNode.(mid, node) } });
+		},
+		{
+			// manual timbre param? store it; recompute only when manual mode is live.
+			~dx7_isManual.(pname).if({
+				st[\manual][pname.asSymbol] = value;
+				(st[\mode] == 1).if { ~dx7ApplyVoice.(mid) };
+			}, { consumed = false });
+		});
+	consumed;
+};
+~dx7HandleSetVec = { |mid, st, pname, values|
+	var consumed = true;
+	pname.asString.switch(
+		"note",     { values.do { |v, i| (i < st[\notes].size).if { st[\notes][i] = v; ~dx7RecalcNode.(mid, i) } }; },
+		"velocity", { values.do { |v, i| (i < st[\vels].size).if { st[\vels][i] = v; ~dx7RecalcNode.(mid, i) } }; },
+		{ consumed = false });
+	consumed;
+};
+
 // ---- module lifecycle ---------------------------------------------------
 ~moduleNew = { |mid, type, channels, nodes, laneIndex|
 	type = type.asString;   // OSC string args arrive as Symbols
@@ -137,38 +216,68 @@
 		inBus = Bus.audio(s, ~nchan);
 		outBus = Bus.audio(s, ~nchan);
 		defName = (type.toLower ++ "_" ++ ~nchan).asSymbol;
-		nodeSynths = Array.fill(nodes, {
-			Synth.tail(grp, defName, [\out, outBus.index, \in, inBus.index]);
+		(type.toUpper == "DX7").if({
+			// DX7: per-module pitch/amp mod buses + a global LFO synth at the group
+			// head (writes the buses before the voices read them). Voices get the
+			// bus indices; preset 0 is loaded immediately so they self-sound.
+			var pbus = Bus.audio(s, 1), abus = Bus.audio(s, 1), lfo;
+			lfo = Synth.head(grp, \InfEfx, [\pmodbus, pbus.index, \amodbus, abus.index,
+				\lfo_wave, ~dx7_wavebufs[4].bufnum]);
+			nodeSynths = Array.fill(nodes, {
+				Synth.tail(grp, defName, [\out, outBus.index, \pmodbus, pbus.index, \amodbus, abus.index]);
+			});
+			~modules[mid.asSymbol] = (group: grp, nodes: nodeSynths, type: type, inBus: inBus, outBus: outBus);
+			~dx7mods[mid.asSymbol] = (vr: ~dx7_freshVr.(), pbus: pbus, abus: abus, lfo: lfo,
+				mode: 0, preset: 0, transpose: 0, manual: IdentityDictionary.new,
+				notes: Array.fill(nodes, 60), vels: Array.fill(nodes, 100));
+			~dx7ApplyVoice.(mid);
+		}, {
+			nodeSynths = Array.fill(nodes, {
+				Synth.tail(grp, defName, [\out, outBus.index, \in, inBus.index]);
+			});
+			~modules[mid.asSymbol] = (group: grp, nodes: nodeSynths, type: type, inBus: inBus, outBus: outBus);
 		});
-		~modules[mid.asSymbol] = (
-			group: grp, nodes: nodeSynths, type: type, inBus: inBus, outBus: outBus
-		);
 	};
 };
 
 ~moduleFree = { |mid|
 	var info = ~modules[mid.asSymbol];
+	var st = ~dx7mods[mid.asSymbol];
 	info.notNil.if {
 		info[\group].free;
 		info[\inBus].free;
 		info[\outBus].free;
 		~modules.removeAt(mid.asSymbol);
 	};
+	st.notNil.if {
+		st[\pbus].free; st[\abus].free;
+		~dx7mods.removeAt(mid.asSymbol);
+	};
 };
 
 ~moduleNodes = { |mid, count|
 	var info = ~modules[mid.asSymbol];
+	var st = ~dx7mods[mid.asSymbol];
 	info.notNil.if {
 		var cur = info[\nodes].size;
 		var defName = (info[\type].toLower ++ "_" ++ ~nchan).asSymbol;
 		(count > cur).if {
 			(count - cur).do {
-				info[\nodes] = info[\nodes].add(
-					Synth.tail(info[\group], defName,
+				st.notNil.if({
+					info[\nodes] = info[\nodes].add(Synth.tail(info[\group], defName,
+						[\out, info[\outBus].index, \pmodbus, st[\pbus].index, \amodbus, st[\abus].index]));
+					st[\notes] = st[\notes].add(60); st[\vels] = st[\vels].add(100);
+					~dx7RecalcNode.(mid, info[\nodes].size - 1);
+				}, {
+					info[\nodes] = info[\nodes].add(Synth.tail(info[\group], defName,
 						[\out, info[\outBus].index, \in, info[\inBus].index]));
+				});
 			};
 		} {
-			(cur - count).do { info[\nodes].pop.free };
+			(cur - count).do {
+				info[\nodes].pop.free;
+				st.notNil.if { st[\notes].pop; st[\vels].pop };
+			};
 		};
 	};
 };
@@ -176,19 +285,29 @@
 // ---- parameter updates --------------------------------------------------
 ~setParam = { |mid, pname, node, value|
 	var info = ~modules[mid.asSymbol];
+	var st = ~dx7mods[mid.asSymbol];
 	info.notNil.if {
-		(node < 0).if {
-			info[\nodes].do { |syn| syn.set(pname.asSymbol, value) };  // global -> all nodes
-		} {
-			(node < info[\nodes].size).if { info[\nodes][node].set(pname.asSymbol, value) };
-		};
+		(st.notNil and: { ~dx7HandleSet.(mid, st, pname, node, value) }).if({
+			// consumed: a DX7 recompute param (preset/note/velocity/...)
+		}, {
+			(node < 0).if {
+				info[\nodes].do { |syn| syn.set(pname.asSymbol, value) };  // global -> all nodes
+			} {
+				(node < info[\nodes].size).if { info[\nodes][node].set(pname.asSymbol, value) };
+			};
+		});
 	};
 };
 
 ~setVec = { |mid, pname, values|
 	var info = ~modules[mid.asSymbol];
+	var st = ~dx7mods[mid.asSymbol];
 	info.notNil.if {
-		values.do { |v, i| (i < info[\nodes].size).if { info[\nodes][i].set(pname.asSymbol, v) } };
+		(st.notNil and: { ~dx7HandleSetVec.(mid, st, pname, values) }).if({
+			// consumed: per-node note/velocity vector -> recompute
+		}, {
+			values.do { |v, i| (i < info[\nodes].size).if { info[\nodes][i].set(pname.asSymbol, v) } };
+		});
 	};
 };
 
@@ -219,6 +338,17 @@
 	OSCdef(\ping, { |m| ~ctrl.value.sendMsg('/atelier/ready') }, '/atelier/ping'),
 	OSCdef(\feedback, { |m| /* armed feedback edges: see ~rebuildLane refinement */ }, '/atelier/feedback'),
 	OSCdef(\recorder, { |m| /* recorder/resampling hook */ }, '/atelier/recorder'),
+	// CD-quality WAV capture off JACK (see record.sh). The controller picks the
+	// timestamped path; we just launch/stop the ffmpeg capture.
+	OSCdef(\recStart, { |m|
+		var path = m[1].asString;
+		("/opt/atelier/record.sh start " ++ path.quote).unixCmd;
+		("[atelier-sc] recording -> " ++ path).postln;
+	}, '/atelier/record/start'),
+	OSCdef(\recStop, { |m|
+		"/opt/atelier/record.sh stop".unixCmd;
+		"[atelier-sc] recording stopped".postln;
+	}, '/atelier/record/stop'),
 ];
 
 // forward SendReply telemetry from scsynth to the controller

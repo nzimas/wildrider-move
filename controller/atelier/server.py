@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,8 @@ DATA_DIR = Path(os.environ.get("ATELIER_DATA", "/data"))
 PATCH_DIR = DATA_DIR / "patches"
 STREAM_DIR = DATA_DIR / "stream"      # HLS playlist + segments written by the SC container
 STREAM_DIR.mkdir(parents=True, exist_ok=True)
+REC_DIR = DATA_DIR / "recordings"     # CD-quality WAV captures (written by the SC container)
+REC_DIR.mkdir(parents=True, exist_ok=True)
 
 SC_HOST = os.environ.get("SC_HOST", "127.0.0.1")
 SC_PORT = int(os.environ.get("SC_PORT", "57130"))
@@ -61,6 +64,40 @@ class Hub:
 
 
 hub = Hub()
+
+
+# --------------------------------------------------------------------------- #
+# Recorder — CD-quality WAV capture. The bytes are written inside the SC
+# container (which owns JACK); here we only choose the timestamped filename,
+# trigger start/stop over OSC, and serve the resulting files.
+# --------------------------------------------------------------------------- #
+REC = {"active": False, "name": None, "started": 0.0}
+_REC_RE = re.compile(r"^rec_\d{8}_\d{6}\.wav$")
+
+
+def _rec_state() -> dict:
+    return {"active": REC["active"], "name": REC["name"],
+            "started": REC["started"], "elapsed": (time.time() - REC["started"]) if REC["active"] else 0.0}
+
+
+def _start_recording() -> dict:
+    if REC["active"]:
+        return _rec_state()
+    name = "rec_" + time.strftime("%Y%m%d_%H%M%S") + ".wav"
+    REC.update(active=True, name=name, started=time.time())
+    bridge.send("/atelier/record/start", str(REC_DIR / name))
+    hub.push({"type": "record", **_rec_state()})
+    return _rec_state()
+
+
+def _stop_recording() -> dict:
+    if not REC["active"]:
+        return _rec_state()
+    bridge.send("/atelier/record/stop")
+    REC.update(active=False, name=None, started=0.0)
+    st = _rec_state()
+    hub.push({"type": "record", **st})
+    return st
 
 
 @app.on_event("startup")
@@ -144,6 +181,35 @@ async def stream_status() -> JSONResponse:
     return JSONResponse({"live": live, "url": "/hls/atelier.m3u8"})
 
 
+@app.get("/api/recordings")
+async def list_recordings() -> JSONResponse:
+    """Recorded WAVs, newest first, with size + download URL."""
+    items = []
+    for p in REC_DIR.glob("rec_*.wav"):
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        # don't list the file that's still being written (current take)
+        if REC["active"] and p.name == REC["name"]:
+            continue
+        items.append({"name": p.name, "size": st.st_size, "mtime": st.st_mtime,
+                      "url": f"/recordings/{p.name}"})
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    return JSONResponse({"recordings": items, "recording": _rec_state()})
+
+
+@app.get("/recordings/{name}")
+async def download_recording(name: str) -> FileResponse:
+    """Download a single recording (forced as an attachment)."""
+    if not _REC_RE.match(name):
+        return JSONResponse({"error": "bad name"}, status_code=400)
+    path = REC_DIR / name
+    if not path.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(str(path), media_type="audio/wav", filename=name)
+
+
 # --------------------------------------------------------------------------- #
 # WebSocket command channel
 # --------------------------------------------------------------------------- #
@@ -201,6 +267,35 @@ def _c_remove_connection(d):
     state.remove_connection(d["id"])
 
 
+@command("add_midi_connection")
+def _c_add_midi_connection(d):
+    state.add_midi_connection(d["src"], d["dst"])
+
+
+@command("remove_midi_connection")
+def _c_remove_midi_connection(d):
+    state.remove_midi_connection(d["id"])
+
+
+@command("seq_clock")
+def _c_seq_clock(d):
+    state.seq_set_clock(d["module"], tempo=d.get("tempo"), division=d.get("division"),
+                        running=d.get("running"), swing=d.get("swing"))
+
+
+@command("seq_lane")
+def _c_seq_lane(d):
+    kw = {k: v for k, v in d.items() if k not in ("cmd", "module", "target", "index")}
+    state.seq_set_lane(d["module"], d["target"], int(d["index"]), **kw)
+
+
+@command("seq_randomize")
+def _c_seq_randomize(d):
+    idx = d.get("index")
+    state.seq_randomize(d["module"], target=d.get("target"),
+                        index=int(idx) if idx is not None else None)
+
+
 @command("move_module")
 def _c_move_module(d):
     state.move_module(d["module"], float(d["x"]), float(d["y"]))
@@ -209,12 +304,12 @@ def _c_move_module(d):
 @command("random_patch")
 def _c_random_patch(d):
     a = d.get("amount")
-    state.random_patch(float(a) if a is not None else None)
+    state.random_patch(float(a) if a is not None else None, style=d.get("style"))
 
 
 @command("random_chain")
 def _c_random_chain(d):
-    state.random_chain(list(d.get("types", [])))
+    state.random_chain(list(d.get("types", [])), style=d.get("style"))
 
 
 @command("set_nodes")
@@ -293,19 +388,24 @@ def _c_randomize_per_module_lfos(d):
     state.randomize_per_module_lfos(d["module"])
 
 
+@command("add_scene")
+def _c_add_scene(_d):
+    state.add_scene()
+
+
 @command("capture_scene")
 def _c_capture_scene(d):
-    state.capture_scene(d["id"], d.get("name", d["id"]))
+    state.capture_scene(d.get("id"), d.get("name", ""))
 
 
-@command("recall_scene")
-def _c_recall_scene(d):
-    state.recall_scene(d["id"])
+@command("load_scene")
+def _c_load_scene(d):
+    state.load_scene(d["id"], float(d.get("morph", 0.0)))
 
 
-@command("morph_scenes")
-def _c_morph(d):
-    state.morph_scenes(d["a"], d["b"], float(d["t"]))
+@command("remove_scene")
+def _c_remove_scene(d):
+    state.remove_scene(d["id"])
 
 
 @command("mutate")
@@ -317,7 +417,7 @@ def _c_mutate(d):
 def _c_randomize(d):
     state.randomize(float(d.get("amount", 0.3)), scope=d.get("scope", "global"),
                     mid=d.get("module"), pid=d.get("param"), node=d.get("node"),
-                    expert=bool(d.get("expert", False)))
+                    expert=bool(d.get("expert", False)), style=d.get("style"))
 
 
 @command("macro")
@@ -351,11 +451,28 @@ def _c_engine_reconnect(_d):
     state.reconnect_engine()
 
 
+@command("rewire_patch")
+def _c_rewire_patch(d):
+    state.rewire_patch(style=d.get("style"))
+
+
+@command("record_start")
+def _c_record_start(_d):
+    _start_recording()
+
+
+@command("record_stop")
+def _c_record_stop(_d):
+    _stop_recording()
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     hub.clients.add(ws)
-    await ws.send_json({"type": "snapshot", "snapshot": full_snapshot(state)})
+    snap = full_snapshot(state)
+    snap["recording"] = _rec_state()
+    await ws.send_json({"type": "snapshot", "snapshot": snap})
     try:
         while True:
             msg = await ws.receive_json()

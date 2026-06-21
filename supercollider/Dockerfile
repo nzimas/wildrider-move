@@ -64,8 +64,9 @@ ENV QT_QPA_PLATFORM=offscreen \
     QTWEBENGINE_CHROMIUM_FLAGS=--no-sandbox
 
 WORKDIR /opt/atelier
-COPY boot.scd engine.scd synthdefs.scd run.sh ./
-RUN chmod +x run.sh
+# DX7.afx is the bundled 16,384-preset factory bank read by dx7.scd at boot.
+COPY boot.scd engine.scd synthdefs.scd dx7.scd DX7.afx run.sh record.sh ./
+RUN chmod +x run.sh record.sh
 
 EXPOSE 57120/udp 8200
 CMD ["./run.sh"]

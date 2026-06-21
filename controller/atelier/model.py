@@ -247,6 +247,9 @@ class Patch:
         # Free-form modular routing: directed edges src.output -> dst.input.
         # Modules with no outgoing audio edge are terminal (summed to master).
         self.connections: list[dict[str, str]] = []   # [{"id","src","dst"}]
+        # MIDI / control edges (separate from audio): a sequencer's midi-out -> a
+        # module's midi-in. Carry no audio; drive notes/CC on the destination.
+        self.midi_connections: list[dict[str, str]] = []
         self.feedback_edges: dict[str, FeedbackEdge] = {}
         self.recorders: dict[str, Recorder] = {
             "main": Recorder(id="main", target="master")
@@ -278,6 +281,34 @@ class Patch:
         # drop any connections touching it
         self.connections = [c for c in self.connections
                             if c["src"] != mid and c["dst"] != mid]
+        self.midi_connections = [c for c in self.midi_connections
+                                 if c["src"] != mid and c["dst"] != mid]
+
+    # -- MIDI / control graph --------------------------------------------- #
+    def midi_legal(self, src: str, dst: str) -> tuple[bool, str]:
+        if src == dst:
+            return False, "cannot connect a module to itself"
+        if src not in self.modules or dst not in self.modules:
+            return False, "unknown module"
+        if self.modules[src].type != "SEQ":
+            return False, "MIDI source must be a SEQ"
+        if any(c["src"] == src and c["dst"] == dst for c in self.midi_connections):
+            return False, "already connected"
+        return True, ""
+
+    def add_midi_connection(self, src: str, dst: str, cid: str | None = None) -> dict | None:
+        ok, _ = self.midi_legal(src, dst)
+        if not ok:
+            return None
+        c = {"id": cid or f"m_{src}_{dst}", "src": src, "dst": dst}
+        self.midi_connections.append(c)
+        return c
+
+    def remove_midi_connection(self, cid: str) -> None:
+        self.midi_connections = [c for c in self.midi_connections if c["id"] != cid]
+
+    def midi_targets(self, src: str) -> list[str]:
+        return [c["dst"] for c in self.midi_connections if c["src"] == src]
 
     # -- connection graph -------------------------------------------------- #
     def can_output(self, mid: str) -> bool:
@@ -286,7 +317,7 @@ class Patch:
 
     def can_input(self, mid: str) -> bool:
         m = self.modules.get(mid)
-        return bool(m and m.spec.insert_capable)      # GEN is a pure source
+        return bool(m and m.spec.insert_capable)      # DX7 is a pure source
 
     def connection_legal(self, src: str, dst: str) -> tuple[bool, str]:
         if src == dst:

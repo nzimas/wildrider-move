@@ -36,56 +36,138 @@
 ~buildDefs = { |nchan = 2|
 	var suf = "_" ++ nchan;
 
-	// ---- PLAY: playhead / region reader / looper / resampler -------------
-	SynthDef(("play" ++ suf).asSymbol, { |out = 0, in = 0, buf = 0, gate = 1,
-		regionStart = 0, regionLength = 1, rate = 1, direction = 0, loopMode = 1,
-		envAttack = 0.005, envRelease = 0.05, xfade = 0.02, jitterTime = 0, jitterRate = 0,
-		startScatter = 0, amp = 0.8, pan = 0, bypass = 0, wet = 1, enable = 1|
-		var frames = BufFrames.kr(buf).max(1);
-		var dir = Select.kr(direction, [1, -1, LFPulse.kr(0.5).linlin(0,1,-1,1)]);
-		var jit = LFNoise1.kr(jitterRate.max(0.001)) * jitterTime * 0.001;
-		var phStart = (regionStart + (TRand.kr(0, startScatter, Impulse.kr(0)) )) * frames;
-		var phEnd = ((regionStart + regionLength).clip(0,1)) * frames;
-		var phasor = Phasor.ar(0, BufRateScale.kr(buf) * rate * dir,
-			phStart, phEnd) + (jit * BufSampleRate.kr(buf));
-		var sig = BufRd.ar(1, buf, phasor.clip(0, frames - 1), 1, 4);
-		var env = EnvGen.kr(Env.asr(envAttack * 0.001, 1, envRelease * 0.001), gate);
-		sig = (sig * env * amp * enable).tanh;
-		sig = ~spread.(sig, nchan, pan);
-		Out.ar(out, ~killbad.(sig * (1 - bypass) * wet));
+	// ---- DX7: exact 6-operator FM voice (port of DX7-Supercollider) -------
+	// Per-module pitch/amp modulation LFO. Writes a frequency *multiplier*
+	// (~1.0 at rest) to pmodbus and an amp-mod offset to amodbus, both read by
+	// the voices. ReplaceOut (not Out) so the private bus holds exactly the
+	// current value — only this synth writes it. Persistent (no FreeSelf).
+	SynthDef(\InfEfx, { |pmodbus = 0, amodbus = 0,
+		lfoGet1 = 0, lfoGet2 = 1, lfo_speed = 1, lfo_wave = 0, lfo_phase = 0,
+		lfo_delay = 0.01, lfo_amd = 0, pitchCons = 0, envTrig = 1, tameC = 0, tameM = 1|
+		var lfo, multiPitch, lfoAmp;
+		lfo = Osc.ar(lfo_wave, lfo_speed, lfo_phase, 0.5 * lfoGet2, 0.5 * lfoGet2)
+			+ LFNoise0.ar(lfo_speed, 0.5 * lfoGet1, 0.5 * lfoGet1);
+		lfo = lfo * EnvGen.ar(Env.asr(lfo_delay, releaseTime: 0.01, curve: -5), envTrig);
+		multiPitch = LinLin.ar(lfo, 0, 1, (pitchCons.neg.midiratio * tameM) + tameC, pitchCons.midiratio);
+		lfoAmp = LinLin.ar(lfo, 0, 1, lfo_amd * (-3/4), 0);
+		ReplaceOut.ar(pmodbus, multiPitch);
+		ReplaceOut.ar(amodbus, lfoAmp);
 	}).add;
 
-	// ---- GEN: oscillator / noise / exciter voice -------------------------
-	SynthDef(("gen" ++ suf).asSymbol, { |out = 0, waveform = 0, freq = 110, ratio = 1,
-		detune = 0, pulseWidth = 0.5, fold = 1, noiseColor = 0, chaosAmount = 0,
-		driftDepth = 0, driftRate = 0.3, gate = 1, attack = 200, release = 800,
-		amp = 0.5, pan = 0, bypass = 0, enable = 1,
-		fmRatioA = 1, fmRatioB = 2, fmRatioC = 3, fmIndex = 2, fmFeedback = 0|
-		var f = freq * ratio * (detune * (1/12)).midiratio
-			* (LFNoise1.kr(driftRate) * driftDepth * (1/12)).midiratio;
-		var saw = Saw.ar(f), pul = Pulse.ar(f, pulseWidth);
-		var fld = (SinOsc.ar(f) * fold).fold(-1, 1);
-		var nz = LPF.ar(WhiteNoise.ar, noiseColor.linexp(-1, 1, 200, 12000));
-		var imp = Impulse.ar(f.clip(0.1, 80));
-		var chaos = LinCongC.ar(SampleRate.ir/4 * (chaosAmount + 0.001), 1.1, 0.13, 1.0, 0) * chaosAmount;
-		// DX7-style 6-operator FM (FM7.ar from sc3-plugins, the heart of the
-		// DX7-Supercollider project). Three carrier/modulator pairs feeding
-		// op0<-op1, op2<-op3, op4<-op5, with op5 self-feedback; carriers summed.
-		var ctls = [[f, 0, 1], [f * fmRatioA, 0, 1], [f, 0, 1],
-		            [f * fmRatioB, 0, 1], [f, 0, 1], [f * fmRatioC, 0, 1]];
-		var mods = [[0, fmIndex, 0, 0, 0, 0],
-		            [0, 0, 0, 0, 0, 0],
-		            [0, 0, 0, fmIndex, 0, 0],
-		            [0, 0, 0, 0, 0, 0],
-		            [0, 0, 0, 0, 0, fmIndex],
-		            [0, 0, 0, 0, 0, fmFeedback]];
-		var fm = FM7.ar(ctls, mods);
-		var fmVoice = (fm[0] + fm[2] + fm[4]) * 0.4;
-		var sig = Select.ar(waveform.clip(0, 7),
-			[SinOsc.ar(f), VarSaw.ar(f, 0, 0.5), saw, pul, fld, nz, imp, fmVoice]);
-		var env = EnvGen.kr(Env.asr(attack * 0.001, 1, release * 0.001), gate);
-		sig = (sig + chaos) * env * amp * enable;
-		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass)));
+	// One persistent voice = one node. The ~150 envelope/ratio/matrix args are
+	// computed in sclang (dx7.scd ~dx7_voiceArgs) and pushed via .set; the gate
+	// is driven internally: drone (sustained) or internal retrigger (arp).
+	SynthDef(("dx7" ++ suf).asSymbol, { |out = 0, pmodbus = 0, amodbus = 0,
+		pitch = 261.6, gate = 1,
+		envPL0 = 0, envPL1 = 0, envPL2 = 0, envPL3 = 0, envPL4 = 0,
+		envPR0 = 0, envPR1 = 0, envPR2 = 0, envPR3 = 0,
+		coars1 = 1, fine_1 = 1, coars2 = 1, fine_2 = 1, coars3 = 1, fine_3 = 1,
+		coars4 = 1, fine_4 = 1, coars5 = 1, fine_5 = 1, coars6 = 1, fine_6 = 1,
+		env1L0 = 0, env1L1 = 0, env1L2 = 0, env1L3 = 0, env1L4 = 0, env1R0 = 1, env1R1 = 1, env1R2 = 1, env1R3 = 1, env1C0 = 3, env1C1 = 3, env1C2 = 3, env1C3 = 3,
+		env2L0 = 0, env2L1 = 0, env2L2 = 0, env2L3 = 0, env2L4 = 0, env2R0 = 1, env2R1 = 1, env2R2 = 1, env2R3 = 1, env2C0 = 3, env2C1 = 3, env2C2 = 3, env2C3 = 3,
+		env3L0 = 0, env3L1 = 0, env3L2 = 0, env3L3 = 0, env3L4 = 0, env3R0 = 1, env3R1 = 1, env3R2 = 1, env3R3 = 1, env3C0 = 3, env3C1 = 3, env3C2 = 3, env3C3 = 3,
+		env4L0 = 0, env4L1 = 0, env4L2 = 0, env4L3 = 0, env4L4 = 0, env4R0 = 1, env4R1 = 1, env4R2 = 1, env4R3 = 1, env4C0 = 3, env4C1 = 3, env4C2 = 3, env4C3 = 3,
+		env5L0 = 0, env5L1 = 0, env5L2 = 0, env5L3 = 0, env5L4 = 0, env5R0 = 1, env5R1 = 1, env5R2 = 1, env5R3 = 1, env5C0 = 3, env5C1 = 3, env5C2 = 3, env5C3 = 3,
+		env6L0 = 0, env6L1 = 0, env6L2 = 0, env6L3 = 0, env6L4 = 0, env6R0 = 1, env6R1 = 1, env6R2 = 1, env6R3 = 1, env6C0 = 3, env6C1 = 3, env6C2 = 3, env6C3 = 3,
+		noteBlok1 = 1, noteBlok2 = 1, noteBlok3 = 1, noteBlok4 = 1, noteBlok5 = 1, noteBlok6 = 1,
+		dn0 = 0, dn1 = 0, dn2 = 0, dn3 = 0, dn4 = 0, dn5 = 0, dn6 = 0, dn7 = 0, dn8 = 0, dn9 = 0, dn10 = 0,
+		dn11 = 0, dn12 = 0, dn13 = 0, dn14 = 0, dn15 = 0, dn16 = 0, dn17 = 0, dn18 = 0, dn19 = 0, dn20 = 0,
+		dn21 = 0, dn22 = 0, dn23 = 0, dn24 = 0, dn25 = 0, dn26 = 0, dn27 = 0, dn28 = 0, dn29 = 0, dn30 = 0,
+		dn31 = 0, dn32 = 0, dn33 = 0, dn34 = 0, dn35 = 0, dn36 = 1, dn37 = 0, dn38 = 1, dn39 = 0, dn40 = 0, dn41 = 0,
+		detun1 = 7, detun2 = 7, detun3 = 7, detun4 = 7, detun5 = 7, detun6 = 7,
+		modSens1 = 0, modSens2 = 0, modSens3 = 0, modSens4 = 0, modSens5 = 0, modSens6 = 0,
+		outMult = 2, osc_sync = 0, amp = 1, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var ctls, mods, chans, sig, gOn, pmod, amod,
+		envAmp1, envEnv1, envAmp2, envEnv2, envAmp3, envEnv3, envAmp4, envEnv4,
+		envAmp5, envEnv5, envAmp6, envEnv6, envAmpP, envEnvP;
+		// Pure drone source: the gate is held (default 1). Rhythm/dynamics are added
+		// downstream by ENV/GATE modules (and, in future, MIDI generators), so there
+		// is no internal clock or envelope here.
+		gOn = gate;
+		pmod = Lag2.ar(In.ar(pmodbus, 1), 0.01);
+		amod = Lag2.ar(In.ar(amodbus, 1), 0.01);
+		envEnvP = Env.new([envPL0, envPL1, envPL2, envPL3, envPL4], [envPR0, envPR1, envPR2, envPR3], 0, 3);
+		envAmpP = EnvGen.kr(envEnvP, gOn, doneAction: 0);
+		envEnv1 = Env.new([(-1 * env1L0).dbamp, (-1 * env1L1).dbamp, (-1 * env1L2).dbamp, (-1 * env1L3).dbamp, (-1 * env1L4).dbamp], [env1R0, env1R1, env1R2, env1R3], [env1C0, env1C1, env1C2, env1C3], 3);
+		envAmp1 = EnvGen.kr(envEnv1, gOn, doneAction: 0);
+		envEnv2 = Env.new([(-1 * env2L0).dbamp, (-1 * env2L1).dbamp, (-1 * env2L2).dbamp, (-1 * env2L3).dbamp, (-1 * env2L4).dbamp], [env2R0, env2R1, env2R2, env2R3], [env2C0, env2C1, env2C2, env2C3], 3);
+		envAmp2 = EnvGen.kr(envEnv2, gOn, doneAction: 0);
+		envEnv3 = Env.new([(-1 * env3L0).dbamp, (-1 * env3L1).dbamp, (-1 * env3L2).dbamp, (-1 * env3L3).dbamp, (-1 * env3L4).dbamp], [env3R0, env3R1, env3R2, env3R3], [env3C0, env3C1, env3C2, env3C3], 3);
+		envAmp3 = EnvGen.kr(envEnv3, gOn, doneAction: 0);
+		envEnv4 = Env.new([(-1 * env4L0).dbamp, (-1 * env4L1).dbamp, (-1 * env4L2).dbamp, (-1 * env4L3).dbamp, (-1 * env4L4).dbamp], [env4R0, env4R1, env4R2, env4R3], [env4C0, env4C1, env4C2, env4C3], 3);
+		envAmp4 = EnvGen.kr(envEnv4, gOn, doneAction: 0);
+		envEnv5 = Env.new([(-1 * env5L0).dbamp, (-1 * env5L1).dbamp, (-1 * env5L2).dbamp, (-1 * env5L3).dbamp, (-1 * env5L4).dbamp], [env5R0, env5R1, env5R2, env5R3], [env5C0, env5C1, env5C2, env5C3], 3);
+		envAmp5 = EnvGen.kr(envEnv5, gOn, doneAction: 0);
+		envEnv6 = Env.new([(-1 * env6L0).dbamp, (-1 * env6L1).dbamp, (-1 * env6L2).dbamp, (-1 * env6L3).dbamp, (-1 * env6L4).dbamp], [env6R0, env6R1, env6R2, env6R3], [env6C0, env6C1, env6C2, env6C3], 3);
+		envAmp6 = EnvGen.kr(envEnv6, gOn, doneAction: 0);
+		ctls = [
+			[coars1 * fine_1 * ((pitch * noteBlok1) + ((detun1 - 7) / 32)) * (envAmpP.midiratio) * pmod, Rand(0, 2pi) * osc_sync, envAmp1 * (amod * (modSens1 / 3)).dbamp],
+			[coars2 * fine_2 * ((pitch * noteBlok2) + ((detun2 - 7) / 32)) * (envAmpP.midiratio) * pmod, Rand(0, 2pi) * osc_sync, envAmp2 * (amod * (modSens2 / 3)).dbamp],
+			[coars3 * fine_3 * ((pitch * noteBlok3) + ((detun3 - 7) / 32)) * (envAmpP.midiratio) * pmod, Rand(0, 2pi) * osc_sync, envAmp3 * (amod * (modSens3 / 3)).dbamp],
+			[coars4 * fine_4 * ((pitch * noteBlok4) + ((detun4 - 7) / 32)) * (envAmpP.midiratio) * pmod, Rand(0, 2pi) * osc_sync, envAmp4 * (amod * (modSens4 / 3)).dbamp],
+			[coars5 * fine_5 * ((pitch * noteBlok5) + ((detun5 - 7) / 32)) * (envAmpP.midiratio) * pmod, Rand(0, 2pi) * osc_sync, envAmp5 * (amod * (modSens5 / 3)).dbamp],
+			[coars6 * fine_6 * ((pitch * noteBlok6) + ((detun6 - 7) / 32)) * (envAmpP.midiratio) * pmod, Rand(0, 2pi) * osc_sync, envAmp6 * (amod * (modSens6 / 3)).dbamp]
+		];
+		mods = [
+			[dn0, dn1, dn2, dn3, dn4, dn5], [dn6, dn7, dn8, dn9, dn10, dn11],
+			[dn12, dn13, dn14, dn15, dn16, dn17], [dn18, dn19, dn20, dn21, dn22, dn23],
+			[dn24, dn25, dn26, dn27, dn28, dn29], [dn30, dn31, dn32, dn33, dn34, dn35]
+		];
+		chans = [0, 1, 2, 3, 4, 5];
+		sig = FM7.ar(ctls, mods).slice(chans) * -12.dbamp;
+		sig = Mix.new([sig[0] * dn36, sig[1] * dn37, sig[2] * dn38, sig[3] * dn39, sig[4] * dn40, sig[5] * dn41]);
+		sig = sig / outMult * amp * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
+	// ---- DISTORT: versatile multi-stage distortion / saturation ----------
+	// A full waveshaping chain (best-of SC, core UGens + a Chebyshev Shaper):
+	// pre-emphasis tone -> drive + asymmetry bias -> 8-way waveshaper bank ->
+	// secondary wavefolder -> bitcrush + downsample grit -> DC/tone shaping ->
+	// distorted feedback path. Stack several nodes for parallel multi-character
+	// textures. Goes from gentle tube warmth to screaming digital nastiness.
+	SynthDef(("distort" ++ suf).asSymbol, { |out = 0, in = 0,
+		drive = 2, type = 0, bias = 0, fold = 0, tone = 0,
+		crush = 24, downsample = 1, feedback = 0, lowCut = 20, highCut = 18000,
+		amp = 0.7, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan);
+		var x = Mix(dry) / nchan;
+		var fb = LocalIn.ar(1);
+		var d, shaped, folded, levels, y;
+		// distorted feedback into the input -> sustain / self-oscillating screams
+		x = x + (fb * feedback.clip(0, 0.98));
+		// pre-emphasis tilt: tone>0 brightens (more bite into the shaper), <0 darkens
+		x = BHiShelf.ar(x, 1800, 1.0, tone * 12);
+		x = BLowShelf.ar(x, 250, 1.0, tone.neg * 6);
+		// drive into the shaper, with bias for asymmetric (even-harmonic) clipping
+		d = (x * drive.max(0.001)) + bias;
+		shaped = Select.ar(type.clip(0, 7).round, [
+			d.tanh,                                          // 0 tube / smooth
+			d.softclip,                                      // 1 soft clip
+			d.clip2(1),                                      // 2 fuzz / hard clip
+			d.fold2(1),                                      // 3 wavefold
+			d.wrap2(1),                                      // 4 wrap (harsh)
+			d.max(0).tanh + (d.min(0) * 0.3),                // 5 diode (asymmetric)
+			sin(d * (pi / 2)),                               // 6 sine fold (west coast)
+			Shaper.ar(~distChebyBuf.bufnum, d.clip2(1))      // 7 chebyshev (rich harmonics)
+		]);
+		// secondary wavefolder for extra harmonic complexity (blended in by `fold`)
+		folded = (shaped * (1 + (fold * 5))).fold2(1);
+		y = SelectX.ar(fold.clip(0, 1), [shaped, folded]);
+		// digital grit: bit-depth reduction (core) + sample-rate reduction (Latch)
+		levels = (2 ** crush.clip(1, 24)).max(2);
+		y = (y * levels).round / levels;
+		y = Select.ar(downsample > 1.001,
+			[y, Latch.ar(y, Impulse.ar(SampleRate.ir / downsample.max(1)))]);
+		// shape / tame the output
+		y = LeakDC.ar(y);
+		y = RHPF.ar(y, lowCut.clip(20, 2000), 1.0);
+		y = LPF.ar(y, highCut.clip(200, 19000));
+		// feedback send (soft-limited + NaN-killed so it can never lock up)
+		LocalOut.ar(~killbad.(y.tanh) * feedback.clip(0, 0.98));
+		y = y * amp * enable;
+		y = ~spread.(y, nchan, pan);
+		Out.ar(out, ~killbad.(XFade2.ar(dry, y, (wet * 2 - 1)) * (1 - bypass) + (dry * bypass)));
 	}).add;
 
 	// ---- BEN: Benjolis-inspired chaotic twin-oscillator / rungler voice ----
@@ -300,21 +382,45 @@
 		var sig = Balance2.ar(pl[0], pl[1], pan, amp * env);
 		Out.ar(out, ~killbad.(sig * (1 - bypass) * wet));
 	}).add;
-	// ---- BAND: band / spectral window (IIR realization first version) ----
-	SynthDef(("band" ++ suf).asSymbol, { |out = 0, in = 0, centerHz = 800,
-		bandwidth = 400, gain = 0, mode = 0, freeze = 0, smear = 0,
-		spatialPos = 0, bypass = 0, wet = 1, enable = 1|
-		var dry = In.ar(in, nchan), sig;
-		var rq = (bandwidth / centerHz).clip(0.001, 4);
-		var band = Mix(dry) / nchan;
-		var filt = Select.ar(mode.clip(0,3), [
-			BPF.ar(band, centerHz, rq),
-			band - BPF.ar(band, centerHz, rq),    // notch
-			band + (BPeakEQ.ar(band, centerHz, rq, gain) - band),
-			BPF.ar(band, centerHz, rq)             // isolate
-		]) * gain.dbamp;
-		filt = LPF.ar(filt, (1 - smear).linexp(0, 1, 18000, 600).clip(200, 18000));
-		sig = ~spread.(filt * enable, nchan, spatialPos);
+	// ---- FBANK: 10-band resonant stereo filterbank ------------------------
+	// Mimics the Erica Synths Resonant Filterbank: ten fixed-frequency resonant
+	// bandpass filters (29 Hz … 11 kHz), each with a boost/cut gain (1 = flat).
+	// `resonance` is a bipolar attenuverter on a shared feedback loop: magnitude
+	// narrows the bands' Q and raises feedback intensity (past ~half -> the
+	// feedback-enabled bands self-oscillate at their centre frequencies, mimicking
+	// no-input mixing); sign sets feedback polarity (CW positive / CCW inverted).
+	// Per-band feedback enables (fb1..fb10) choose which bands ring. Stereo SPREAD
+	// pans the bands across the field for a spectral stereo image.
+	SynthDef(("fbank" ++ suf).asSymbol, { |out = 0, in = 0,
+		gain1 = 1, gain2 = 1, gain3 = 1, gain4 = 1, gain5 = 1, gain6 = 1, gain7 = 1, gain8 = 1, gain9 = 1, gain10 = 1,
+		fb1 = 1, fb2 = 1, fb3 = 1, fb4 = 1, fb5 = 1, fb6 = 1, fb7 = 1, fb8 = 1, fb9 = 1, fb10 = 1,
+		resonance = 0, inputGain = 0, spread = 0, amp = 1, bypass = 0, wet = 1, enable = 1|
+		var freqs = #[29, 61, 115, 218, 411, 777, 1500, 2800, 5200, 11000];
+		var gains = [gain1, gain2, gain3, gain4, gain5, gain6, gain7, gain8, gain9, gain10];
+		var fbs = [fb1, fb2, fb3, fb4, fb5, fb6, fb7, fb8, fb9, fb10];
+		var dry = In.ar(in, nchan);
+		var x0 = Mix(dry) / nchan * inputGain.dbamp;
+		var fbk = LocalIn.ar(1);
+		// magnitude -> Q (rq) + feedback intensity; sign -> feedback polarity.
+		// WIDE (≈overlapping octave) bands at rest so the summed bank covers the
+		// whole spectrum at full level (heavy filterbank colour); resonance narrows
+		// them toward sharp resonant peaks / self-oscillation.
+		var rq = abs(resonance).linexp(0, 1, 1.3, 0.006);
+		// tiny resonance-scaled noise floor so the feedback can bootstrap into self-
+		// oscillation with no input (mimics analog noise), inaudible otherwise.
+		var seed = PinkNoise.ar(abs(resonance) * 0.003);
+		var x = x0 + seed + (fbk * resonance);
+		var makeup = 1.8;   // compensates the bandpass-sum level so flat ≈ unity
+		var bands = Array.fill(10, { |i| Resonz.ar(x, freqs[i], rq) * makeup });
+		var fbSum = Mix(Array.fill(10, { |i| bands[i] * fbs[i] }));
+		var sig;
+		LocalOut.ar(~killbad.((fbSum * 1.5).tanh));   // bounded, NaN-safe feedback
+		(nchan == 2).if({
+			sig = Mix(Array.fill(10, { |i| Pan2.ar(bands[i] * gains[i], ((i / 4.5) - 1) * spread) }));
+		}, {
+			sig = ~spread.(Mix(Array.fill(10, { |i| bands[i] * gains[i] })), nchan, 0);
+		});
+		sig = LeakDC.ar(sig) * amp * enable;
 		Out.ar(out, ~killbad.(XFade2.ar(dry, sig, (wet * 2 - 1)) * (1 - bypass) + (dry * bypass)));
 	}).add;
 

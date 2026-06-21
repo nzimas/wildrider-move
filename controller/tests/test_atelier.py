@@ -150,35 +150,35 @@ def _state():
 def test_default_patch_builds():
     st = _state()
     # main serial chain + sampler lane + viz lane
-    assert len(st.patch.modules) == 10
+    assert len(st.patch.modules) == 9
     present = {m.type for m in st.patch.modules.values()}
-    for t in ["GEN", "BAND", "PITCH", "TIME", "COMB", "GAIN", "SDLY", "VERB", "PLAY", "VIZ"]:
+    for t in ["DX7", "FBANK", "PITCH", "TIME", "COMB", "GAIN", "SDLY", "VERB", "VIZ"]:
         assert t in present
     # the default is a serial chain expressed as connection edges
     types = {m.id: m.type for m in st.patch.modules.values()}
     edges = {(types[c["src"]], types[c["dst"]]) for c in st.patch.connections}
-    for e in [("GEN", "BAND"), ("BAND", "PITCH"), ("TIME", "COMB"), ("GAIN", "SDLY"), ("SDLY", "VERB")]:
+    for e in [("DX7", "FBANK"), ("FBANK", "PITCH"), ("TIME", "COMB"), ("GAIN", "SDLY"), ("SDLY", "VERB")]:
         assert e in edges
     verb_id = next(m.id for m in st.patch.modules.values() if m.type == "VERB")
     assert verb_id in st.patch.terminals()           # tail routes to master
-    # GEN voices are spread across the stereo field
-    gen = next(m for m in st.patch.modules.values() if m.type == "GEN")
-    pans = [nd["gen.pan"].base for nd in gen.node_slots]
+    # DX7 voices are spread across the stereo field
+    gen = next(m for m in st.patch.modules.values() if m.type == "DX7")
+    pans = [nd["dx7.pan"].base for nd in gen.node_slots]
     assert min(pans) < -0.3 and max(pans) > 0.3
 
 
 def test_connection_legality_and_cycles():
     st = _state()
     g = {m.type: m.id for m in st.patch.modules.values()}
-    # GEN is a pure source (no input); VIZ has neither port
-    assert not st.patch.can_input(g["GEN"])
+    # DX7 is a pure source (no input); VIZ has neither port
+    assert not st.patch.can_input(g["DX7"])
     assert not st.patch.can_output(g["VIZ"]) and not st.patch.can_input(g["VIZ"])
-    assert st.patch.connection_legal(g["BAND"], g["GEN"])[0] is False     # GEN has no input
-    # GAIN -> BAND would close a cycle (BAND ->...-> GAIN already exists)
-    assert st.patch.connection_legal(g["GAIN"], g["BAND"])[0] is False
-    # a fresh legal parallel branch: GEN -> COMB (both exist, no cycle)
+    assert st.patch.connection_legal(g["FBANK"], g["DX7"])[0] is False     # DX7 has no input
+    # GAIN -> FBANK would close a cycle (FBANK ->...-> GAIN already exists)
+    assert st.patch.connection_legal(g["GAIN"], g["FBANK"])[0] is False
+    # a fresh legal parallel branch: DX7 -> COMB (both exist, no cycle)
     st.patch.remove_connection("c_" + g["TIME"] + "_" + g["COMB"])
-    assert st.patch.connection_legal(g["GEN"], g["COMB"])[0] is True
+    assert st.patch.connection_legal(g["DX7"], g["COMB"])[0] is True
 
 
 def test_random_patch_within_limits():
@@ -292,26 +292,26 @@ def test_mi_modules_clouds_rings():
 def test_random_chain_keeps_params_and_limits():
     from collections import Counter
     st = _state()
-    st.random_chain(["GEN", "BAND", "COMB", "COMB", "VERB"])
+    st.random_chain(["DX7", "FBANK", "COMB", "COMB", "VERB"])
     types = Counter(m.type for m in st.patch.modules.values())
-    assert set(types) <= {"GEN", "BAND", "COMB", "VERB"}
-    assert all(v <= 2 for v in types.values()) and len(st.patch.modules) <= 8
+    assert set(types) <= {"DX7", "FBANK", "COMB", "VERB"}
+    assert all(v <= 5 for v in types.values()) and len(st.patch.modules) <= 12
     # Chain scope must NOT randomize params — new modules keep their defaults
-    gen = next(m for m in st.patch.modules.values() if m.type == "GEN")
-    slot = gen.node_slots[0]["gen.amp"]
+    gen = next(m for m in st.patch.modules.values() if m.type == "DX7")
+    slot = gen.node_slots[0]["dx7.amp"]
     assert slot.base == slot.meta.default
-    # contract enforced even if the user over-selects
-    st.random_chain(["COMB"] * 6 + ["BAND"] * 6)
+    # contract enforced even if the user over-selects: up to 5 of a type, <=12 total
+    st.random_chain(["COMB"] * 8 + ["FBANK"] * 8)
     types = Counter(m.type for m in st.patch.modules.values())
-    assert types["COMB"] == 2 and types["BAND"] == 2
+    assert types["COMB"] == 5 and types["FBANK"] == 5
 
 
 def test_lfo_bank():
     st = _state()
     assert len(st.lfo_ids()) == 8                      # 8 by default
-    gen = next(m for m in st.patch.modules.values() if m.type == "GEN")
+    gen = next(m for m in st.patch.modules.values() if m.type == "DX7")
     # assigning a target creates a single route; shape maps to source type
-    st.set_lfo("lfo1", shape="sh", rate=2.0, depth=0.8, target=f"{gen.id}|gen.amp")
+    st.set_lfo("lfo1", shape="sh", rate=2.0, depth=0.8, target=f"{gen.id}|dx7.amp")
     assert "lfo1_rt" in st.mod.routes
     assert st.mod.sources["lfo1"].type is ModType.RANDOM_STEPPED
     st.set_lfo("lfo1", shape="triangle")
@@ -319,7 +319,7 @@ def test_lfo_bank():
     # the LFO actually produces a non-zero offset for the target after ticking
     for _ in range(30):
         offs = st.mod.tick(0.02)
-    assert any(k[0] == gen.id and k[1] == "gen.amp" for k in offs)
+    assert any(k[0] == gen.id and k[1] == "dx7.amp" for k in offs)
     # expandable up to 30, shrinkable (clamped)
     st.ensure_lfos(30); assert len(st.lfo_ids()) == 30
     st.ensure_lfos(99); assert len(st.lfo_ids()) == 30
@@ -331,21 +331,21 @@ def test_lfo_bank():
 
 def test_per_module_lfos():
     st = _state()
-    gen = next(m for m in st.patch.modules.values() if m.type == "GEN")
+    gen = next(m for m in st.patch.modules.values() if m.type == "DX7")
     # per-module LFOs are disabled by default and one exists per modulatable param
     assert gen.per_module_lfos_enabled is False
-    assert "gen.amp" in gen.per_module_lfos
-    assert gen.per_module_lfos["gen.amp"]["enabled"] is False
+    assert "dx7.amp" in gen.per_module_lfos
+    assert gen.per_module_lfos["dx7.amp"]["enabled"] is False
     # enable the bank and one LFO; it creates a route in the per-module engine
     st.set_per_module_lfos_enabled(gen.id, True)
-    st.set_per_module_lfo(gen.id, "gen.amp", enabled=True, shape="sine", rate=2.0, depth=0.5)
+    st.set_per_module_lfo(gen.id, "dx7.amp", enabled=True, shape="sine", rate=2.0, depth=0.5)
     assert gen.per_module_lfos_enabled is True
-    rt_id = st._pmod_rt_id(gen.id, "gen.amp")
+    rt_id = st._pmod_rt_id(gen.id, "dx7.amp")
     assert rt_id in st.per_module_mod.routes
     # ticking produces an offset for the target
     for _ in range(30):
         offs = st.per_module_mod.tick(0.02)
-    assert any(k[0] == gen.id and k[1] == "gen.amp" for k in offs)
+    assert any(k[0] == gen.id and k[1] == "dx7.amp" for k in offs)
     # disabling the bank removes per-module routes
     st.set_per_module_lfos_enabled(gen.id, False)
     assert rt_id not in st.per_module_mod.routes
@@ -353,10 +353,10 @@ def test_per_module_lfos():
     d = patch_to_dict(st)
     st2 = _state()
     patch_from_dict(st2, d)
-    gen2 = next(m for m in st2.patch.modules.values() if m.type == "GEN")
+    gen2 = next(m for m in st2.patch.modules.values() if m.type == "DX7")
     assert gen2.per_module_lfos_enabled is False
-    assert gen2.per_module_lfos["gen.amp"]["shape"] == "sine"
-    assert gen2.per_module_lfos["gen.amp"]["rate"] == pytest.approx(2.0)
+    assert gen2.per_module_lfos["dx7.amp"]["shape"] == "sine"
+    assert gen2.per_module_lfos["dx7.amp"]["rate"] == pytest.approx(2.0)
 
 
 def test_panic_disarms_feedback():
@@ -365,3 +365,120 @@ def test_panic_disarms_feedback():
     st.patch.feedback_edges["fb"] = FeedbackEdge(id="fb", source_module="x", dest_module="y", armed=True)
     st.panic()
     assert st.patch.feedback_edges["fb"].armed is False
+
+
+# --------------------------------------------------------------------------- #
+# Guided (aesthetic) generation — structure, modulation, rhythm.
+# --------------------------------------------------------------------------- #
+def test_aesthetics_plans_are_artist_shaped():
+    from atelier import aesthetics
+    import random
+    rng = random.Random(7)
+    SOURCE_TYPES = {"DX7", "PLAITS", "RINGS", "BUCHLOID", "BEN"}
+    # palettes honour required modules, the count cap, the source cap (anti-cacophony)
+    # and never stack distortions.
+    for artist in aesthetics.ARTISTS:
+        pal = aesthetics.MODULE_PALETTE[artist]
+        lo, hi = pal["count"]
+        for _ in range(40):
+            mods = aesthetics.pick_modules(rng, artist)
+            assert mods, artist
+            assert lo <= len(mods) <= hi
+            assert mods.count("DISTORT") <= 1
+            n_src = sum(1 for m in mods if m in SOURCE_TYPES)
+            assert 1 <= n_src <= pal["sources_count"][1], (artist, mods)
+            for req in pal["require"]:
+                assert req in mods, (artist, req)
+            assert "SEQ" not in mods            # rhythm is GATE's job, never the SEQ
+    # lfo plans respect the per-artist count, route only to real targets, keep
+    # modulation modest, and (given enough distinct targets) don't stack multiple
+    # LFOs on the same param.
+    valid = {f"m{i}|p{i}" for i in range(12)}
+    targets = [(f"m{i}", f"p{i}", aesthetics.BRIGHT) for i in range(12)]  # all preferred
+    plan = aesthetics.lfo_plan(rng, "autechre", targets)
+    assert len(plan) == aesthetics.LFO_PROFILE["autechre"]["count"]
+    routed = [p["target"] for p in plan if p["target"]]
+    assert all(t in valid for t in routed)
+    assert len(routed) == len(set(routed))        # no duplicate destinations
+    assert all(p["depth"] <= 0.5 for p in plan)   # modulation stays modest
+
+
+def test_guided_patch_limits_voices_and_is_congruent():
+    from atelier import aesthetics
+    SOURCE_TYPES = {"DX7", "PLAITS", "RINGS", "BUCHLOID", "BEN"}
+    # Across seeds, a guided patch never piles up voices (the cacophony guard) and
+    # stays small.
+    for seed in range(12):
+        st = _state()
+        st.reseed(500 + seed)
+        st.random_patch(style="autechre")
+        types = [m.type for m in st.patch.modules.values()]
+        gens = [m for m in st.patch.modules.values() if m.type in SOURCE_TYPES]
+        assert len(gens) <= 2, [m.type for m in gens]
+        assert sum(m.node_count for m in gens) <= 4   # few simultaneous voices
+        assert "GATE" in types                        # rhythm via GATE, not SEQ
+        assert "SEQ" not in types                      # SEQ is never auto-added
+
+    # Lustmord: a single drone in a cavern — no rhythm, reverb present.
+    st2 = _state()
+    st2.reseed(123)
+    st2.random_patch(style="lustmord")
+    types2 = [m.type for m in st2.patch.modules.values()]
+    assert "SEQ" not in types2
+    assert "VERB" in types2
+    assert sum(1 for t in types2 if t in SOURCE_TYPES) == 1
+
+
+def test_rewire_patch_keeps_modules_changes_wiring():
+    st = _state()
+    st.reseed(42)
+    st.random_patch(style="free")
+    before_ids = set(st.patch.modules)
+    # capture a param to confirm Free rewire preserves params
+    any_mod = next(m for m in st.patch.modules.values() if m.spec.is_audio and m.node_slots)
+    pid, slot = next(iter(any_mod.node_slots[0].items()))
+    slot.base = 0.123
+    st.rewire_patch(style="free")           # Free: wiring only, modules + params kept
+    assert set(st.patch.modules) == before_ids
+    assert any_mod.node_slots[0][pid].base == 0.123
+    # a multi-module patch should end up with at least one connection
+    assert len(st.patch.connections) >= 1
+    # Guided rewire keeps modules but is allowed to reshape params
+    st.rewire_patch(style="lustmord")
+    assert set(st.patch.modules) == before_ids
+
+
+def test_scene_instant_recall_rebuilds_structure():
+    st = _state()
+    st.add_scene(); a = st.scenes.active
+    st.capture_scene(a, "A")
+    a_ids = set(st.patch.modules)
+    victim = next(m.id for m in st.patch.modules.values() if m.spec.insert_capable)
+    st.remove_module(victim)
+    assert set(st.patch.modules) != a_ids
+    st.load_scene(a, morph=0.0)                 # instant recall
+    assert set(st.patch.modules) == a_ids       # full structure restored
+
+
+def test_scene_timed_morph_commits_structure():
+    st = _state()
+    st.add_scene(); a = st.scenes.active
+    st.capture_scene(a, "A")
+    a_ids = set(st.patch.modules)
+    a_conns = sorted((c["src"], c["dst"]) for c in st.patch.connections)
+    # change the STRUCTURE: drop a module + rewire, then capture B
+    st.remove_module(next(m.id for m in st.patch.modules.values() if m.spec.insert_capable))
+    st.rewire_patch(style="free")
+    st.add_scene(); b = st.scenes.active
+    st.capture_scene(b, "B")
+    assert set(st.patch.modules) != a_ids
+    # morph back to A; drive the control-rate stepper to completion
+    st.load_scene(a, morph=1.0)
+    assert st._scene_morph is not None and st._scene_morph["structural"]
+    for _ in range(200):
+        st._advance_scene_morph(0.02)
+        if st._scene_morph is None:
+            break
+    assert st._scene_morph is None
+    assert set(st.patch.modules) == a_ids       # structure reconciled to A
+    assert sorted((c["src"], c["dst"]) for c in st.patch.connections) == a_conns

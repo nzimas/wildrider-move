@@ -12,12 +12,15 @@ import random
 import time
 from typing import Any, Callable
 
+from . import aesthetics
 from .catalog import spec
 from .control import ControlLayer, Macro, MacroTarget
+from .params import RandomizePolicy
 from .model import Lane, LaneMode, ModuleInstance, Patch
 from .modulation import ModEngine, ModRoute, ModSource, ModType, NodeScope
 from .osc_bridge import OSCBridge
 from .scenes import SceneEngine
+from .seq import SeqEngine
 
 _EPS = 1e-4
 
@@ -28,6 +31,7 @@ class StateManager:
         self.mod = ModEngine(root_seed=self.patch.root_seed)
         self.per_module_mod = ModEngine(root_seed=self.patch.root_seed)
         self.scenes = SceneEngine()
+        self.seq = SeqEngine()
         self.control = ControlLayer()
         self.bridge = bridge or OSCBridge()
         self.rng = random.Random(self.patch.root_seed)
@@ -36,6 +40,7 @@ class StateManager:
         self._panic = False
         self.cpu_warn = False
         self._morph_state: dict[str, Any] | None = None
+        self._scene_morph: dict[str, Any] | None = None   # active timed scene morph
         self._last_tick = time.monotonic()
 
     # -- change notification (for websocket push) -------------------------- #
@@ -109,6 +114,8 @@ class StateManager:
         m.x, m.y = x, y
         self.patch.add_module(m)
         self._rebuild_per_module_lfos(m)
+        if m.type == "SEQ":
+            self.seq.add(m.id)
         if m.spec.is_audio:
             self.bridge.module_new(m.id, m.type, self.patch.channel_count, m.node_count, 0)
             self._push_module(m)
@@ -117,13 +124,120 @@ class StateManager:
         return m
 
     def remove_module(self, mid: str) -> None:
-        self.patch.remove_module(mid)        # also drops its connections
+        self.patch.remove_module(mid)        # also drops its audio + midi connections
         self.bridge.module_free(mid)
         for rid in [r.id for r in self.mod.routes.values() if r.dest_module_id == mid]:
             self.mod.remove_route(rid)
         self._remove_per_module_lfos(mid)
+        self.seq.remove(mid)                 # if it was a SEQ
+        for sid in self.seq.seqs:            # rebuild any SEQ that targeted it
+            self._rebuild_seq_targets(sid)
         self._sync_graph()
         self._notify({"type": "module_removed", "id": mid})
+
+    # ------------------------------------------------------------------ #
+    # MIDI / control graph + sequencer.
+    # ------------------------------------------------------------------ #
+    def _pitch_param(self, spec) -> str | None:
+        params = spec.node_params + spec.global_params
+        for p in params:
+            sid = p.id.split(".", 1)[-1].lower()
+            if sid in ("note", "pitch", "pit") or sid.startswith("note") or sid.startswith("pitch"):
+                return p.id
+        for p in params:
+            if "freq" in p.id.split(".", 1)[-1].lower():
+                return p.id
+        return None
+
+    def _target_descriptor(self, mid: str) -> dict | None:
+        m = self.patch.modules.get(mid)
+        if not m:
+            return None
+        spec = m.spec
+        pitch = self._pitch_param(spec)
+        root = 48
+        if pitch:
+            pm = next((p for p in spec.node_params + spec.global_params if p.id == pitch), None)
+            if pm and pm.rmax <= 127:
+                root = int(pm.default)
+        # CC defaults: first modulatable params that aren't the pitch or an enable
+        ccs = [(p.id, p.label) for p in (spec.node_params + spec.global_params)
+               if p.modulatable and p.id != pitch
+               and not p.id.split(".", 1)[-1].lower().startswith(("enable", "nodeenable"))]
+        vel = next((p.id for p in spec.node_params + spec.global_params
+                    if "velocity" in p.id.split(".", 1)[-1].lower()
+                    or p.id.split(".", 1)[-1].lower() == "vel"), None)
+        return {"mid": mid, "generative": spec.generative_capable,
+                "pitch_param": pitch, "vel_param": vel, "root": root, "cc_params": ccs}
+
+    def _rebuild_seq_targets(self, seq_mid: str) -> None:
+        if seq_mid not in self.seq.seqs:
+            return
+        targets = [d for t in self.patch.midi_targets(seq_mid)
+                   if (d := self._target_descriptor(t))]
+        self.seq.rebuild_targets(seq_mid, targets)
+
+    def add_midi_connection(self, src: str, dst: str) -> None:
+        c = self.patch.add_midi_connection(src, dst)
+        if c:
+            self._rebuild_seq_targets(src)
+            self._notify({"type": "midi_connected", "src": src, "dst": dst})
+
+    def remove_midi_connection(self, cid: str) -> None:
+        src = next((c["src"] for c in self.patch.midi_connections if c["id"] == cid), None)
+        self.patch.remove_midi_connection(cid)
+        if src:
+            self._rebuild_seq_targets(src)
+        self._notify({"type": "midi_disconnected", "id": cid})
+
+    def seq_set_clock(self, mid: str, **kw) -> None:
+        self.seq.set_clock(mid, **kw)
+        # when stopped, release the gates so note targets aren't left muted at gate 0
+        if kw.get("running") is False:
+            st = self.seq.seqs.get(mid)
+            for tmid, lanes in (st.targets.items() if st else []):
+                if any(ln.kind == "note" for ln in lanes):
+                    self.bridge.set_param(tmid, "gate", -1, 1.0)
+        self._notify({"type": "seq_clock", "id": mid})
+
+    def seq_randomize(self, mid: str, target: str | None = None,
+                      index: int | None = None) -> None:
+        n = self.seq.randomize(mid, self.rng, target, index)
+        self._notify({"type": "seq_randomized", "id": mid, "changed": n})
+
+    def seq_set_lane(self, mid: str, target: str, index: int, **kw) -> None:
+        lane = self.seq.lane(mid, target, index)
+        if not lane:
+            return
+        for k, v in kw.items():
+            if v is None or not hasattr(lane, k):
+                continue
+            cur = getattr(lane, k)
+            setattr(lane, k, type(cur)(v) if isinstance(cur, (int, float)) and not isinstance(cur, bool)
+                    else (bool(v) if isinstance(cur, bool) else v))
+        self._notify({"type": "seq_lane", "id": mid, "target": target, "index": index})
+
+    def _apply_seq_writes(self, writes: list) -> None:
+        for ev in writes:
+            kind, tgt = ev[0], ev[1]
+            m = self.patch.modules.get(tgt)
+            if not m:
+                continue
+            if kind == "cc":
+                _, _, pid, norm = ev
+                slot = m.global_slots.get(pid) or (m.node_slots[0].get(pid) if m.node_slots else None)
+                if slot:
+                    self.bridge.set_param(tgt, m.short_pid(pid), -1, slot.meta.to_value(norm))
+            elif kind in ("note", "vel"):
+                _, _, pid, val = ev
+                if not pid:
+                    continue
+                slot = (m.node_slots[0].get(pid) if m.node_slots else None) or m.global_slots.get(pid)
+                if slot:
+                    val = max(slot.meta.rmin, min(slot.meta.rmax, float(val)))
+                self.bridge.set_param(tgt, m.short_pid(pid), -1, float(val))
+            elif kind == "gate":
+                self.bridge.set_param(tgt, "gate", -1, float(ev[2]))
 
     def clear_patch(self) -> None:
         """Remove every module and connection, leaving lanes/LFOs/scenes intact."""
@@ -239,9 +353,18 @@ class StateManager:
             self.per_module_mod.rebuild_route(rid, m.node_count, m.node_positions())
 
     def _remove_per_module_lfos(self, mid: str) -> None:
-        for pid in list(self.patch.modules.get(mid, ModuleInstance("", "", "")).per_module_lfos or []):
-            self.per_module_mod.remove_route(self._pmod_rt_id(mid, pid))
-            self.per_module_mod.remove_source(self._pmod_src_id(mid, pid))
+        m = self.patch.modules.get(mid)
+        if m is not None:
+            for pid in list(m.per_module_lfos or []):
+                self.per_module_mod.remove_route(self._pmod_rt_id(mid, pid))
+                self.per_module_mod.remove_source(self._pmod_src_id(mid, pid))
+            return
+        # module already gone: tear down its sources/routes by id prefix
+        pre_s, pre_r = self._pmod_src_id(mid, ""), self._pmod_rt_id(mid, "")
+        for rid in [r for r in list(self.per_module_mod.routes) if r.startswith(pre_r)]:
+            self.per_module_mod.remove_route(rid)
+        for sid in [s for s in list(self.per_module_mod.sources) if s.startswith(pre_s)]:
+            self.per_module_mod.remove_source(sid)
 
     def _rebuild_per_module_lfos(self, m: ModuleInstance) -> None:
         for pid in m.per_module_lfos:
@@ -305,6 +428,7 @@ class StateManager:
         slot = self.patch.find_slot(mid, pid, node)
         if slot:
             slot.locked = locked
+            self._notify({"type": "param_lock", "id": mid, "param": pid, "node": node, "locked": locked})
 
     def _gen_id(self, prefix: str) -> str:
         i = 1
@@ -319,6 +443,9 @@ class StateManager:
         now = time.monotonic()
         dt = max(1e-4, min(0.1, now - self._last_tick))
         self._last_tick = now
+        # advance an in-progress timed scene morph (current state -> target scene)
+        if self._scene_morph:
+            self._advance_scene_morph(dt)
         # feed analysis followers from the latest SC analysis
         patch_offsets = self.mod.tick(dt, self.bridge.analysis)
         module_offsets = self.per_module_mod.tick(dt, self.bridge.analysis)
@@ -350,6 +477,23 @@ class StateManager:
             if last is None or any(abs(a - b) > _EPS for a, b in zip(vals, last)):
                 self.bridge.set_vector(mid, short, vals)
                 self._last_sent[(mid, pid)] = vals
+        # MIDI sequencers (clock source): read their (modulatable) tempo/density/
+        # mutation slots — so LFOs can wobble them — then advance + write to targets.
+        if self.seq.seqs:
+            for mid, st in self.seq.seqs.items():
+                m = self.patch.modules.get(mid)
+                if not m:
+                    continue
+                gs = m.global_slots
+                if "seq.tempo" in gs:
+                    st.tempo = gs["seq.tempo"].effective
+                if "seq.density" in gs:
+                    st.dens_scale = gs["seq.density"].effective
+                if "seq.mutation" in gs:
+                    st.mut_scale = gs["seq.mutation"].effective
+            writes = self.seq.tick(dt)
+            if writes:
+                self._apply_seq_writes(writes)
         # CPU watchdog awareness
         total_nodes = sum(m.node_count for m in self.patch.modules.values()
                           if spec(m.type).is_audio)
@@ -467,21 +611,274 @@ class StateManager:
         self._notify({"type": "lfos_randomized"})
 
     # ------------------------------------------------------------------ #
-    # Scenes.
+    # Scenes (performance snapshots: modules + params + LFOs).
     # ------------------------------------------------------------------ #
-    def capture_scene(self, scene_id: str, name: str = "") -> None:
-        self.scenes.capture(self.patch, scene_id, name)
-        self._notify({"type": "scene_captured", "id": scene_id})
+    def _snapshot_lfos(self) -> dict[str, dict[str, Any]]:
+        """Current LFO bank state: shape / rate / depth / target per LFO."""
+        out: dict[str, dict[str, Any]] = {}
+        for sid in self.lfo_ids():
+            src = self.mod.sources.get(sid)
+            if not src:
+                continue
+            rt = self.mod.routes.get(f"{sid}_rt")
+            shape = ("sh" if src.type is ModType.RANDOM_STEPPED
+                     else ("triangle" if src.shape == "tri" else "sine"))
+            out[sid] = {
+                "shape": shape, "rate": src.rate,
+                "depth": rt.depth if rt else 0.5,
+                "target": f"{rt.dest_module_id}|{rt.dest_param_id}" if rt else "",
+            }
+        return out
 
-    def recall_scene(self, scene_id: str) -> None:
-        self.scenes.recall(self.patch, scene_id)
-        self._resync_all()
-        self._notify({"type": "scene_recalled", "id": scene_id})
+    def _restore_lfos(self, lfos: dict[str, dict[str, Any]]) -> None:
+        for sid, cfg in (lfos or {}).items():
+            if self.mod.sources.get(sid):
+                self.set_lfo(sid, shape=cfg.get("shape"), rate=cfg.get("rate"),
+                             depth=cfg.get("depth"), target=cfg.get("target", ""))
 
-    def morph_scenes(self, scene_a: str, scene_b: str, t: float) -> None:
-        self.scenes.morph(self.patch, scene_a, scene_b, t)
+    def _new_scene_id(self) -> str:
+        i = 1
+        while f"scene_{i}" in self.scenes.scenes:
+            i += 1
+        return f"scene_{i}"
+
+    def add_scene(self) -> None:
+        """Create a new empty scene slot and select it (capture stores into it)."""
+        sid = self._new_scene_id()
+        self.scenes.add_empty(sid)
+        self.scenes.active = sid
+        self._notify({"type": "scene_added", "id": sid})
+
+    def capture_scene(self, scene_id: str | None = None, name: str = "") -> None:
+        """Store a COMPLETE snapshot of the performance (modules, wiring, MIDI graph,
+        LFO bank + modulation topology, sequencer, positions, all params) into the
+        SELECTED scene slot. Scenes are clips: faithful, recall-anywhere captures."""
+        sid = scene_id or self.scenes.active
+        if not sid or sid not in self.scenes.scenes:
+            sid = sid or self._new_scene_id()
+        self.scenes.store(sid, name or sid, self._capture_snapshot())
+        self.scenes.active = sid
+        self._notify({"type": "scene_captured", "id": sid})
+
+    def remove_scene(self, scene_id: str) -> None:
+        self.scenes.remove(scene_id)   # also clears active if it was this one
+        if self._scene_morph and self._scene_morph.get("dst_id") == scene_id:
+            self._scene_morph = None
+        self._notify({"type": "scene_removed", "id": scene_id})
+
+    # -- full-state snapshot helpers --------------------------------------- #
+    def _capture_snapshot(self) -> dict[str, Any]:
+        """A complete patch snapshot (the persistence shape minus the scene bank /
+        control maps, which must not be nested inside a scene)."""
+        from .persistence import patch_to_dict
+        d = patch_to_dict(self)
+        d.pop("scenes", None)
+        d.pop("control", None)
+        return d
+
+    def _full_snapshot(self) -> dict[str, Any]:
+        from .snapshot import full_snapshot
+        return full_snapshot(self)
+
+    def load_scene(self, scene_id: str, morph: float = 0.0) -> None:
+        """Load a scene. Empty slots just select. Filled slots: morph<=~0 = instant
+        rebuild; else a timed morph from the CURRENT live state — params/wet/positions
+        glide continuously while structural change (re-wiring, modules added/removed,
+        whole-patch regeneration) commits at the midpoint. The UI is streamed live
+        throughout so the canvas and panels update as it unfolds."""
+        sc = self.scenes.scenes.get(scene_id)
+        if not sc:
+            return
+        self.scenes.active = scene_id
+        if not sc.filled:         # empty slot — just select it (nothing to apply)
+            self._scene_morph = None
+            self._notify({"type": "scene_loaded", "id": scene_id})
+            return
+        if morph <= 0.05:
+            self._apply_snapshot(sc.snapshot)
+            self._scene_morph = None
+            self._notify({"type": "reload", "snapshot": self._full_snapshot()})
+            self._notify({"type": "scene_loaded", "id": scene_id})
+            return
+        src = self._capture_snapshot()
+        dst = sc.snapshot
+        self._scene_morph = {
+            "dst_id": scene_id, "src": src, "dst": dst,
+            "elapsed": 0.0, "duration": float(morph), "since_frame": 0.0,
+            "committed": False, "structural": self._morph_is_structural(src, dst),
+            "exclusions": sc.exclusions, "policy": sc.discrete_policy,
+        }
+        self._notify({"type": "scene_loading", "id": scene_id, "morph": morph,
+                      "structural": self._scene_morph["structural"]})
+
+    def _morph_is_structural(self, src: dict, dst: dict) -> bool:
+        """Does morphing src->dst require rebuilding structure (not just sliding
+        params)? True if the module set, wiring, MIDI graph, modulation topology,
+        sequencer or any module's node-count / per-module-LFO config differs."""
+        smods = {m["id"]: m for m in src.get("modules", [])}
+        dmods = {m["id"]: m for m in dst.get("modules", [])}
+        if set(smods) != set(dmods):
+            return True
+        for key in ("connections", "midi_connections", "mod_sources", "mod_routes", "seq"):
+            if src.get(key) != dst.get(key):
+                return True
+        for mid, a in smods.items():
+            b = dmods[mid]
+            if (a.get("node_count") != b.get("node_count")
+                    or a.get("per_module_lfos_enabled") != b.get("per_module_lfos_enabled")
+                    or a.get("per_module_lfos") != b.get("per_module_lfos")):
+                return True
+        return False
+
+    def _apply_snapshot(self, snap: dict) -> None:
+        """Rebuild the live patch (modules, wiring, modulation, sequencer, engine)
+        from a full snapshot, leaving the scene bank / control maps untouched."""
+        from .persistence import _source_from_dict, _route_from_dict
+        from .model import FeedbackEdge
+        for mid in list(self.patch.modules):
+            self.bridge.module_free(mid)
+        self.patch.modules.clear()
+        self.patch.connections = [dict(c) for c in snap.get("connections", [])]
+        self.patch.midi_connections = [dict(c) for c in snap.get("midi_connections", [])]
+        self.patch.feedback_edges = {fb["id"]: FeedbackEdge(**fb)
+                                     for fb in snap.get("feedback_edges", [])}
+        for md in snap.get("modules", []):
+            self.patch.modules[md["id"]] = ModuleInstance.from_dict(md)
+        self.mod.sources.clear(); self.mod.routes.clear(); self.mod._instances.clear()
+        for s in snap.get("mod_sources", []):
+            self.mod.add_source(_source_from_dict(s))
+        for r in snap.get("mod_routes", []):
+            route = _route_from_dict(r)
+            m = self.patch.modules.get(route.dest_module_id)
+            self.mod.add_route(route, m.node_count if m else 1)
+            if m:
+                self.mod.rebuild_route(route.id, m.node_count, m.node_positions())
+        self.per_module_mod.sources.clear(); self.per_module_mod.routes.clear()
+        self.per_module_mod._instances.clear()
+        for m in self.patch.modules.values():
+            self._rebuild_per_module_lfos(m)
+        self.seq.seqs.clear()
+        self.seq.load_dict(snap.get("seq", {}))
+        for sid in list(self.seq.seqs):
+            self._rebuild_seq_targets(sid)
+        self.build_graph()
+
+    def _advance_scene_morph(self, dt: float) -> None:
+        sm = self._scene_morph
+        if not sm:
+            return
+        from .scenes import interp_params
+        sm["elapsed"] += dt
+        t = min(1.0, sm["elapsed"] / max(1e-4, sm["duration"]))
+        # glide every comparable param/wet/position toward the destination
+        interp_params(self.patch, sm["src"], sm["dst"], t,
+                      exclusions=sm["exclusions"], policy=sm["policy"])
+        # commit structural change once, at the midpoint
+        if sm["structural"] and not sm["committed"] and t >= 0.5:
+            self._morph_commit(sm["dst"])
+            sm["committed"] = True
+            interp_params(self.patch, sm["src"], sm["dst"], t,
+                          exclusions=sm["exclusions"], policy=sm["policy"])
+            self._resync_all()
+            self._notify_morph_frame(t)        # push the new structure immediately
+        self._resync_all()                      # audio follows every tick
+        if t >= 1.0:
+            self._finalize_scene_morph(sm)
+            return
+        sm["since_frame"] += dt
+        if sm["since_frame"] >= 0.07:           # stream the canvas/panels ~14 fps
+            sm["since_frame"] = 0.0
+            self._notify_morph_frame(t)
+
+    def _finalize_scene_morph(self, sm: dict) -> None:
+        from .scenes import interp_params
+        if sm["structural"] and not sm["committed"]:
+            self._morph_commit(sm["dst"])
+            sm["committed"] = True
+        interp_params(self.patch, sm["src"], sm["dst"], 1.0,
+                      exclusions=sm["exclusions"], policy=sm["policy"])
         self._resync_all()
-        self._notify({"type": "scene_morph", "a": scene_a, "b": scene_b, "t": t})
+        self._scene_morph = None
+        self._notify({"type": "reload", "snapshot": self._full_snapshot()})
+        self._notify({"type": "scene_loaded", "id": sm["dst_id"]})
+
+    def _notify_morph_frame(self, t: float) -> None:
+        """A light, catalog-free live frame: enough for the UI to redraw the canvas,
+        detail panel, modulation and scene highlight mid-morph (merged into its
+        existing state, which already holds the static catalog)."""
+        from .snapshot import module_state, lfos_dict, mod_targets
+        p = self.patch
+        frame = {
+            "global": {"name": p.name, "root_seed": p.root_seed,
+                       "expert_override": p.expert_override},
+            "connections": list(p.connections),
+            "midi_connections": list(p.midi_connections),
+            "seq": self.seq.to_dict(),
+            "modules": [module_state(self, mid) for mid in p.modules],
+            "mod_sources": [s.to_dict() for s in self.mod.sources.values()],
+            "mod_routes": [r.to_dict() for r in self.mod.routes.values()],
+            "lfos": lfos_dict(self),
+            "mod_targets": mod_targets(self),
+            "active_scene": self.scenes.active,
+        }
+        self._notify({"type": "morph_frame", "t": t, "frame": frame})
+
+    def _morph_commit(self, dst: dict) -> None:
+        """Reconcile structure to the destination snapshot mid-morph: add/remove
+        modules, re-wire audio + MIDI, rebuild the modulation topology and sequencer.
+        Surviving modules keep their (interpolated) param values so the glide
+        continues seamlessly across the structural switch."""
+        from .persistence import _source_from_dict, _route_from_dict
+        from .model import FeedbackEdge
+        target = {md["id"]: md for md in dst.get("modules", [])}
+        cur, tgt = set(self.patch.modules), set(target)
+        for mid in cur - tgt:                       # gone in the destination
+            self.patch.remove_module(mid)
+            self.bridge.module_free(mid)
+            self._remove_per_module_lfos(mid)
+            self.seq.remove(mid)
+        for mid in tgt - cur:                       # new in the destination
+            m = ModuleInstance.from_dict(target[mid])
+            self.patch.modules[mid] = m
+            self._rebuild_per_module_lfos(m)
+            if m.type == "SEQ":
+                self.seq.add(mid)
+            if m.spec.is_audio:
+                self.bridge.module_new(mid, m.type, self.patch.channel_count, m.node_count, 0)
+                self._push_module(m)
+        for mid in cur & tgt:                       # surviving: structural bits only
+            m = self.patch.modules[mid]
+            md = target[mid]
+            nc = md.get("node_count", m.node_count)
+            if nc != m.node_count:
+                m.set_node_count(nc)
+                if m.spec.is_audio:
+                    self.bridge.module_nodes(mid, nc)
+            m.per_module_lfos_enabled = md.get("per_module_lfos_enabled",
+                                               m.per_module_lfos_enabled)
+            for k, cfg in md.get("per_module_lfos", {}).items():
+                if k in m.per_module_lfos:
+                    m.per_module_lfos[k].update(cfg)
+            self._remove_per_module_lfos(mid)
+            self._rebuild_per_module_lfos(m)
+        self.patch.connections = [dict(c) for c in dst.get("connections", [])]
+        self.patch.midi_connections = [dict(c) for c in dst.get("midi_connections", [])]
+        self.patch.feedback_edges = {fb["id"]: FeedbackEdge(**fb)
+                                     for fb in dst.get("feedback_edges", [])}
+        self.mod.sources.clear(); self.mod.routes.clear(); self.mod._instances.clear()
+        for s in dst.get("mod_sources", []):
+            self.mod.add_source(_source_from_dict(s))
+        for r in dst.get("mod_routes", []):
+            route = _route_from_dict(r)
+            m = self.patch.modules.get(route.dest_module_id)
+            self.mod.add_route(route, m.node_count if m else 1)
+            if m:
+                self.mod.rebuild_route(route.id, m.node_count, m.node_positions())
+        self.seq.seqs.clear()
+        self.seq.load_dict(dst.get("seq", {}))
+        for sid in list(self.seq.seqs):
+            self._rebuild_seq_targets(sid)
+        self._sync_graph()
 
     def mutate(self, amount: float, expert: bool = False,
                module_filter: set[str] | None = None) -> int:
@@ -491,27 +888,119 @@ class StateManager:
         self._notify({"type": "mutated", "amount": amount, "changed": n})
         return n
 
+    # -- guided (aesthetic) generation ------------------------------------- #
+    def _gen_value(self, meta, mtype: str, style: str | None,
+                   base: float, amount: float, expert: bool) -> float:
+        """A value either freely randomized or shaped by an artist aesthetic."""
+        if style and style != "free":
+            if meta.randomize_policy is RandomizePolicy.OFF:
+                return base
+            if meta.randomize_policy is RandomizePolicy.EXPERT and not expert:
+                return base
+            return aesthetics.guided_value(self.rng, meta, style, expert)
+        return meta.randomize(self.rng, base, amount, expert)
+
+    def _apply_style(self, mid: str | None, style: str, expert: bool) -> int:
+        """Apply an artist aesthetic to every (non-locked, randomizable) slot of one
+        module (mid) or the whole patch (mid None)."""
+        mods = [self.patch.modules[mid]] if mid else list(self.patch.modules.values())
+        n = 0
+        for m in mods:
+            slots = list(m.global_slots.values())
+            for nd in m.node_slots:
+                slots.extend(nd.values())
+            for slot in slots:
+                if slot.locked or slot.meta.randomize_policy is RandomizePolicy.OFF:
+                    continue
+                if slot.meta.randomize_policy is RandomizePolicy.EXPERT and not expert:
+                    continue
+                slot.base = aesthetics.guided_value(self.rng, slot.meta, style, expert)
+                n += 1
+            # wet/dry of character effects — the biggest perceptual lever per artist
+            wet = aesthetics.guided_wet(self.rng, style, m.type)
+            if wet is not None:
+                m.wet_dry = wet
+        return n
+
+    # -- comprehensive guided generation (structure / motion / rhythm) ----- #
+    def _classified_mod_targets(self) -> list[tuple[str, str, str]]:
+        """(module_id, param_id, aesthetic role) for every modulatable param —
+        lets the guided modulation planner aim LFOs at role-appropriate knobs."""
+        out: list[tuple[str, str, str]] = []
+        for mid, m in self.patch.modules.items():
+            for p in m.spec.node_params + m.spec.global_params:
+                if p.modulatable:
+                    role, _inv = aesthetics.classify(p)
+                    out.append((mid, p.id, role))
+        return out
+
+    def _apply_guided_lfos(self, style: str) -> None:
+        """Configure the modulation bank for the aesthetic: count, shapes, rate
+        band and (role-aware) routing. This is the 'motion' half of an aesthetic."""
+        plans = aesthetics.lfo_plan(self.rng, style, self._classified_mod_targets())
+        if not plans:
+            return
+        self.ensure_lfos(min(len(plans), self.LFO_MAX))
+        for lid, plan in zip(self.lfo_ids(), plans):
+            self.set_lfo(lid, shape=plan["shape"], rate=plan["rate"],
+                         depth=plan["depth"], target=plan["target"])
+
+    def _apply_guided_per_module_lfos(self, mid: str, style: str) -> None:
+        """Module-wide motion: enable a subset of a module's per-module LFOs with
+        the aesthetic's rate/depth/shape character (used at module scope)."""
+        prof = aesthetics.LFO_PROFILE.get(style)
+        m = self.patch.modules.get(mid)
+        if not prof or not m or not m.per_module_lfos:
+            return
+        m.per_module_lfos_enabled = True
+        pids = list(m.per_module_lfos)
+        k = max(1, int(round(len(pids) * 0.4)))
+        on = set(self.rng.sample(pids, min(k, len(pids))))
+        for pid, cfg in m.per_module_lfos.items():
+            cfg["enabled"] = pid in on
+            cfg["shape"] = self.rng.choice(prof["shapes"])
+            cfg["rate"] = aesthetics._logrand(self.rng, *prof["rate"])
+            cfg["depth"] = self.rng.uniform(*prof["depth"])
+            self._sync_per_module_lfo(m, pid)
+
+    # Rhythm in guided patches is provided by the GATE module (it lives in the
+    # rhythmic artists' palettes), not by an auto-added SEQ — so there is no guided
+    # sequencer step; GATE's own clock supplies the pulse.
+
     def randomize(self, amount: float, scope: str = "global",
                   mid: str | None = None, pid: str | None = None,
-                  node: int | None = None, expert: bool = False) -> int:
+                  node: int | None = None, expert: bool = False,
+                  style: str | None = None) -> int:
         """Constrained randomizer at three scopes (GRM: param / module / patch).
         ``amount`` 0 keeps results near current, 1 is fully random within each
-        param's policy range. Locked params and modulator topology are preserved."""
+        param's policy range. ``style`` None/"free" = full randomization; an artist
+        id = guided generation reflecting that aesthetic. Locked params and
+        modulator topology are preserved."""
         ex = expert or self.patch.expert_override
         if scope == "param":
             slot = self.patch.find_slot(mid, pid, node)
             if not slot or slot.locked:
                 return 0
-            slot.base = slot.meta.randomize(self.rng, slot.base, amount, ex)
             m = self.patch.modules[mid]
+            slot.base = self._gen_value(slot.meta, m.type, style, slot.base, amount, ex)
             if m.spec.is_audio:
                 self.bridge.set_param(mid, m.short_pid(pid),
                                       node if node is not None else -1, slot.effective)
             self._notify({"type": "param", "id": mid, "param": pid, "node": node,
                           "base": slot.base, "display": slot.display()})
             return 1
-        flt = {mid} if (scope == "module" and mid) else None
-        n = self.scenes.mutate(self.patch, amount, self.rng, flt, ex)
+        if style and style != "free":
+            n = self._apply_style(mid if scope == "module" else None, style, ex)
+            # comprehensive guidance: motion at module scope, motion + rhythm at
+            # global scope (global reconfigures existing modules; it never adds new
+            # structure, so the SEQ is configured only if one is already present).
+            if scope == "module" and mid:
+                self._apply_guided_per_module_lfos(mid, style)
+            elif scope == "global":
+                self._apply_guided_lfos(style)
+        else:
+            flt = {mid} if (scope == "module" and mid) else None
+            n = self.scenes.mutate(self.patch, amount, self.rng, flt, ex)
         self._resync_all()
         self._notify({"type": "randomized", "scope": scope, "module": mid, "changed": n})
         return n
@@ -584,42 +1073,40 @@ class StateManager:
     # ------------------------------------------------------------------ #
     def init_default(self) -> None:
         """Build the default as a free-form graph: a serial chain
-        GEN -> BAND -> PITCH -> TIME -> COMB -> GAIN -> SDLY -> VERB laid out
-        left-to-right on the canvas, plus a standalone PLAY source and VIZ."""
-        chain = ["GEN", "BAND", "PITCH", "TIME", "COMB", "GAIN", "SDLY", "VERB"]
+        DX7 -> FBANK -> PITCH -> TIME -> COMB -> GAIN -> SDLY -> VERB laid out
+        left-to-right on the canvas, plus a VIZ display."""
+        chain = ["DX7", "FBANK", "PITCH", "TIME", "COMB", "GAIN", "SDLY", "VERB"]
         prev = None
         for i, t in enumerate(chain):
             mod = self.add_module(t, node_count=1, x=40 + i * 210, y=60)
             if prev:
                 self.patch.add_connection(prev, mod.id)
             prev = mod.id
-        self.add_module("PLAY", node_count=1, x=40, y=260)
         self.add_module("VIZ", node_count=1, x=40 + 8 * 210, y=260)
 
         def m(t):
             return next(mm for mm in self.patch.modules.values() if mm.type == t)
 
-        # GEN: a wide DX7-FM unison — several voices spread across the stereo
-        # field with small detunes, so the source is rich and wide rather than a
-        # single centred tone. Pans are distributed (clever panning), and a
-        # polyadic source decorrelates per-voice motion below.
-        gen = m("GEN")
+        # DX7: a wide 3-voice stack on one factory preset — notes spread across an
+        # octave triad and panned across the stereo field, so the source is rich
+        # and wide rather than a single centred tone. A polyadic source
+        # decorrelates per-voice pan motion below.
+        gen = m("DX7")
         gen.set_node_count(3)
-        spread = [-0.7, 0.05, 0.75]
-        detune = [-0.09, 0.0, 0.11]
+        spread = [-0.6, 0.0, 0.6]             # symmetric L / centre / R
+        notes = [36.0, 48.0, 55.0]            # low octave + fifth, held as a drone
+        gen.global_slots["dx7.preset"].base = 0.0
         for i, nd in enumerate(gen.node_slots):
-            nd["gen.waveform"].base = 7        # DX7-style FM voice
-            nd["gen.freq"].base = 110.0
-            nd["gen.fmIndex"].base = 3.0
-            nd["gen.fmRatioB"].base = 2.0
-            nd["gen.detune"].base = detune[i]
-            nd["gen.pan"].base = spread[i]
-            nd["gen.amp"].base = 0.3
+            nd["dx7.note"].base = notes[i]
+            nd["dx7.pan"].base = spread[i]
+            nd["dx7.amp"].base = 0.4
 
-        b = m("BAND")
-        b.node_slots[0]["band.centerHz"].base = 220.0
-        b.node_slots[0]["band.bandwidth"].base = 600.0
-        b.wet_dry = 0.5
+        # FBANK: gently scoop a couple of bands + a touch of resonance for colour.
+        fb = m("FBANK")
+        fb.global_slots["fbank.gain7"].base = 1.3      # ~1.5 kHz presence
+        fb.global_slots["fbank.gain3"].base = 0.7      # ~115 Hz tame
+        fb.global_slots["fbank.resonance"].base = 0.2
+        fb.wet_dry = 0.6
         m("PITCH").wet_dry = 0.3
         m("TIME").wet_dry = 0.3
         m("COMB").node_slots[0]["comb.freqOrDelay"].base = 110.0
@@ -634,10 +1121,12 @@ class StateManager:
         # and animating the stereo image.
         self.add_mod_source("agitation", "random_continuous", label="Agitation",
                             rate=0.4, smooth=0.4, depth=1.0)
-        self.add_mod_route("rt_pan", "agitation", gen.id, "gen.pan",
-                           scope="allDecorrelated", depth=0.45)
-        self.add_mod_route("rt_detune", "agitation", gen.id, "gen.detune",
-                           scope="allDecorrelated", depth=0.3)
+        # Decorrelated per-voice pan drift for a living stereo image. Depth kept
+        # modest so each voice stays in its own hemisphere (base ±0.6 ± 0.4): the
+        # image animates but never collapses to one side (was 0.45, which could
+        # align all voices hard to one channel and momentarily mute the other).
+        self.add_mod_route("rt_pan", "agitation", gen.id, "dx7.pan",
+                           scope="allDecorrelated", depth=0.2)
         # LFO bank: 8 assignable LFOs by default (expandable to 30).
         self.ensure_lfos(8)
 
@@ -674,53 +1163,89 @@ class StateManager:
             for u in self.rng.sample(cands, min(k, len(cands))):
                 self.patch.add_connection(u, mid)
 
-    def random_patch(self, amount: float | None = None) -> None:
-        """Patch scope: rewire a fresh legal graph AND randomize all params."""
+    def random_patch(self, amount: float | None = None, style: str | None = None) -> None:
+        """Patch scope: rewire a fresh legal graph AND generate all params (Free
+        randomization, or Guided in the chosen artist's aesthetic)."""
         from .catalog import CATALOG
         rng = self.rng
+        guided = bool(style and style != "free")
         self._teardown_modules()
         audio_types = [t for t, s in CATALOG.items() if s.is_audio]   # excludes VIZ
-        n = rng.randint(4, 8)
-        used: dict[str, int] = {}
         chosen: list[str] = []
 
-        def take(t: str) -> None:
-            if used.get(t, 0) < 2 and len(chosen) < 8:    # never >8 total, none >2x
-                chosen.append(t)
-                used[t] = used.get(t, 0) + 1
+        # Guided: assemble a module set from the artist's palette (their defining
+        # generators + effects). Free: a generic legal mix.
+        if guided:
+            chosen = aesthetics.pick_modules(rng, style) or []
+        if not chosen:
+            n = rng.randint(4, 8)
+            used: dict[str, int] = {}
 
-        take("GEN")            # GEN self-sounds; COMB/PLAY need excitation/buffer
-        guard = 0
-        while len(chosen) < n and guard < 200:
-            guard += 1
-            take(rng.choice(audio_types))
+            def take(t: str) -> None:
+                if used.get(t, 0) < 2 and len(chosen) < 8:    # never >8 total, none >2x
+                    chosen.append(t)
+                    used[t] = used.get(t, 0) + 1
 
-        ids = [self.add_module(t, node_count=rng.choice([1, 1, 2, 3])).id for t in chosen]
+            take("DX7")            # DX7 self-sounds; COMB/PLAY need excitation/buffer
+            guard = 0
+            while len(chosen) < n and guard < 200:
+                guard += 1
+                take(rng.choice(audio_types))
+
+        # Guided patches keep voice counts low (more nodes = more simultaneous
+        # detuned voices = denser/cacophonic); Free stays adventurous.
+        node_opts = [1, 1, 1, 2] if guided else [1, 1, 2, 3]
+        ids = [self.add_module(t, node_count=rng.choice(node_opts)).id for t in chosen]
         self._wire_random(ids)
-        amt = amount if amount is not None else rng.uniform(0.6, 0.9)
-        self.scenes.mutate(self.patch, amt, rng, expert=self.patch.expert_override)
+        if guided:
+            self._apply_style(None, style, self.patch.expert_override)
+            self._apply_guided_lfos(style)      # motion (rhythm comes from GATE modules)
+        else:
+            amt = amount if amount is not None else rng.uniform(0.6, 0.9)
+            self.scenes.mutate(self.patch, amt, rng, expert=self.patch.expert_override)
         self._auto_layout()
         self._resync_all()
         self._sync_graph()
         self._notify({"type": "patch_replaced"})
 
-    def random_chain(self, types: list[str]) -> None:
+    def rewire_patch(self, style: str | None = None) -> None:
+        """Keep the current modules (and their params / node counts / MIDI links /
+        modulation topology) but regenerate the audio connection graph. Free = a new
+        legal wiring only; Guided = new wiring AND reshape params, wet mix and the
+        modulation bank to the chosen artist's aesthetic."""
+        ids = list(self.patch.modules.keys())
+        if not ids:
+            return
+        self.patch.connections.clear()       # keep modules; drop only the wiring
+        self._wire_random(ids)
+        if style and style != "free":
+            self._apply_style(None, style, self.patch.expert_override)
+            self._apply_guided_lfos(style)
+        self._resync_all()
+        self._sync_graph()
+        self._notify({"type": "patch_replaced"})
+
+    def random_chain(self, types: list[str], style: str | None = None) -> None:
         """Chain scope: build a new random legal graph from the user-selected
-        modules. Params are NOT randomized (new modules keep their defaults).
-        Enforces the contract: <= 8 modules total, none used more than twice."""
+        modules. Free = new modules keep defaults; Guided = each module's params are
+        generated module-aware in the chosen artist's aesthetic (no global-structure
+        decision — purely module/section level). <=24 modules, none used >5x."""
         from .catalog import CATALOG
         used: dict[str, int] = {}
         chosen: list[str] = []
         for t in types:
             if (t in CATALOG and CATALOG[t].is_audio
-                    and used.get(t, 0) < 2 and len(chosen) < 8):
+                    and used.get(t, 0) < 5 and len(chosen) < 24):
                 chosen.append(t)
                 used[t] = used.get(t, 0) + 1
         if not chosen:
             return
         self._teardown_modules()
         ids = [self.add_module(t, node_count=1).id for t in chosen]
-        self._wire_random(ids)               # rewire only — params left at defaults
+        self._wire_random(ids)               # rewire
+        if style and style != "free":        # guided: per-module aesthetic params
+            self._apply_style(None, style, self.patch.expert_override)
+            self._apply_guided_lfos(style)   # motion (rhythm comes from GATE modules)
         self._auto_layout()
         self._resync_all()
         self._sync_graph()

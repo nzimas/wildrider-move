@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Wildrider — Electroacoustic Instrument</title>
-  <link rel="stylesheet" href="/static/style.css?v=11" />
+  <link rel="stylesheet" href="/static/style.css?v=35" />
 </head>
 <body data-contrast="normal">
   <header id="topbar">
@@ -19,8 +19,12 @@
     </div>
     <div class="transport">
       <button id="btn-audio" title="Toggle live audio stream">▶ audio</button>
-      <button id="btn-save" title="Save patch">save</button>
-      <button id="btn-load" title="Load patch">load</button>
+      <button id="btn-record" class="rec" title="Record the live stream to a CD-quality WAV">
+        <span class="rec-dot"></span><span class="rec-label">record</span>
+      </button>
+      <button id="btn-recordings" title="Browse &amp; download recordings">⤓ recordings</button>
+      <button id="btn-save" title="Save performance">save</button>
+      <button id="btn-load" title="Load performance">load</button>
       <button id="btn-contrast" title="Toggle high-contrast accessibility mode">◐ contrast</button>
     </div>
     <audio id="player" hidden></audio>
@@ -33,6 +37,7 @@
         <svg id="wires" width="4000" height="2400"></svg>
       </div>
       <button id="btn-add" class="canvas-btn" title="Add a module to the patch">＋</button>
+      <button id="btn-rewire" class="canvas-btn" title="Rewire the patch — new connections (Free or Guided)">🔀</button>
       <button id="btn-clear" class="canvas-btn danger" title="Clear the entire patch">🧽</button>
     </section>
     <aside id="side">
@@ -50,26 +55,21 @@
           <button id="btn-rand-all" title="Randomize — choose Patch, Params or Chain">🎲 Randomize</button>
           <button id="btn-rand-module" title="Randomize the selected module's params">module</button>
         </div>
-        <div class="rand-hint">Patch = rewire + params · Params = params only · Chain = pick modules, new wiring (params kept) · amount sets intensity · locked (L) preserved · per-param 🎲 on each row</div>
+        <div class="rand-hint">Patch = rewire + params · Params = params only · Chain = pick modules (up to 5 each), new wiring · Free vs Guided is offered here &amp; on the module 🎲 (Guided also shapes modules &amp; modulation; rhythm comes from GATE) · section/param 🎲 are always Free · amount sets intensity · locked preserved</div>
       </div>
       <div class="panel" id="meters-panel">
         <h3>VIZ — meters</h3>
         <div id="meters"></div>
       </div>
-      <div class="panel" id="macros-panel">
-        <h3>Macros</h3>
-        <div id="macros"></div>
-      </div>
       <div class="panel" id="scenes-panel">
-        <h3>Scenes &amp; morph</h3>
-        <div id="scenes"></div>
+        <h3>Scenes</h3>
+        <div id="scenes" class="scene-grid"></div>
         <div class="row">
-          <button id="btn-capture">capture scene</button>
+          <button id="btn-add-scene" class="scene-act" title="Add a new scene slot">＋</button>
+          <button id="btn-capture" class="scene-act" title="Store the current patch into the selected scene">💾</button>
         </div>
-        <div class="row morph">
-          <select id="morph-a"></select>
-          <input type="range" id="morph-t" min="0" max="1" step="0.001" value="0">
-          <select id="morph-b"></select>
+        <div class="row">
+          <label>morph <input type="range" id="morph-time" min="0" max="30" step="0.1" value="0"> <span id="morph-time-val">0.0 s</span></label>
         </div>
       </div>
       <div class="panel" id="lfo-panel">
@@ -102,6 +102,6 @@
 
   <div id="modal" hidden><div class="modal-card" id="modal-card"></div></div>
   <script src="/static/vendor/hls.min.js"></script>
-  <script src="/static/app.js?v=11"></script>
+  <script src="/static/app.js?v=35"></script>
 </body>
 </html>

@@ -97,6 +97,8 @@ def full_snapshot(state: StateManager) -> dict[str, Any]:
         "spatial": p.spatial.to_dict(),
         "lanes": [ln.to_dict() for ln in p.lanes.values()],
         "connections": list(p.connections),
+        "midi_connections": list(p.midi_connections),
+        "seq": state.seq.to_dict(),
         "modules": [module_state(state, mid) for mid in p.modules],
         "feedback_edges": [fb.to_dict() for fb in p.feedback_edges.values()],
         "recorders": [r.to_dict() for r in p.recorders.values()],
@@ -105,6 +107,7 @@ def full_snapshot(state: StateManager) -> dict[str, Any]:
         "lfos": lfos_dict(state),
         "mod_targets": mod_targets(state),
         "scenes": state.scenes.to_list(),
+        "active_scene": state.scenes.active,
         "control": state.control.to_dict(),
         "buffers": [b.to_dict() for b in p.buffers.values()],
         "engine": {

@@ -11,6 +11,9 @@ s.options.memSize = 256 * 1024;
 
 // The engine builds SynthDefs after /atelier/boot; we also load the file that
 // defines the ~buildDefs function used there.
+// DX7: voice math + lookup tables (dx7.scd) and the path to the bundled bank.
+~dx7afxPath = here +/+ "DX7.afx";
+(here +/+ "dx7.scd").load;
 (here +/+ "synthdefs.scd").load;
 (here +/+ "engine.scd").load;
 
