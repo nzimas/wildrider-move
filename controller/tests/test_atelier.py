@@ -482,3 +482,22 @@ def test_scene_timed_morph_commits_structure():
     assert st._scene_morph is None
     assert set(st.patch.modules) == a_ids       # structure reconciled to A
     assert sorted((c["src"], c["dst"]) for c in st.patch.connections) == a_conns
+
+
+def test_lock_freezes_param_against_modulation():
+    import time
+    st = _state()
+    g = st.add_module("GRAINS", node_count=1)
+    slot = st.patch.find_slot(g.id, "grains.density", 0)
+    slot.base = 60.0
+    st.set_lfo("lfo1", shape="sine", rate=4.0, depth=1.0, target=f"{g.id}|grains.density")
+    # unlocked: modulation moves the effective value
+    st._last_tick = time.monotonic() - 0.05
+    st.tick_modulation()
+    assert abs(slot.effective - slot.base) > 1e-6
+    # locked: a lock means "hold here" — modulation must not move it
+    st.set_lock(g.id, "grains.density", 0, True)
+    for _ in range(8):
+        st._last_tick = time.monotonic() - 0.03
+        st.tick_modulation()
+    assert slot.effective == pytest.approx(slot.base)

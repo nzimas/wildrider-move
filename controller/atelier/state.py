@@ -471,7 +471,9 @@ class StateManager:
                 if slot is None:
                     vals.append(0.0)
                     continue
-                slot.mod_norm = pernode.get(node, 0.0)
+                # A locked param is frozen: randomize/morph already skip it, and it
+                # must not be moved by modulation either (a lock means "hold here").
+                slot.mod_norm = 0.0 if slot.locked else pernode.get(node, 0.0)
                 vals.append(slot.effective)
             last = self._last_sent.get((mid, pid))
             if last is None or any(abs(a - b) > _EPS for a, b in zip(vals, last)):
