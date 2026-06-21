@@ -1183,3 +1183,8 @@ document.addEventListener("keydown", (e) => {
 });
 
 connect();
+
+// signed-in user (login wall) — show the username in the topbar.
+fetch("/api/me").then((r) => r.ok ? r.json() : null).then((me) => {
+  if (me && me.username) $("user").textContent = me.username + (me.is_admin ? " ★" : "");
+}).catch(() => {});

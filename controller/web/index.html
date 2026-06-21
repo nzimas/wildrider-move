@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Wildrider — Electroacoustic Instrument</title>
-  <link rel="stylesheet" href="/static/style.css?v=39" />
+  <link rel="stylesheet" href="/static/style.css?v=40" />
 </head>
 <body data-contrast="normal">
   <header id="topbar">
@@ -26,6 +26,8 @@
       <button id="btn-save" title="Save performance">save</button>
       <button id="btn-load" title="Load performance">load</button>
       <button id="btn-contrast" title="Toggle high-contrast accessibility mode">◐ contrast</button>
+      <span id="user" class="pill" title="signed-in user"></span>
+      <a id="btn-logout" href="/logout" title="Sign out">logout</a>
     </div>
     <audio id="player" hidden></audio>
   </header>
@@ -102,6 +104,6 @@
 
   <div id="modal" hidden><div class="modal-card" id="modal-card"></div></div>
   <script src="/static/vendor/hls.min.js"></script>
-  <script src="/static/app.js?v=39"></script>
+  <script src="/static/app.js?v=40"></script>
 </body>
 </html>

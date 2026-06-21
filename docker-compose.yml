@@ -32,10 +32,34 @@ services:
     networks: [atelier]
     restart: unless-stopped
 
+  # Application database. Wildrider's business logic (users now; projects, sharing,
+  # billing, etc. as it becomes an online platform) lives here, separate from the
+  # realtime audio path.
+  postgres:
+    image: postgres:16-alpine
+    container_name: atelier-postgres
+    environment:
+      POSTGRES_USER: "wildrider"
+      POSTGRES_PASSWORD: "wildrider"
+      POSTGRES_DB: "wildrider"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [atelier]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wildrider -d wildrider"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   controller:
     build: ./controller
     container_name: atelier-controller
-    depends_on: [supercollider]
+    depends_on:
+      supercollider:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8099:8099"      # web UI, localhost only
     environment:
@@ -45,10 +69,17 @@ services:
       SC_STREAM_URL: "http://supercollider:8200"
       ATELIER_DATA: "/data"
       ATELIER_CONTROL_RATE: "60"
+      DATABASE_URL: "postgresql+psycopg://wildrider:wildrider@postgres:5432/wildrider"
+      SESSION_SECRET: "change-me-in-prod-9f3a1c7b2e8d4a6f"
+      ADMIN_USER: "nzimas"
+      ADMIN_PASSWORD: "d26661e1156d01931fe1e6d6f4868333"
     volumes:
       - ./data:/data
     networks: [atelier]
     restart: unless-stopped
+
+volumes:
+  pgdata:
 
 networks:
   atelier:

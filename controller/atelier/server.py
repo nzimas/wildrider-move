@@ -15,14 +15,19 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               RedirectResponse, StreamingResponse)
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
+from . import db
 from .osc_bridge import OSCBridge
 from .persistence import load_patch, patch_from_dict, patch_to_dict, save_patch
 from .snapshot import full_snapshot
 from .state import StateManager
+
+SESSION_SECRET = os.environ.get("SESSION_SECRET", "wildrider-dev-secret-change-me")
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 DATA_DIR = Path(os.environ.get("ATELIER_DATA", "/data"))
@@ -103,6 +108,9 @@ def _stop_recording() -> dict:
 @app.on_event("startup")
 async def _startup() -> None:
     PATCH_DIR.mkdir(parents=True, exist_ok=True)
+    # Application DB (users / login wall). Run the blocking setup off the loop.
+    await asyncio.to_thread(db.init_db)
+    await asyncio.to_thread(db.seed_admin)
     hub.loop = asyncio.get_running_loop()
     state.subscribe(hub.push)
     bridge.start()
@@ -468,6 +476,9 @@ def _c_record_stop(_d):
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket) -> None:
+    if not ws.session.get("uid"):          # auth wall covers the control channel too
+        await ws.close(code=1008)
+        return
     await ws.accept()
     hub.clients.add(ws)
     snap = full_snapshot(state)
@@ -501,3 +512,87 @@ if WEB_DIR.exists():
 # Live audio: HLS playlist + segments written by the SC container to the shared
 # volume. Served as static files (decoupled from ffmpeg lifetime).
 app.mount("/hls", StaticFiles(directory=str(STREAM_DIR)), name="hls")
+
+
+# --------------------------------------------------------------------------- #
+# Authentication (login wall). Session is a signed cookie; users live in Postgres.
+# --------------------------------------------------------------------------- #
+def _login_page(error: str = "") -> HTMLResponse:
+    err = f'<p class="err">{error}</p>' if error else ""
+    html = f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Wildrider — sign in</title><style>
+*{{box-sizing:border-box}}body{{margin:0;height:100vh;display:flex;align-items:center;
+justify-content:center;background:#14171c;color:#d7dee8;
+font:14px/1.5 ui-monospace,"SF Mono",Menlo,monospace}}
+.card{{background:#1d222b;border:1px solid #2c3340;border-radius:10px;padding:28px 26px;width:320px}}
+.brand{{font-weight:700;letter-spacing:3px;color:#6fa8dc;font-size:20px}}
+.sub{{color:#8b97a8;font-size:10px;letter-spacing:1px;margin-bottom:18px}}
+label{{display:block;font-size:11px;color:#8b97a8;text-transform:uppercase;letter-spacing:1px;margin:12px 0 4px}}
+input{{width:100%;padding:9px 10px;background:#232a35;border:1px solid #2c3340;border-radius:6px;color:#d7dee8;font:inherit}}
+input:focus{{outline:none;border-color:#6fa8dc}}
+button{{width:100%;margin-top:18px;padding:10px;background:#6fa8dc;color:#000;border:0;border-radius:6px;font-weight:700;cursor:pointer}}
+button:hover{{background:#8bb9e3}}
+.err{{color:#e06a6a;font-size:12px;margin:12px 0 0}}
+</style></head><body>
+<form class="card" method="post" action="/login">
+  <div class="brand">WILDRIDER</div><div class="sub">electroacoustic workbench</div>
+  <label for="u">username</label><input id="u" name="username" autofocus autocomplete="username"/>
+  <label for="p">password</label><input id="p" name="password" type="password" autocomplete="current-password"/>
+  {err}
+  <button type="submit">Sign in</button>
+</form></body></html>"""
+    return HTMLResponse(html, status_code=200 if not error else 401)
+
+
+@app.get("/login")
+async def login_get(request: Request):
+    if request.session.get("uid"):
+        return RedirectResponse("/", status_code=303)
+    return _login_page()
+
+
+@app.post("/login")
+async def login_post(request: Request):
+    form = await request.form()
+    username = (form.get("username") or "").strip()
+    password = form.get("password") or ""
+    user = await asyncio.to_thread(db.authenticate, username, password)
+    if not user:
+        return _login_page("Invalid username or password.")
+    request.session.update({"uid": user.id, "uname": user.username, "admin": user.is_admin})
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/logout")
+@app.post("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=303)
+
+
+@app.get("/api/me")
+async def whoami(request: Request) -> JSONResponse:
+    return JSONResponse({"username": request.session.get("uname"),
+                         "is_admin": bool(request.session.get("admin"))})
+
+
+# Paths reachable without a session. Everything else requires login.
+_PUBLIC_PATHS = {"/login", "/logout", "/healthz", "/favicon.ico"}
+
+
+@app.middleware("http")
+async def _auth_guard(request: Request, call_next):
+    path = request.url.path
+    if path in _PUBLIC_PATHS or request.session.get("uid"):
+        return await call_next(request)
+    # Unauthenticated: APIs/assets get a hard 401; navigations go to the login page.
+    if path.startswith(("/api", "/hls", "/recordings", "/static", "/ws")):
+        return JSONResponse({"error": "authentication required"}, status_code=401)
+    return RedirectResponse("/login", status_code=303)
+
+
+# SessionMiddleware is added LAST so it is the OUTERMOST layer — it populates
+# request.session before the auth guard (and the websocket handler) reads it.
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET,
+                   same_site="lax", https_only=False, max_age=14 * 24 * 3600)
