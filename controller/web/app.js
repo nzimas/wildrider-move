@@ -189,16 +189,22 @@ function renderCanvas() {
         : ((m.nodes[0] || {})[pan.id] || { norm: 0.5 }).norm;
       const pr = el("div", "nrow npan");
       pr.append(el("span", "npan-lbl", "pan"));
+      const wrap = el("div", "npan-wrap");
+      wrap.append(el("div", "npan-tick"));              // centre (mono) marker
       const ps = el("input"); ps.type = "range"; ps.min = 0; ps.max = 1; ps.step = 0.001;
-      ps.value = cur; ps.title = "module pan (L ◀ ▶ R)";
+      ps.value = cur; ps.title = "module pan (L ◀ ▶ R) — snaps to centre";
+      ps.classList.toggle("centered", Math.abs(cur - 0.5) < 0.02);
       const stop = (e) => e.stopPropagation();
       ps.addEventListener("mousedown", stop); ps.addEventListener("click", stop);
       ps.oninput = () => {
-        const v = parseFloat(ps.value);
+        let v = parseFloat(ps.value);
+        if (Math.abs(v - 0.5) < 0.04) { v = 0.5; ps.value = 0.5; }   // centre detent
+        ps.classList.toggle("centered", v === 0.5);
         if (pan.global) send("set_param_norm", { module: m.id, param: pan.id, node: null, value: v });
         else for (let i = 0; i < m.node_count; i++) send("set_param_norm", { module: m.id, param: pan.id, node: i, value: v });
       };
-      pr.append(ps); body.append(pr);
+      ps.ondblclick = () => { ps.value = 0.5; ps.oninput(); };        // dbl-click = re-centre
+      wrap.append(ps); pr.append(wrap); body.append(pr);
     }
     node.append(body);
     if (m.has_input) { const pin = el("div", "port in"); pin.dataset.id = m.id; pin.dataset.kind = "in"; node.append(pin); }

@@ -123,7 +123,14 @@ main.detail-collapsed #detail { display: none; }
 /* per-module pan slider on the canvas box */
 .nbody .npan { align-items: center; gap: 6px; margin-top: 4px; }
 .npan .npan-lbl { font-size: 9px; color: var(--ink-dim); text-transform: uppercase; }
-.npan input[type=range] { flex: 1; height: 12px; accent-color: var(--cat, var(--accent)); }
+.npan-wrap { position: relative; flex: 1; display: flex; align-items: center; }
+/* centre (mono) tick behind the slider */
+.npan-tick { position: absolute; left: 50%; top: 1px; bottom: 1px; width: 1px;
+  transform: translateX(-0.5px); background: var(--ink-dim); opacity: .5; pointer-events: none; }
+.npan input[type=range] { flex: 1; height: 12px; accent-color: var(--cat, var(--accent)); position: relative; }
+/* when centred, brighten the tick via the slider's state */
+.npan input[type=range].centered + .npan-tick,
+.npan-wrap:has(input.centered) .npan-tick { background: var(--cat, var(--accent)); opacity: 1; }
 .node .nhead {
   display: flex; justify-content: space-between; align-items: center;
   padding: 6px 8px; cursor: grab; border-bottom: 1px solid var(--border);
