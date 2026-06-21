@@ -561,6 +561,71 @@
 	}).add;
 	};
 
+	// ---- GRAINS: maximalist live granulator (IRCAM/GRM-leaning) -----------
+	// Each node records its mono input into a private 4 s circular buffer and
+	// sprays FOUR parallel grain streams from a moving read head. Per grain:
+	// position spray, size jitter, pitch jitter, probabilistic reverse + octave
+	// shimmer, stereo scatter. A granular feedback loop (LocalIn/Out), freeze +
+	// buffer scan, and a chaos random-walk give it a far wilder reach than Clouds.
+	// Window shape is selectable from a pre-built bank (~grainWins, built once).
+	~grainWins ?? {
+		~grainWins = [
+			Env([0, 1, 0], [0.5, 0.5], \sine),                         // hann
+			Env([0, 1, 0], [0.5, 0.5], [6, -6]),                       // bell
+			Env([0, 1, 0.35, 0], [0.02, 0.3, 0.68], [4, 0, -3]),       // expodec
+			Env([0, 0.35, 1, 0], [0.68, 0.3, 0.02], [3, 0, -4]),       // rev-expodec
+			Env([0, 1, 1, 0], [0.15, 0.7, 0.15], \lin),                // plateau
+			Env([0, 1, 0], [0.5, 0.5], \lin),                          // triangle
+			Env([0, 1, 1, 0, 0, 1, 1, 0], [0.1, 0.2, 0.05, 0.3, 0.05, 0.2, 0.1, 0], \lin) // gapped
+		].collect { |e| Buffer.sendCollection(s, e.discretize(2048), 1) };
+	};
+
+	SynthDef(("grains" ++ suf).asSymbol, { |out = 0, in = 0,
+		size = 0.12, density = 40, pos = 0.0, spray = 0.08,
+		pitch = 0, pitchJitter = 0, jitter = 0.2, spread = 0.7,
+		reverse = 0, shimmer = 0, scan = 0, texture = 0.4, chaos = 0,
+		feedback = 0, freeze = 0, shape = 0, inGain = 1, amp = 0.9,
+		bypass = 0, wet = 1, nodeEnable = 1|
+		var bufFrames = (s.sampleRate * 4).asInteger;
+		var buf = LocalBuf(bufFrames, 1).clear;
+		var nstream = 4;
+		var dry = In.ar(in, nchan);
+		var mono = (nchan == 1).if({ dry }, { Mix(dry) * (1 / nchan) });
+		var fb = LocalIn.ar(1);
+		var rec = LeakDC.ar((mono * inGain) + (fb * feedback).tanh);
+		var writePhase = Phasor.ar(0, BufRateScale.ir(buf) * (1 - freeze), 0, BufFrames.ir(buf)) / BufFrames.ir(buf);
+		var envSel = Select.kr(shape.clip(0, ~grainWins.size - 1), ~grainWins.collect { |b| b.bufnum });
+		var streams, wetSig, wetL, wetR, gmono, outSig;
+		RecordBuf.ar(rec, buf, loop: 1, run: 1 - freeze);
+		streams = Array.fill(nstream, { |i|
+			var trig = Dust.ar(density / nstream);
+			var rnd = TRand.ar(0, 1, trig);
+			var walk = LFNoise1.ar(1.5 + (i * 0.6)) * chaos;
+			var rpos = (writePhase - (pos * 0.5) - TRand.ar(0, spray, trig)
+				+ (LFSaw.ar(scan * (1 + (i * 0.13)), 2.0.rand) * 0.5 * (scan > 0))
+				+ (walk * 0.25)).wrap(0, 1);
+			var rate = (pitch + TRand.ar(pitchJitter.neg, pitchJitter, trig) + (walk * 12)).midiratio;
+			var dir = Select.ar(rnd < reverse, [DC.ar(1), DC.ar(-1)]);
+			var oct = Select.ar(TRand.ar(0, 1, trig) < shimmer, [DC.ar(1), DC.ar(2)]);
+			var gdur = (size * (1 + texture) * (1 + TRand.ar(jitter.neg, jitter, trig))).clip(0.003, 2.0);
+			var gpan = TRand.ar(spread.neg, spread, trig);
+			GrainBuf.ar(2, trig, gdur, buf, rate * dir * oct, rpos, 2, gpan, envSel, 512);
+		});
+		wetSig = Mix(streams);                       // -> [L, R]
+		wetL = wetSig[0] * amp * nodeEnable;
+		wetR = wetSig[1] * amp * nodeEnable;
+		gmono = (wetL + wetR) * 0.5;
+		LocalOut.ar(gmono);                          // granular feedback tap
+		outSig = (nchan == 1).if({
+			XFade2.ar(dry, gmono, wet * 2 - 1)
+		}, {
+			var oL = XFade2.ar(dry[0], wetL, wet * 2 - 1);
+			var oR = XFade2.ar(dry[1], wetR, wet * 2 - 1);
+			(nchan == 2).if({ [oL, oR] }, { [oL, oR] ++ dry.drop(2) });
+		});
+		Out.ar(out, ~killbad.((outSig * (1 - bypass)) + (dry * bypass)));
+	}).add;
+
 	// ---- RINGS: Mutable Instruments modal/string resonator (MiRings) ------
 	(\MiRings.asClass.notNil).if {
 	SynthDef(("rings" ++ suf).asSymbol, { |out = 0, in = 0, pit = 48, struct = 0.25,

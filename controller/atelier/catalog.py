@@ -470,6 +470,50 @@ CLOUDS = ModuleSpec(
     ],
 )
 
+# GRAINS — a maximalist, IRCAM/GRM-leaning live granulator. A crazier alternative
+# to CLOUDS: a high grain count (4 parallel grain streams per node), independent
+# spray / size-jitter / pitch-jitter, per-grain reverse + octave shimmer, a
+# granular feedback loop, freeze + buffer scanning, a chaos random-walk and seven
+# selectable grain windows. Every continuous param is modulatable, so an LFO bank
+# pointed at it yields constantly-evolving, dynamic textures.
+GRAINS = ModuleSpec(
+    type="GRAINS",
+    role="Maximalist live granulator: dense grain clouds, spray/jitter, shimmer, "
+         "reverse, granular feedback, freeze + scan, chaos. A wilder Clouds.",
+    node_meaning="Independent grain cloud (decorrelated per node).",
+    synthdef="grains",
+    insert_capable=True,
+    generative_capable=False,   # granulates incoming audio (freeze sustains it)
+    max_nodes=3,
+    cpu_per_node=3.2,
+    gestures=["grain-storm", "freeze-scan", "shimmer-feedback", "pitch-spray", "chaos-walk"],
+    node_params=[
+        P("grains.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("grains.size", "Grain Size", unit="s", rmin=0.003, rmax=0.6, default=0.12, curve=Curve.EXP, formatter="float3", musical=(0.02, 0.35)),
+        P("grains.density", "Density", unit="gr/s", rmin=1.0, rmax=200.0, default=40.0, curve=Curve.EXP, formatter="float0", musical=(8.0, 120.0)),
+        P("grains.pos", "Position", default=0.0, musical=(0.0, 0.6)),
+        P("grains.spray", "Spray", rmin=0.0, rmax=0.5, default=0.08, musical=(0.0, 0.3)),
+        P("grains.pitch", "Pitch", unit="semitone", rmin=-24.0, rmax=24.0, default=0.0, curve=Curve.BIPOLAR, formatter="semitone", musical=(-12.0, 12.0)),
+        P("grains.pitchJitter", "Pitch Jitter", unit="semitone", rmin=0.0, rmax=12.0, default=0.0, formatter="float1", musical=(0.0, 7.0)),
+        P("grains.jitter", "Size Jitter", rmin=0.0, rmax=1.0, default=0.2, musical=(0.0, 0.6)),
+        P("grains.spread", "Stereo Spread", default=0.7, musical=(0.3, 1.0)),
+        P("grains.reverse", "Reverse", default=0.0, musical=(0.0, 0.5)),
+        P("grains.shimmer", "Shimmer", default=0.0, musical=(0.0, 0.6)),
+        P("grains.scan", "Scan", unit="Hz", rmin=0.0, rmax=4.0, default=0.0, curve=Curve.EXP, formatter="float2", musical=(0.0, 1.5)),
+        P("grains.texture", "Texture", default=0.4, musical=(0.2, 0.8)),
+        P("grains.chaos", "Chaos", default=0.0, musical=(0.0, 0.5)),
+        P("grains.feedback", "Feedback", rmin=0.0, rmax=0.9, default=0.0, danger=DangerClass.FEEDBACK, musical=(0.0, 0.5)),
+        P("grains.freeze", "Freeze", curve=Curve.ENUM, enum=["off", "on"], default=0, rate=Rate.TRIGGER),
+        P("grains.inGain", "Input Gain", unit="dB", rmin=0.0, rmax=2.0, default=1.0, curve=Curve.DB, formatter="dB1", musical=(0.6, 1.4), danger=DangerClass.LOUDNESS),
+        P("grains.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.9, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.6, 1.1)),
+    ],
+    global_params=[
+        P("grains.shape", "Grain Shape", curve=Curve.ENUM,
+          enum=["hann", "bell", "expodec", "rev-expodec", "plateau", "triangle", "gapped"],
+          default=0, modulatable=False),
+    ],
+)
+
 # --------------------------------------------------------------------------- #
 # RINGS — Mutable Instruments Rings modal/string resonator (MiRings)
 # --------------------------------------------------------------------------- #
@@ -737,12 +781,12 @@ SEQ = ModuleSpec(
 
 CATALOG: dict[str, ModuleSpec] = {
     m.type: m for m in (SEQ, DX7, FBANK, PITCH, TIME, COMB, GAIN, SDLY, VERB,
-                        CLOUDS, RINGS, BEN, BUCHLOID, ENV, GATE, PLAITS, DISTORT, VIZ)
+                        CLOUDS, GRAINS, RINGS, BEN, BUCHLOID, ENV, GATE, PLAITS, DISTORT, VIZ)
 }
 
 # Ordered lanes (source -> processors -> spatial tail).
 DEFAULT_LANE_ORDER = ["SEQ", "DX7", "FBANK", "PITCH", "TIME", "COMB", "GAIN",
-                      "SDLY", "VERB", "CLOUDS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "PLAITS", "DISTORT", "VIZ"]
+                      "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "PLAITS", "DISTORT", "VIZ"]
 
 
 def spec(module_type: str) -> ModuleSpec:

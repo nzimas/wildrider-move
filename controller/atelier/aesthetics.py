@@ -65,6 +65,12 @@ SPECIAL: dict[str, tuple[str, bool]] = {
     "buchloid.waveFolds": (DIRT, False),
     "clouds.tex": (BRIGHT, False),
     "clouds.dens": (DENSITY, False),
+    "grains.size": (TIME, False), "grains.density": (DENSITY, False),
+    "grains.spray": (MOTION, False), "grains.pitchJitter": (MOTION, False),
+    "grains.jitter": (MOTION, False), "grains.spread": (SPACE, False),
+    "grains.reverse": (MOTION, False), "grains.shimmer": (BRIGHT, False),
+    "grains.scan": (RATE, False), "grains.texture": (BRIGHT, False),
+    "grains.chaos": (MOTION, False), "grains.feedback": (DIRT, False),
     "pitch.feedback": (DIRT, False),
     "time.feedbackSend": (DIRT, False),
 }
@@ -194,11 +200,11 @@ OVERRIDES: dict[str, dict[str, tuple[float, float, bool]]] = {
 # Wet/dry of character / ambience effects (module type -> wet 0..1). Modules absent
 # from a table keep their existing wet. Pure sources are never touched.
 WET: dict[str, dict[str, float]] = {
-    "vidna_obmana": {"VERB": 0.55, "SDLY": 0.3, "CLOUDS": 0.55, "COMB": 0.4, "FBANK": 0.5, "PITCH": 0.35, "TIME": 0.35, "DISTORT": 0.15},
-    "lustmord": {"VERB": 0.92, "SDLY": 0.5, "CLOUDS": 0.6, "COMB": 0.6, "FBANK": 0.7, "PITCH": 0.3, "TIME": 0.45, "DISTORT": 0.4},
-    "bernard_parmegiani": {"VERB": 0.55, "SDLY": 0.55, "CLOUDS": 0.6, "COMB": 0.5, "FBANK": 0.6, "PITCH": 0.65, "TIME": 0.6, "DISTORT": 0.4},
-    "ben_frost": {"VERB": 0.35, "SDLY": 0.4, "CLOUDS": 0.45, "COMB": 0.55, "FBANK": 0.6, "PITCH": 0.4, "TIME": 0.45, "DISTORT": 0.8},
-    "autechre": {"VERB": 0.3, "SDLY": 0.5, "CLOUDS": 0.55, "COMB": 0.55, "FBANK": 0.6, "PITCH": 0.5, "TIME": 0.55, "DISTORT": 0.65},
+    "vidna_obmana": {"VERB": 0.55, "SDLY": 0.3, "CLOUDS": 0.55, "GRAINS": 0.5, "COMB": 0.4, "FBANK": 0.5, "PITCH": 0.35, "TIME": 0.35, "DISTORT": 0.15},
+    "lustmord": {"VERB": 0.92, "SDLY": 0.5, "CLOUDS": 0.6, "GRAINS": 0.55, "COMB": 0.6, "FBANK": 0.7, "PITCH": 0.3, "TIME": 0.45, "DISTORT": 0.4},
+    "bernard_parmegiani": {"VERB": 0.55, "SDLY": 0.55, "CLOUDS": 0.6, "GRAINS": 0.6, "COMB": 0.5, "FBANK": 0.6, "PITCH": 0.65, "TIME": 0.6, "DISTORT": 0.4},
+    "ben_frost": {"VERB": 0.35, "SDLY": 0.4, "CLOUDS": 0.45, "GRAINS": 0.5, "COMB": 0.55, "FBANK": 0.6, "PITCH": 0.4, "TIME": 0.45, "DISTORT": 0.8},
+    "autechre": {"VERB": 0.3, "SDLY": 0.5, "CLOUDS": 0.55, "GRAINS": 0.6, "COMB": 0.55, "FBANK": 0.6, "PITCH": 0.5, "TIME": 0.55, "DISTORT": 0.65},
 }
 
 
@@ -265,7 +271,7 @@ def guided_wet(rng, artist: str, module_type: str) -> float | None:
 MODULE_PALETTE: dict[str, dict] = {
     "vidna_obmana": {  # immersive ambient — one or two warm voices bathed in space
         "sources": {"DX7": 3, "PLAITS": 2, "RINGS": 1},
-        "effects": {"VERB": 3, "CLOUDS": 3, "SDLY": 2, "COMB": 1, "FBANK": 1, "PITCH": 1},
+        "effects": {"VERB": 3, "CLOUDS": 3, "GRAINS": 2, "SDLY": 2, "COMB": 1, "FBANK": 1, "PITCH": 1},
         "sources_count": (1, 2), "count": (4, 5), "require": ["VERB", "CLOUDS"],
     },
     "lustmord": {  # dark ambient — a single deep drone in a cavern
@@ -275,7 +281,7 @@ MODULE_PALETTE: dict[str, dict] = {
     },
     "bernard_parmegiani": {  # musique concrète — one voice, transformed in space
         "sources": {"PLAITS": 2, "RINGS": 2, "DX7": 2, "BUCHLOID": 1},
-        "effects": {"PITCH": 3, "TIME": 3, "COMB": 2, "VERB": 2, "CLOUDS": 2, "SDLY": 2, "FBANK": 1, "GATE": 1},
+        "effects": {"PITCH": 3, "TIME": 3, "COMB": 2, "VERB": 2, "CLOUDS": 2, "GRAINS": 2, "SDLY": 2, "FBANK": 1, "GATE": 1},
         "sources_count": (1, 2), "count": (4, 6), "require": ["TIME", "PITCH"],
     },
     "ben_frost": {  # abrasive — a voice driven hard, rhythmic gating, little reverb
@@ -285,7 +291,7 @@ MODULE_PALETTE: dict[str, dict] = {
     },
     "autechre": {  # algorithmic — one or two voices, fragmented, digital artefacts
         "sources": {"PLAITS": 3, "RINGS": 2, "DX7": 2},
-        "effects": {"DISTORT": 2, "GATE": 3, "TIME": 2, "COMB": 2, "FBANK": 1, "SDLY": 2},
+        "effects": {"DISTORT": 2, "GATE": 3, "TIME": 2, "COMB": 2, "FBANK": 1, "SDLY": 2, "GRAINS": 2},
         "sources_count": (1, 2), "count": (4, 6), "require": ["GATE"],
     },
 }
