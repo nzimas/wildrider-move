@@ -371,16 +371,19 @@ const CAT_LABEL = { gen: "generators", proc: "processors", midi: "midi" };
 $("btn-add").onclick = () => {
   const card = $("modal-card"); card.innerHTML = "";
   card.append(el("h3", null, "Add module"));
+  const shortDesc = (role) => role.split(/[.:—(]/)[0].trim().slice(0, 40);
   const byCat = { gen: [], proc: [], midi: [] };
   Object.keys(S.catalog).forEach((t) => (byCat[moduleCat(t)] || byCat.proc).push(t));
+  const scroll = el("div", "add-scroll");
   for (const cat of CAT_ORDER) {
     if (!byCat[cat].length) continue;
-    card.append(el("div", "add-cat-label cat-" + cat, CAT_LABEL[cat]));
+    scroll.append(el("div", "add-cat-label cat-" + cat, CAT_LABEL[cat]));
     const grid = el("div", "add-grid");
     byCat[cat].forEach((t) => {
       const b = el("button", "add-box cat-" + cat);
+      b.title = S.catalog[t].role;
       b.append(el("span", "add-type", t));
-      b.append(el("span", "add-role", S.catalog[t].role));
+      b.append(el("span", "add-role", shortDesc(S.catalog[t].role)));
       b.onclick = () => {
         const wrap = $("canvas-wrap");
         send("add_module", { type: t, x: wrap.scrollLeft + 120, y: wrap.scrollTop + 100 });
@@ -388,8 +391,9 @@ $("btn-add").onclick = () => {
       };
       grid.append(b);
     });
-    card.append(grid);
+    scroll.append(grid);
   }
+  card.append(scroll);
   const row = el("div", "row"); const cancel = el("button", null, "cancel"); cancel.onclick = closeModal;
   row.append(cancel); card.append(row);
   $("modal").hidden = false;
