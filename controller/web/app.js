@@ -143,6 +143,26 @@ function wirePath(a, b) {
   return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
 }
 
+// Module category (for colour-coding): generator (pure voice), midi (SEQ),
+// processor (everything else audio).
+function moduleCat(type) {
+  if (type === "SEQ") return "midi";
+  const c = S.catalog[type];
+  if (c && c.is_audio && c.generative_capable && !c.insert_capable) return "gen";
+  return "proc";
+}
+// A module's pan param ("pan"/"spatialPos") — may live in node OR global params.
+function panInfo(type) {
+  const c = S.catalog[type];
+  if (!c) return null;
+  const isPan = (p) => ["pan", "spatialpos"].includes(p.id.split(".").pop().toLowerCase());
+  const n = c.node_params.find(isPan);
+  if (n) return { id: n.id, global: false };
+  const g = c.global_params.find(isPan);
+  if (g) return { id: g.id, global: true };
+  return null;
+}
+
 function renderCanvas() {
   const cv = $("canvas");
   // remove old nodes (keep the <svg id=wires>)
@@ -151,7 +171,7 @@ function renderCanvas() {
   for (const m of S.modules) {
     byId[m.id] = m;
     const p = nodePos(m);
-    const node = el("div", "node" + (m.id === sel ? " sel" : "") + (m.bypass ? " bypassed" : ""));
+    const node = el("div", "node cat-" + moduleCat(m.type) + (m.id === sel ? " sel" : "") + (m.bypass ? " bypassed" : ""));
     node.style.left = p.x + "px"; node.style.top = p.y + "px"; node.dataset.id = m.id;
     const head = el("div", "nhead");
     head.append(el("span", "ntype", m.type));
@@ -161,6 +181,25 @@ function renderCanvas() {
     const r1 = el("div", "nrow"); r1.append(el("span", null, `${m.node_count} node${m.node_count > 1 ? "s" : ""}`));
     r1.append(el("span", null, m.bypass ? "byp" : `${Math.round(m.wet_dry * 100)}% wet`));
     body.append(r1);
+    // quick per-module pan slider in the lower part of the box
+    const pan = panInfo(m.type);
+    if (pan) {
+      const cur = pan.global
+        ? (m.global[pan.id] || { norm: 0.5 }).norm
+        : ((m.nodes[0] || {})[pan.id] || { norm: 0.5 }).norm;
+      const pr = el("div", "nrow npan");
+      pr.append(el("span", "npan-lbl", "pan"));
+      const ps = el("input"); ps.type = "range"; ps.min = 0; ps.max = 1; ps.step = 0.001;
+      ps.value = cur; ps.title = "module pan (L ◀ ▶ R)";
+      const stop = (e) => e.stopPropagation();
+      ps.addEventListener("mousedown", stop); ps.addEventListener("click", stop);
+      ps.oninput = () => {
+        const v = parseFloat(ps.value);
+        if (pan.global) send("set_param_norm", { module: m.id, param: pan.id, node: null, value: v });
+        else for (let i = 0; i < m.node_count; i++) send("set_param_norm", { module: m.id, param: pan.id, node: i, value: v });
+      };
+      pr.append(ps); body.append(pr);
+    }
     node.append(body);
     if (m.has_input) { const pin = el("div", "port in"); pin.dataset.id = m.id; pin.dataset.kind = "in"; node.append(pin); }
     if (m.has_output) { const po = el("div", "port out"); po.dataset.id = m.id; po.dataset.kind = "out"; node.append(po); }
@@ -289,22 +328,32 @@ function bindPorts() {
   });
 }
 
-// + add module: pick a type
+// + add module: pick a type. Colour-coded boxes (generator / processor / midi),
+// grouped by category, max 4 per row.
+const CAT_ORDER = ["gen", "proc", "midi"];
+const CAT_LABEL = { gen: "generators", proc: "processors", midi: "midi" };
 $("btn-add").onclick = () => {
   const card = $("modal-card"); card.innerHTML = "";
   card.append(el("h3", null, "Add module"));
-  const grid = el("div", "row");
-  Object.keys(S.catalog).forEach((t) => {
-    const b = el("button", null, t);
-    b.title = S.catalog[t].role;
-    b.onclick = () => {
-      const wrap = $("canvas-wrap");
-      send("add_module", { type: t, x: wrap.scrollLeft + 120, y: wrap.scrollTop + 100 });
-      closeModal();
-    };
-    grid.append(b);
-  });
-  card.append(grid);
+  const byCat = { gen: [], proc: [], midi: [] };
+  Object.keys(S.catalog).forEach((t) => (byCat[moduleCat(t)] || byCat.proc).push(t));
+  for (const cat of CAT_ORDER) {
+    if (!byCat[cat].length) continue;
+    card.append(el("div", "add-cat-label cat-" + cat, CAT_LABEL[cat]));
+    const grid = el("div", "add-grid");
+    byCat[cat].forEach((t) => {
+      const b = el("button", "add-box cat-" + cat);
+      b.append(el("span", "add-type", t));
+      b.append(el("span", "add-role", S.catalog[t].role));
+      b.onclick = () => {
+        const wrap = $("canvas-wrap");
+        send("add_module", { type: t, x: wrap.scrollLeft + 120, y: wrap.scrollTop + 100 });
+        closeModal();
+      };
+      grid.append(b);
+    });
+    card.append(grid);
+  }
   const row = el("div", "row"); const cancel = el("button", null, "cancel"); cancel.onclick = closeModal;
   row.append(cancel); card.append(row);
   $("modal").hidden = false;

@@ -215,6 +215,12 @@ def _clamp01(x: float) -> float:
 def guided_value(rng, meta: ParamMetadata, artist: str, expert: bool = False) -> float:
     """A parameter value shaped by the artist aesthetic for this parameter."""
     artist = artist if artist in PROFILES else "vidna_obmana"
+    # Pan is a placement decision, not an aesthetic centre — spread modules across
+    # the field (otherwise the role cascade parks every module dead-centre).
+    if meta.id.split(".", 1)[-1].lower() in ("pan", "spatialpos"):
+        lo = meta.musical_min if meta.musical_min is not None else meta.rmin
+        hi = meta.musical_max if meta.musical_max is not None else meta.rmax
+        return meta.clamp(rng.uniform(lo, hi))
     ov = OVERRIDES.get(artist, {}).get(meta.id)
     if ov is not None:
         center, spread, full = ov

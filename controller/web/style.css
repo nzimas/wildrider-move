@@ -114,6 +114,16 @@ main.detail-collapsed #detail { display: none; }
 }
 .node.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .node.bypassed { opacity: .5; }
+/* module category colour-coding (generator / processor / midi) */
+.cat-gen { --cat: var(--good); }
+.cat-proc { --cat: var(--accent); }
+.cat-midi { --cat: var(--warn); }
+.node[class*="cat-"] .nhead { border-left: 4px solid var(--cat); }
+.node[class*="cat-"] .ntype { color: var(--cat); }
+/* per-module pan slider on the canvas box */
+.nbody .npan { align-items: center; gap: 6px; margin-top: 4px; }
+.npan .npan-lbl { font-size: 9px; color: var(--ink-dim); text-transform: uppercase; }
+.npan input[type=range] { flex: 1; height: 12px; accent-color: var(--cat, var(--accent)); }
 .node .nhead {
   display: flex; justify-content: space-between; align-items: center;
   padding: 6px 8px; cursor: grab; border-bottom: 1px solid var(--border);
@@ -324,3 +334,19 @@ main.detail-collapsed #detail { display: none; }
   border: 1px solid var(--border); border-radius: 5px; padding: 5px 10px; font-size: 12px;
 }
 .rec-dl:hover { border-color: var(--accent); background: var(--panel); }
+
+/* ---- add-module modal: colour-coded boxes, max 4 per row --------------- */
+.add-cat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--cat, var(--ink-dim)); margin: 10px 0 4px; font-weight: 700; }
+.add-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-width: 600px; }
+.add-box {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  text-align: left; padding: 8px 9px; border: 1px solid var(--border);
+  border-left: 4px solid var(--cat, var(--border)); border-radius: 6px;
+  background: var(--panel2); cursor: pointer; min-height: 56px;
+}
+.add-box:hover { border-color: var(--cat, var(--accent)); }
+.add-box .add-type { font-weight: 700; font-size: 12px; color: var(--cat, var(--ink)); }
+.add-box .add-role { font-size: 10px; color: var(--ink-dim); line-height: 1.25;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+@media (max-width: 700px) { .add-grid { grid-template-columns: repeat(2, 1fr); } }

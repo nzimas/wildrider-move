@@ -102,6 +102,7 @@ def _fbank_global_params() -> list[ParamMetadata]:
         P("fbank.spread", "Spread", rmin=0.0, rmax=1.0, default=0.0, formatter="percent1", musical=(0.0, 0.8)),
         P("fbank.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=1.0, curve=Curve.DB,
           formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.5, 1.1)),
+        P("fbank.pan", "Pan", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, formatter="float2", musical=(-0.85, 0.85)),
     ]
     # per-band feedback-loop enables — choose which bands ring / self-oscillate.
     # ON by default (the resonance/feedback character is the whole point); on/off is
@@ -398,6 +399,7 @@ SDLY = ModuleSpec(
         P("sdly.modRate", "Mod Rate", unit="Hz", rmin=0.01, rmax=8.0, default=0.3, curve=Curve.EXP, formatter="Hz"),
         P("sdly.modDepth", "Mod Depth", default=0.12, musical=(0.0, 0.35)),
         P("sdly.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=1.0, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.6, 1.1)),
+        P("sdly.pan", "Pan", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, formatter="float2", musical=(-0.85, 0.85)),
     ],
     global_params=[
         P("sdly.syncMode", "Sync", curve=Curve.ENUM, enum=["free", "tempo"], default=0, modulatable=False),
@@ -430,6 +432,7 @@ VERB = ModuleSpec(
         P("verb.highCut", "High Cut", unit="Hz", rmin=1000.0, rmax=18000.0, default=9000.0, curve=Curve.EXP, formatter="Hz", musical=(4000.0, 14000.0)),
         P("verb.width", "Width", rmin=0.0, rmax=1.5, default=1.0, musical=(0.85, 1.35)),
         P("verb.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=1.0, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.6, 1.1)),
+        P("verb.pan", "Pan", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, formatter="float2", musical=(-0.85, 0.85)),
     ],
     global_params=[
         P("verb.freeze", "Freeze", curve=Curve.ENUM, enum=["off", "on"], default=0, rate=Rate.TRIGGER),
@@ -463,6 +466,7 @@ CLOUDS = ModuleSpec(
         P("clouds.fb", "Feedback", default=0.0, musical=(0.0, 0.5), danger=DangerClass.FEEDBACK),
         P("clouds.freeze", "Freeze", curve=Curve.ENUM, enum=["off", "on"], default=0, rate=Rate.TRIGGER),
         P("clouds.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.9, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.6, 1.1)),
+        P("clouds.pan", "Pan", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, formatter="float2", musical=(-0.85, 0.85)),
     ],
     global_params=[
         P("clouds.mode", "Mode", curve=Curve.ENUM, enum=["granular", "stretch", "looping", "spectral"], default=0, modulatable=False),
@@ -504,6 +508,7 @@ GRAINS = ModuleSpec(
         P("grains.freeze", "Freeze", curve=Curve.ENUM, enum=["off", "on"], default=0, rate=Rate.TRIGGER),
         P("grains.inGain", "Input Gain", unit="dB", rmin=0.0, rmax=2.0, default=1.0, curve=Curve.DB, formatter="dB1", musical=(0.6, 1.4), danger=DangerClass.LOUDNESS),
         P("grains.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.9, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.6, 1.1)),
+        P("grains.pan", "Pan", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, formatter="float2", musical=(-0.85, 0.85)),
     ],
     global_params=[
         P("grains.shape", "Grain Shape", curve=Curve.ENUM,
@@ -534,6 +539,7 @@ RINGS = ModuleSpec(
         P("rings.pos", "Position", default=0.25, musical=(0.1, 0.8)),
         P("rings.trigRate", "Trig Rate", unit="Hz", rmin=0.1, rmax=20.0, default=2.0, curve=Curve.EXP, formatter="Hz", musical=(0.3, 6.0)),
         P("rings.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.9, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.6, 1.1)),
+        P("rings.pan", "Pan", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, formatter="float2", musical=(-0.85, 0.85)),
     ],
     global_params=[
         P("rings.model", "Model", curve=Curve.ENUM, enum=["modal", "sympathetic", "inharmonic", "fm", "westernChords", "stringAndReverb"], default=0),

@@ -22,6 +22,12 @@
 	wasArray.if({ arr }, { arr[0] });
 };
 
+// Stereo balance for a per-module pan. Applied at a module's output so every
+// module is pannable in the field. Mono passes through; >2ch is left as-is.
+~panOut = { |sig, pos = 0, nchan = 2|
+	(nchan == 2 and: { sig.isArray }).if({ Balance2.ar(sig[0], sig[1], pos.clip(-1, 1)) }, { sig });
+};
+
 ~spread = { |sig, nchan, pos = 0|
 	// Spread a mono (or already-multichannel) signal across nchan outputs.
 	// pos is -1..1; PanAz spreads around a ring for N>2.
@@ -394,7 +400,7 @@
 	SynthDef(("fbank" ++ suf).asSymbol, { |out = 0, in = 0,
 		gain1 = 1, gain2 = 1, gain3 = 1, gain4 = 1, gain5 = 1, gain6 = 1, gain7 = 1, gain8 = 1, gain9 = 1, gain10 = 1,
 		fb1 = 1, fb2 = 1, fb3 = 1, fb4 = 1, fb5 = 1, fb6 = 1, fb7 = 1, fb8 = 1, fb9 = 1, fb10 = 1,
-		resonance = 0, inputGain = 0, spread = 0, amp = 1, bypass = 0, wet = 1, enable = 1|
+		resonance = 0, inputGain = 0, spread = 0, amp = 1, bypass = 0, wet = 1, enable = 1, pan = 0|
 		var freqs = #[29, 61, 115, 218, 411, 777, 1500, 2800, 5200, 11000];
 		var gains = [gain1, gain2, gain3, gain4, gain5, gain6, gain7, gain8, gain9, gain10];
 		var fbs = [fb1, fb2, fb3, fb4, fb5, fb6, fb7, fb8, fb9, fb10];
@@ -421,7 +427,7 @@
 			sig = ~spread.(Mix(Array.fill(10, { |i| bands[i] * gains[i] })), nchan, 0);
 		});
 		sig = LeakDC.ar(sig) * amp * enable;
-		Out.ar(out, ~killbad.(XFade2.ar(dry, sig, (wet * 2 - 1)) * (1 - bypass) + (dry * bypass)));
+		Out.ar(out, ~killbad.(~panOut.(XFade2.ar(dry, sig, (wet * 2 - 1)) * (1 - bypass) + (dry * bypass), pan, nchan)));
 	}).add;
 
 	// ---- PITCH: pitch-shifting granular delay surface --------------------
@@ -492,7 +498,7 @@
 	// ---- SDLY: stereo / ping-pong delay -----------------------------------
 	SynthDef(("sdly" ++ suf).asSymbol, { |out = 0, in = 0, timeL = 280, timeR = 420,
 		feedback = 0.35, crossFeed = 0.4, damp = 0.4, width = 1.1, modRate = 0.3,
-		modDepth = 0.12, amp = 1, bypass = 0, wet = 0.35, enable = 1|
+		modDepth = 0.12, amp = 1, bypass = 0, wet = 0.35, enable = 1, pan = 0|
 		var dry = In.ar(in, nchan);
 		var inL = (nchan == 1).if({ dry }, { dry[0] });
 		var inR = (nchan == 1).if({ dry }, { dry[1] });
@@ -514,13 +520,13 @@
 			var oR = XFade2.ar(inR, wetR, wet * 2 - 1);
 			(nchan == 2).if({ [oL, oR] }, { [oL, oR] ++ dry.drop(2) });
 		});
-		Out.ar(out, ~killbad.((outSig * (1 - bypass)) + (dry * bypass)));
+		Out.ar(out, ~killbad.(~panOut.((outSig * (1 - bypass)) + (dry * bypass), pan, nchan)));
 	}).add;
 
 	// ---- VERB: spacious deep reverb (JPverb) ------------------------------
 	SynthDef(("verb" ++ suf).asSymbol, { |out = 0, in = 0, size = 2.2, decay = 5,
 		damp = 0.3, modDepth = 0.2, modFreq = 2, earlyDiff = 0.7, lowCut = 180,
-		highCut = 9000, width = 1, amp = 1, bypass = 0, wet = 0.35, enable = 1, freeze = 0|
+		highCut = 9000, width = 1, amp = 1, bypass = 0, wet = 0.35, enable = 1, freeze = 0, pan = 0|
 		var dry = In.ar(in, nchan);
 		var inL = (nchan == 1).if({ dry }, { dry[0] });
 		var inR = (nchan == 1).if({ dry }, { dry[1] });
@@ -535,7 +541,7 @@
 			var oR = XFade2.ar(inR, wetR, wet * 2 - 1);
 			(nchan == 2).if({ [oL, oR] }, { [oL, oR] ++ dry.drop(2) });
 		});
-		Out.ar(out, ~killbad.((outSig * (1 - bypass)) + (dry * bypass)));
+		Out.ar(out, ~killbad.(~panOut.((outSig * (1 - bypass)) + (dry * bypass), pan, nchan)));
 	}).add;
 
 	// ---- CLOUDS: Mutable Instruments granular processor (MiClouds) --------
@@ -544,7 +550,7 @@
 	(\MiClouds.asClass.notNil).if {
 	SynthDef(("clouds" ++ suf).asSymbol, { |out = 0, in = 0, pit = 0, pos = 0.5,
 		size = 0.4, dens = 0.4, tex = 0.5, inGain = 1, spread = 0.5, rvb = 0.2,
-		fb = 0, freeze = 0, mode = 0, lofi = 0, amp = 0.9, bypass = 0, wet = 1, enable = 1|
+		fb = 0, freeze = 0, mode = 0, lofi = 0, amp = 0.9, bypass = 0, wet = 1, enable = 1, pan = 0|
 		var dry = In.ar(in, nchan);
 		var inL = (nchan == 1).if({ dry }, { dry[0] });
 		var inR = (nchan == 1).if({ dry }, { dry[1] });
@@ -557,7 +563,7 @@
 			var oR = XFade2.ar(inR, wetR, wet * 2 - 1);
 			(nchan == 2).if({ [oL, oR] }, { [oL, oR] ++ dry.drop(2) });
 		});
-		Out.ar(out, ~killbad.((outSig * (1 - bypass)) + (dry * bypass)));
+		Out.ar(out, ~killbad.(~panOut.((outSig * (1 - bypass)) + (dry * bypass), pan, nchan)));
 	}).add;
 	};
 
@@ -585,7 +591,7 @@
 		jitter = 0.2, spread = 0.7,
 		reverse = 0, shimmer = 0, scan = 0, texture = 0.4, chaos = 0,
 		feedback = 0, freeze = 0, shape = 0, inGain = 1, amp = 0.9,
-		bypass = 0, wet = 1, nodeEnable = 1|
+		bypass = 0, wet = 1, nodeEnable = 1, pan = 0|
 		var bufFrames = (s.sampleRate * 4).asInteger;
 		var buf = LocalBuf(bufFrames, 1).clear;
 		var nstream = 4;
@@ -623,7 +629,7 @@
 			var oR = XFade2.ar(dry[1], wetR, wet * 2 - 1);
 			(nchan == 2).if({ [oL, oR] }, { [oL, oR] ++ dry.drop(2) });
 		});
-		Out.ar(out, ~killbad.((outSig * (1 - bypass)) + (dry * bypass)));
+		Out.ar(out, ~killbad.(~panOut.((outSig * (1 - bypass)) + (dry * bypass), pan, nchan)));
 	}).add;
 
 	// ---- MOLLY: port of "Molly the Poly" (Mark Wheeler) -------------------
@@ -671,7 +677,7 @@
 	(\MiRings.asClass.notNil).if {
 	SynthDef(("rings" ++ suf).asSymbol, { |out = 0, in = 0, pit = 48, struct = 0.25,
 		bright = 0.5, damp = 0.7, pos = 0.25, model = 0, poly = 0, internalExc = 1,
-		easteregg = 0, trigRate = 2, trigMode = 0, amp = 0.9, bypass = 0, wet = 1, enable = 1|
+		easteregg = 0, trigRate = 2, trigMode = 0, amp = 0.9, bypass = 0, wet = 1, enable = 1, pan = 0|
 		var dry = In.ar(in, nchan);
 		var inL = (nchan == 1).if({ dry }, { dry[0] });
 		var inR = (nchan == 1).if({ dry }, { dry[1] });
@@ -686,7 +692,7 @@
 			var oR = XFade2.ar(inR, wetR, wet * 2 - 1);
 			(nchan == 2).if({ [oL, oR] }, { [oL, oR] ++ dry.drop(2) });
 		});
-		Out.ar(out, ~killbad.((outSig * (1 - bypass)) + (dry * bypass)));
+		Out.ar(out, ~killbad.(~panOut.((outSig * (1 - bypass)) + (dry * bypass), pan, nchan)));
 	}).add;
 	};
 
