@@ -120,17 +120,20 @@ main.detail-collapsed #detail { display: none; }
 .cat-midi { --cat: var(--warn); }
 .node[class*="cat-"] .nhead { border-left: 4px solid var(--cat); }
 .node[class*="cat-"] .ntype { color: var(--cat); }
-/* per-module pan slider on the canvas box */
-.nbody .npan { align-items: center; gap: 6px; margin-top: 4px; }
+/* per-module pan: a centre baseline + a slidable tick that grows a bold tail */
+.nbody .npan { align-items: center; gap: 6px; margin-top: 5px; }
 .npan .npan-lbl { font-size: 9px; color: var(--ink-dim); text-transform: uppercase; }
-.npan-wrap { position: relative; flex: 1; display: flex; align-items: center; }
-/* centre (mono) tick behind the slider */
-.npan-tick { position: absolute; left: 50%; top: 1px; bottom: 1px; width: 1px;
-  transform: translateX(-0.5px); background: var(--ink-dim); opacity: .5; pointer-events: none; }
-.npan input[type=range] { flex: 1; height: 12px; accent-color: var(--cat, var(--accent)); position: relative; }
-/* when centred, brighten the tick via the slider's state */
-.npan input[type=range].centered + .npan-tick,
-.npan-wrap:has(input.centered) .npan-tick { background: var(--cat, var(--accent)); opacity: 1; }
+.pan-ctl { position: relative; flex: 1; height: 14px; cursor: ew-resize; touch-action: none; }
+.pan-axis { position: absolute; left: 0; right: 0; top: 50%; height: 1px;
+  transform: translateY(-0.5px); background: var(--border); }
+/* faint centre mark */
+.pan-ctl::before { content: ""; position: absolute; left: 50%; top: 2px; bottom: 2px; width: 1px;
+  transform: translateX(-0.5px); background: var(--ink-dim); opacity: .45; pointer-events: none; }
+.pan-bar { position: absolute; top: 50%; height: 4px; transform: translateY(-2px);
+  background: var(--cat, var(--accent)); border-radius: 2px; pointer-events: none; }
+.pan-knob { position: absolute; top: 0; bottom: 0; width: 3px; transform: translateX(-1.5px);
+  background: var(--cat, var(--accent)); border-radius: 2px; pointer-events: none; }
+.pan-ctl.centered .pan-knob { background: var(--ink-dim); }
 .node .nhead {
   display: flex; justify-content: space-between; align-items: center;
   padding: 6px 8px; cursor: grab; border-bottom: 1px solid var(--border);

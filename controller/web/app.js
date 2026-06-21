@@ -163,6 +163,50 @@ function panInfo(type) {
   return null;
 }
 
+// A minimal pan control: a centre baseline with a slidable tick that grows a
+// bold tail/bar from centre toward the tick as it moves off-centre (L or R).
+function mkPanControl(m, pan, cur) {
+  const ctl = el("div", "pan-ctl");
+  ctl.append(el("div", "pan-axis"));               // faint full-width baseline
+  const bar = el("div", "pan-bar");                // bold tail from centre
+  const knob = el("div", "pan-knob");              // the slidable tick
+  ctl.append(bar, knob);
+  const paint = (v) => {
+    const off = v - 0.5;                            // -0.5..0.5
+    ctl.classList.toggle("centered", Math.abs(off) < 1e-6);
+    knob.style.left = (v * 100) + "%";
+    if (off >= 0) { bar.style.left = "50%"; bar.style.right = "auto"; bar.style.width = (off * 100) + "%"; }
+    else { bar.style.right = "50%"; bar.style.left = "auto"; bar.style.width = (-off * 100) + "%"; }
+  };
+  const apply = (v) => {
+    if (pan.global) send("set_param_norm", { module: m.id, param: pan.id, node: null, value: v });
+    else for (let i = 0; i < m.node_count; i++) send("set_param_norm", { module: m.id, param: pan.id, node: i, value: v });
+  };
+  const fromX = (clientX) => {
+    const r = ctl.getBoundingClientRect();
+    let v = (clientX - r.left) / Math.max(1, r.width);
+    v = Math.max(0, Math.min(1, v));
+    if (Math.abs(v - 0.5) < 0.05) v = 0.5;          // centre detent
+    return v;
+  };
+  const move = (e) => { const v = fromX(e.clientX); paint(v); apply(v); };
+  const up = () => {
+    dragging = false;
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+  };
+  ctl.addEventListener("pointerdown", (e) => {
+    e.stopPropagation(); e.preventDefault(); dragging = true;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    move(e);
+  });
+  ctl.addEventListener("dblclick", (e) => { e.stopPropagation(); paint(0.5); apply(0.5); });
+  ctl.title = "module pan — drag the tick (L ◀ ▶ R); double-click to centre";
+  paint(cur);
+  return ctl;
+}
+
 function renderCanvas() {
   const cv = $("canvas");
   // remove old nodes (keep the <svg id=wires>)
@@ -189,22 +233,8 @@ function renderCanvas() {
         : ((m.nodes[0] || {})[pan.id] || { norm: 0.5 }).norm;
       const pr = el("div", "nrow npan");
       pr.append(el("span", "npan-lbl", "pan"));
-      const wrap = el("div", "npan-wrap");
-      wrap.append(el("div", "npan-tick"));              // centre (mono) marker
-      const ps = el("input"); ps.type = "range"; ps.min = 0; ps.max = 1; ps.step = 0.001;
-      ps.value = cur; ps.title = "module pan (L ◀ ▶ R) — snaps to centre";
-      ps.classList.toggle("centered", Math.abs(cur - 0.5) < 0.02);
-      const stop = (e) => e.stopPropagation();
-      ps.addEventListener("mousedown", stop); ps.addEventListener("click", stop);
-      ps.oninput = () => {
-        let v = parseFloat(ps.value);
-        if (Math.abs(v - 0.5) < 0.04) { v = 0.5; ps.value = 0.5; }   // centre detent
-        ps.classList.toggle("centered", v === 0.5);
-        if (pan.global) send("set_param_norm", { module: m.id, param: pan.id, node: null, value: v });
-        else for (let i = 0; i < m.node_count; i++) send("set_param_norm", { module: m.id, param: pan.id, node: i, value: v });
-      };
-      ps.ondblclick = () => { ps.value = 0.5; ps.oninput(); };        // dbl-click = re-centre
-      wrap.append(ps); pr.append(wrap); body.append(pr);
+      pr.append(mkPanControl(m, pan, cur));
+      body.append(pr);
     }
     node.append(body);
     if (m.has_input) { const pin = el("div", "port in"); pin.dataset.id = m.id; pin.dataset.kind = "in"; node.append(pin); }
