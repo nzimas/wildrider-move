@@ -493,8 +493,6 @@ GRAINS = ModuleSpec(
         P("grains.density", "Density", unit="gr/s", rmin=1.0, rmax=200.0, default=40.0, curve=Curve.EXP, formatter="float0", musical=(8.0, 120.0)),
         P("grains.pos", "Position", default=0.0, musical=(0.0, 0.6)),
         P("grains.spray", "Spray", rmin=0.0, rmax=0.5, default=0.08, musical=(0.0, 0.3)),
-        P("grains.pitch", "Pitch", unit="semitone", rmin=-24.0, rmax=24.0, default=0.0, curve=Curve.BIPOLAR, formatter="semitone", musical=(-12.0, 12.0)),
-        P("grains.pitchJitter", "Pitch Jitter", unit="semitone", rmin=0.0, rmax=12.0, default=0.0, formatter="float1", musical=(0.0, 7.0)),
         P("grains.jitter", "Size Jitter", rmin=0.0, rmax=1.0, default=0.2, musical=(0.0, 0.6)),
         P("grains.spread", "Stereo Spread", default=0.7, musical=(0.3, 1.0)),
         P("grains.reverse", "Reverse", default=0.0, musical=(0.0, 0.5)),
@@ -779,13 +777,68 @@ SEQ = ModuleSpec(
 )
 
 
+# MOLLY — a port of Mark Wheeler's "Molly the Poly" (Norns): a characterful
+# analogue-voiced polysynth. Dual morphing oscillators (tri→saw→pulse) + sub +
+# noise, optional ring mod, a resonant low-pass (12/24 dB) with its own ADSR, an
+# amp ADSR, an LFO routable to pitch/PW/cutoff/amp, overdrive and chorus. Driven
+# by note + gate (drone by default; SEQ / GATE articulate it). The `scope` param
+# recreates Molly's three sound types — lead / pad / percussion — and steers
+# GUIDED randomization toward that sound's musical use.
+MOLLY = ModuleSpec(
+    type="MOLLY",
+    role="Molly the Poly: characterful analogue-voiced polysynth (lead/pad/perc).",
+    node_meaning="One analogue voice (stack nodes for unison/poly drones).",
+    synthdef="molly",
+    insert_capable=False,
+    generative_capable=True,    # a voice — note + gate (SEQ/GATE drive it)
+    max_nodes=3,
+    cpu_per_node=2.6,
+    gestures=["lead", "pad", "percussion", "filter-sweep", "ring-mod", "chorus-wash"],
+    node_params=[
+        P("molly.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("molly.note", "Note", rmin=0.0, rmax=127.0, default=48.0, curve=Curve.LINEAR, formatter="float0", randomize=RandomizePolicy.OFF, modulatable=False),
+        P("molly.gate", "Gate", curve=Curve.ENUM, enum=["off", "on"], default=1, rate=Rate.TRIGGER, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("molly.detune", "Detune", unit="cent", rmin=0.0, rmax=50.0, default=7.0, formatter="float1", musical=(2.0, 22.0)),
+        P("molly.oscShape", "Osc Shape", default=0.5, musical=(0.2, 1.0)),
+        P("molly.pulseWidth", "Pulse Width", rmin=0.05, rmax=0.95, default=0.5, musical=(0.2, 0.8)),
+        P("molly.subLevel", "Sub", default=0.0, musical=(0.0, 0.5)),
+        P("molly.noiseLevel", "Noise", default=0.0, musical=(0.0, 0.3)),
+        P("molly.cutoff", "Cutoff", unit="Hz", rmin=20.0, rmax=18000.0, default=1200.0, curve=Curve.EXP, formatter="Hz", musical=(300.0, 6000.0)),
+        P("molly.resonance", "Resonance", default=0.2, musical=(0.1, 0.7), danger=DangerClass.FEEDBACK),
+        P("molly.filterEnvAmt", "Filter Env", rmin=-1.0, rmax=1.0, default=0.3, curve=Curve.BIPOLAR, musical=(0.0, 0.8)),
+        P("molly.fAtk", "F.Attack", unit="s", rmin=0.001, rmax=5.0, default=0.05, curve=Curve.EXP, formatter="float3", musical=(0.002, 1.5)),
+        P("molly.fDec", "F.Decay", unit="s", rmin=0.001, rmax=5.0, default=0.3, curve=Curve.EXP, formatter="float3", musical=(0.03, 1.5)),
+        P("molly.fSus", "F.Sustain", default=0.6, musical=(0.0, 0.9)),
+        P("molly.fRel", "F.Release", unit="s", rmin=0.001, rmax=8.0, default=0.6, curve=Curve.EXP, formatter="float3", musical=(0.05, 3.0)),
+        P("molly.aAtk", "A.Attack", unit="s", rmin=0.001, rmax=5.0, default=0.01, curve=Curve.EXP, formatter="float3", musical=(0.002, 2.0)),
+        P("molly.aDec", "A.Decay", unit="s", rmin=0.001, rmax=5.0, default=0.3, curve=Curve.EXP, formatter="float3", musical=(0.05, 1.5)),
+        P("molly.aSus", "A.Sustain", default=0.8, musical=(0.0, 1.0)),
+        P("molly.aRel", "A.Release", unit="s", rmin=0.001, rmax=8.0, default=0.5, curve=Curve.EXP, formatter="float3", musical=(0.05, 4.0)),
+        P("molly.lfoRate", "LFO Rate", unit="Hz", rmin=0.01, rmax=30.0, default=4.0, curve=Curve.EXP, formatter="float2", musical=(0.1, 8.0)),
+        P("molly.lfoToCutoff", "LFO→Cutoff", default=0.0, musical=(0.0, 0.4)),
+        P("molly.lfoToPitch", "LFO→Pitch", default=0.0, musical=(0.0, 0.3)),
+        P("molly.lfoToPW", "LFO→PW", default=0.0, musical=(0.0, 0.4)),
+        P("molly.lfoToAmp", "LFO→Amp", default=0.0, musical=(0.0, 0.4)),
+        P("molly.ringMod", "Ring Mod", default=0.0, musical=(0.0, 0.4)),
+        P("molly.drive", "Drive", default=0.0, musical=(0.0, 0.6)),
+        P("molly.chorus", "Chorus", default=0.0, musical=(0.0, 0.7)),
+        P("molly.pan", "Pan", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, formatter="float2"),
+        P("molly.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.3, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.2, 0.6)),
+    ],
+    global_params=[
+        P("molly.scope", "Scope", curve=Curve.ENUM, enum=["lead", "pad", "percussion"], default=0, modulatable=False, randomize=RandomizePolicy.OFF),
+        P("molly.lpType", "Filter", curve=Curve.ENUM, enum=["12 dB", "24 dB"], default=1, modulatable=False),
+    ],
+)
+
+
 CATALOG: dict[str, ModuleSpec] = {
-    m.type: m for m in (SEQ, DX7, FBANK, PITCH, TIME, COMB, GAIN, SDLY, VERB,
+    m.type: m for m in (SEQ, DX7, MOLLY, FBANK, PITCH, TIME, COMB, GAIN, SDLY, VERB,
                         CLOUDS, GRAINS, RINGS, BEN, BUCHLOID, ENV, GATE, PLAITS, DISTORT, VIZ)
 }
 
 # Ordered lanes (source -> processors -> spatial tail).
-DEFAULT_LANE_ORDER = ["SEQ", "DX7", "FBANK", "PITCH", "TIME", "COMB", "GAIN",
+DEFAULT_LANE_ORDER = ["SEQ", "DX7", "MOLLY", "FBANK", "PITCH", "TIME", "COMB", "GAIN",
                       "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "PLAITS", "DISTORT", "VIZ"]
 
 

@@ -374,7 +374,7 @@ def test_aesthetics_plans_are_artist_shaped():
     from atelier import aesthetics
     import random
     rng = random.Random(7)
-    SOURCE_TYPES = {"DX7", "PLAITS", "RINGS", "BUCHLOID", "BEN"}
+    SOURCE_TYPES = {"DX7", "PLAITS", "RINGS", "BUCHLOID", "BEN", "MOLLY"}
     # palettes honour required modules, the count cap, the source cap (anti-cacophony)
     # and never stack distortions.
     for artist in aesthetics.ARTISTS:
@@ -405,7 +405,7 @@ def test_aesthetics_plans_are_artist_shaped():
 
 def test_guided_patch_limits_voices_and_is_congruent():
     from atelier import aesthetics
-    SOURCE_TYPES = {"DX7", "PLAITS", "RINGS", "BUCHLOID", "BEN"}
+    SOURCE_TYPES = {"DX7", "PLAITS", "RINGS", "BUCHLOID", "BEN", "MOLLY"}
     # Across seeds, a guided patch never piles up voices (the cacophony guard) and
     # stays small.
     for seed in range(12):
@@ -501,3 +501,20 @@ def test_lock_freezes_param_against_modulation():
         st._last_tick = time.monotonic() - 0.03
         st.tick_modulation()
     assert slot.effective == pytest.approx(slot.base)
+
+
+def test_molly_guided_follows_scope():
+    # Guided randomization of a MOLLY follows its `scope` sound type: percussion
+    # gives short amp release, pad gives a long one.
+    st = _state()
+    m = st.add_module("MOLLY", node_count=1)
+    rels = {}
+    for scope_idx, name in ((2, "percussion"), (1, "pad")):
+        m.global_slots["molly.scope"].base = float(scope_idx)
+        # use a style whose ARTIST_MOLLY_SCOPE keeps this scope so it isn't overridden
+        style = "autechre" if name == "percussion" else "vidna_obmana"
+        st.randomize(0.9, scope="module", mid=m.id, style=style)
+        rels[name] = st.patch.find_slot(m.id, "molly.aRel", 0).base
+    assert rels["percussion"] < 0.4
+    assert rels["pad"] > 1.0
+    assert rels["pad"] > rels["percussion"] * 3

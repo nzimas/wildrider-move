@@ -582,7 +582,7 @@
 
 	SynthDef(("grains" ++ suf).asSymbol, { |out = 0, in = 0,
 		size = 0.12, density = 40, pos = 0.0, spray = 0.08,
-		pitch = 0, pitchJitter = 0, jitter = 0.2, spread = 0.7,
+		jitter = 0.2, spread = 0.7,
 		reverse = 0, shimmer = 0, scan = 0, texture = 0.4, chaos = 0,
 		feedback = 0, freeze = 0, shape = 0, inGain = 1, amp = 0.9,
 		bypass = 0, wet = 1, nodeEnable = 1|
@@ -604,7 +604,7 @@
 			var rpos = (writePhase - (pos * 0.5) - TRand.ar(0, spray, trig)
 				+ (LFSaw.ar(scan * (1 + (i * 0.13)), 2.0.rand) * 0.5 * (scan > 0))
 				+ (walk * 0.25)).wrap(0, 1);
-			var rate = (pitch + TRand.ar(pitchJitter.neg, pitchJitter, trig) + (walk * 12)).midiratio;
+			var rate = (walk * 12).midiratio;   // natural pitch; only chaos detunes grains
 			var dir = Select.ar(rnd < reverse, [DC.ar(1), DC.ar(-1)]);
 			var oct = Select.ar(TRand.ar(0, 1, trig) < shimmer, [DC.ar(1), DC.ar(2)]);
 			var gdur = (size * (1 + texture) * (1 + TRand.ar(jitter.neg, jitter, trig))).clip(0.003, 2.0);
@@ -624,6 +624,47 @@
 			(nchan == 2).if({ [oL, oR] }, { [oL, oR] ++ dry.drop(2) });
 		});
 		Out.ar(out, ~killbad.((outSig * (1 - bypass)) + (dry * bypass)));
+	}).add;
+
+	// ---- MOLLY: port of "Molly the Poly" (Mark Wheeler) -------------------
+	// One analogue voice = one node. Two morphing oscillators (tri->saw->pulse)
+	// + sub + noise -> optional ring-mod -> resonant LP (12/24 dB) with its own
+	// ADSR -> overdrive -> amp ADSR -> chorus. note + gate drive it (gate held =
+	// drone; SEQ/GATE articulate the envelopes). Source: ignores `in`.
+	SynthDef(("molly" ++ suf).asSymbol, { |out = 0, in = 0,
+		note = 48, gate = 1, detune = 7, oscShape = 0.5, pulseWidth = 0.5,
+		subLevel = 0, noiseLevel = 0,
+		cutoff = 1200, resonance = 0.2, lpType = 1, filterEnvAmt = 0.3,
+		fAtk = 0.05, fDec = 0.3, fSus = 0.6, fRel = 0.6,
+		aAtk = 0.01, aDec = 0.3, aSus = 0.8, aRel = 0.5,
+		lfoRate = 4, lfoToCutoff = 0, lfoToPitch = 0, lfoToPW = 0, lfoToAmp = 0,
+		ringMod = 0, drive = 0, chorus = 0, amp = 0.3, pan = 0,
+		bypass = 0, wet = 1, nodeEnable = 1|
+		var freq = Lag.kr(note.midicps, 0.03);
+		var lfo = SinOsc.kr(lfoRate);
+		var fA = freq * (1 + (lfo * lfoToPitch * 0.06));
+		var fB = fA * (2 ** (detune / 1200));
+		var pw = (pulseWidth + (lfo * lfoToPW * 0.4)).clip(0.05, 0.95);
+		var wave = { |f| SelectX.ar(oscShape * 2, [VarSaw.ar(f, 0, 0.5), Saw.ar(f), Pulse.ar(f, pw)]) };
+		var oscA = wave.(fA);
+		var oscB = wave.(fB);
+		var sub = Pulse.ar(fA * 0.5, 0.5) * subLevel;
+		var noise = WhiteNoise.ar(noiseLevel);
+		var mix = ((oscA + oscB) * 0.5) + sub + noise;
+		var fenv = EnvGen.ar(Env.adsr(fAtk, fDec, fSus, fRel), gate);
+		var aenv = EnvGen.ar(Env.adsr(aAtk, aDec, aSus, aRel), gate);
+		var fc = (cutoff * (2 ** ((filterEnvAmt * fenv * 4) + (lfo * lfoToCutoff * 2)))).clip(20, 18000);
+		var filt, sig, cho;
+		mix = XFade2.ar(mix, oscA * oscB * 2, (ringMod * 2 - 1));
+		filt = Select.ar(lpType.clip(0, 1), [
+			RLPF.ar(mix, fc, (1 - (resonance * 0.95)).max(0.05)),     // 12 dB
+			MoogFF.ar(mix, fc, (resonance * 4).clip(0, 3.95))         // 24 dB
+		]);
+		sig = (filt * (1 + (drive * 6))).tanh / (1 + (drive * 2.5));  // overdrive + makeup
+		sig = sig * aenv * (1 - (lfoToAmp * (lfo * 0.5 + 0.5)));      // tremolo
+		cho = Mix(DelayC.ar(sig, 0.06, LFNoise2.kr([0.5, 0.7]).range(0.004, 0.02))) * 0.7;
+		sig = XFade2.ar(sig, cho, (chorus * 2 - 1)) * amp * nodeEnable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
 	}).add;
 
 	// ---- RINGS: Mutable Instruments modal/string resonator (MiRings) ------

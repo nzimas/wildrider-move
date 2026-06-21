@@ -891,23 +891,46 @@ class StateManager:
         return n
 
     # -- guided (aesthetic) generation ------------------------------------- #
-    def _gen_value(self, meta, mtype: str, style: str | None,
+    @staticmethod
+    def _molly_scope(m) -> str:
+        slot = m.global_slots.get("molly.scope")
+        idx = int(round(slot.base)) if slot else 0
+        return aesthetics.MOLLY_SCOPES[idx] if 0 <= idx < len(aesthetics.MOLLY_SCOPES) else "lead"
+
+    def _guided_value(self, slot, m, style: str, expert: bool) -> float:
+        """Guided value for one slot. MOLLY voices follow their `scope` (lead/pad/
+        percussion) sound type; everything else follows the artist aesthetic."""
+        if m.type == "MOLLY":
+            v = aesthetics.molly_value(self.rng, slot.meta, self._molly_scope(m))
+            if v is not None:
+                return v
+        return aesthetics.guided_value(self.rng, slot.meta, style, expert)
+
+    def _gen_value(self, meta, m, style: str | None,
                    base: float, amount: float, expert: bool) -> float:
-        """A value either freely randomized or shaped by an artist aesthetic."""
+        """A value either freely randomized or shaped (guided) for this module."""
         if style and style != "free":
             if meta.randomize_policy is RandomizePolicy.OFF:
                 return base
             if meta.randomize_policy is RandomizePolicy.EXPERT and not expert:
                 return base
-            return aesthetics.guided_value(self.rng, meta, style, expert)
+            slot = type("S", (), {"meta": meta})()    # lightweight carrier
+            return self._guided_value(slot, m, style, expert)
         return meta.randomize(self.rng, base, amount, expert)
 
     def _apply_style(self, mid: str | None, style: str, expert: bool) -> int:
         """Apply an artist aesthetic to every (non-locked, randomizable) slot of one
-        module (mid) or the whole patch (mid None)."""
+        module (mid) or the whole patch (mid None). MOLLY voices are steered by the
+        artist's preferred scope (lead/pad/percussion) then drawn from that recipe."""
         mods = [self.patch.modules[mid]] if mid else list(self.patch.modules.values())
         n = 0
         for m in mods:
+            # bias a MOLLY toward the artist's sound type before generating
+            if m.type == "MOLLY":
+                sc = aesthetics.ARTIST_MOLLY_SCOPE.get(style)
+                ss = m.global_slots.get("molly.scope")
+                if sc and ss is not None:
+                    ss.base = float(aesthetics.MOLLY_SCOPES.index(sc))
             slots = list(m.global_slots.values())
             for nd in m.node_slots:
                 slots.extend(nd.values())
@@ -916,7 +939,7 @@ class StateManager:
                     continue
                 if slot.meta.randomize_policy is RandomizePolicy.EXPERT and not expert:
                     continue
-                slot.base = aesthetics.guided_value(self.rng, slot.meta, style, expert)
+                slot.base = self._guided_value(slot, m, style, expert)
                 n += 1
             # wet/dry of character effects — the biggest perceptual lever per artist
             wet = aesthetics.guided_wet(self.rng, style, m.type)
@@ -984,7 +1007,7 @@ class StateManager:
             if not slot or slot.locked:
                 return 0
             m = self.patch.modules[mid]
-            slot.base = self._gen_value(slot.meta, m.type, style, slot.base, amount, ex)
+            slot.base = self._gen_value(slot.meta, m, style, slot.base, amount, ex)
             if m.spec.is_audio:
                 self.bridge.set_param(mid, m.short_pid(pid),
                                       node if node is not None else -1, slot.effective)

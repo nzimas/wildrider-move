@@ -66,7 +66,7 @@ SPECIAL: dict[str, tuple[str, bool]] = {
     "clouds.tex": (BRIGHT, False),
     "clouds.dens": (DENSITY, False),
     "grains.size": (TIME, False), "grains.density": (DENSITY, False),
-    "grains.spray": (MOTION, False), "grains.pitchJitter": (MOTION, False),
+    "grains.spray": (MOTION, False),
     "grains.jitter": (MOTION, False), "grains.spread": (SPACE, False),
     "grains.reverse": (MOTION, False), "grains.shimmer": (BRIGHT, False),
     "grains.scan": (RATE, False), "grains.texture": (BRIGHT, False),
@@ -270,27 +270,27 @@ def guided_wet(rng, artist: str, module_type: str) -> float | None:
 # to `count` total. `require` effects are guaranteed; DISTORT is capped at one.
 MODULE_PALETTE: dict[str, dict] = {
     "vidna_obmana": {  # immersive ambient — one or two warm voices bathed in space
-        "sources": {"DX7": 3, "PLAITS": 2, "RINGS": 1},
+        "sources": {"DX7": 3, "PLAITS": 2, "RINGS": 1, "MOLLY": 1},
         "effects": {"VERB": 3, "CLOUDS": 3, "GRAINS": 2, "SDLY": 2, "COMB": 1, "FBANK": 1, "PITCH": 1},
         "sources_count": (1, 2), "count": (4, 5), "require": ["VERB", "CLOUDS"],
     },
     "lustmord": {  # dark ambient — a single deep drone in a cavern
-        "sources": {"DX7": 3, "BUCHLOID": 1, "PLAITS": 1},
+        "sources": {"DX7": 3, "BUCHLOID": 1, "PLAITS": 1, "MOLLY": 1},
         "effects": {"VERB": 4, "COMB": 2, "FBANK": 1, "SDLY": 1, "PITCH": 1},
         "sources_count": (1, 1), "count": (3, 4), "require": ["VERB"],
     },
     "bernard_parmegiani": {  # musique concrète — one voice, transformed in space
-        "sources": {"PLAITS": 2, "RINGS": 2, "DX7": 2, "BUCHLOID": 1},
+        "sources": {"PLAITS": 2, "RINGS": 2, "DX7": 2, "BUCHLOID": 1, "MOLLY": 1},
         "effects": {"PITCH": 3, "TIME": 3, "COMB": 2, "VERB": 2, "CLOUDS": 2, "GRAINS": 2, "SDLY": 2, "FBANK": 1, "GATE": 1},
         "sources_count": (1, 2), "count": (4, 6), "require": ["TIME", "PITCH"],
     },
     "ben_frost": {  # abrasive — a voice driven hard, rhythmic gating, little reverb
-        "sources": {"DX7": 3, "PLAITS": 2, "BUCHLOID": 1},
+        "sources": {"DX7": 3, "PLAITS": 2, "BUCHLOID": 1, "MOLLY": 2},
         "effects": {"DISTORT": 4, "GATE": 2, "COMB": 1, "FBANK": 1, "VERB": 1, "SDLY": 1},
         "sources_count": (1, 2), "count": (4, 5), "require": ["DISTORT", "GATE"],
     },
     "autechre": {  # algorithmic — one or two voices, fragmented, digital artefacts
-        "sources": {"PLAITS": 3, "RINGS": 2, "DX7": 2},
+        "sources": {"PLAITS": 3, "RINGS": 2, "DX7": 2, "MOLLY": 2},
         "effects": {"DISTORT": 2, "GATE": 3, "TIME": 2, "COMB": 2, "FBANK": 1, "SDLY": 2, "GRAINS": 2},
         "sources_count": (1, 2), "count": (4, 6), "require": ["GATE"],
     },
@@ -324,6 +324,60 @@ LFO_PROFILE: dict[str, dict] = {
 # rhythmic artists carry GATE in their palette (Ben Frost / Autechre require it,
 # Parmegiani may grow one), so a guided patch gets its pulse from a GATE insert in
 # the signal path rather than from an auto-added SEQ.
+
+
+# MOLLY ("Molly the Poly") sound types — its Lua control layer scopes three uses:
+# lead, pad, percussion. These real-unit ranges port that randomizer so GUIDED
+# randomization of a MOLLY draws values appropriate to the active `scope` param.
+MOLLY_SCOPES = ["lead", "pad", "percussion"]
+MOLLY_SCOPE: dict[str, dict[str, tuple[float, float]]] = {
+    "lead": {   # bright, cutting, sustained
+        "detune": (2, 12), "oscShape": (0.45, 1.0), "pulseWidth": (0.2, 0.6),
+        "subLevel": (0.0, 0.4), "noiseLevel": (0.0, 0.1),
+        "cutoff": (1500, 8000), "resonance": (0.2, 0.6), "filterEnvAmt": (0.1, 0.5),
+        "fAtk": (0.001, 0.05), "fDec": (0.05, 0.4), "fSus": (0.3, 0.8), "fRel": (0.1, 0.5),
+        "aAtk": (0.001, 0.03), "aDec": (0.1, 0.5), "aSus": (0.6, 1.0), "aRel": (0.1, 0.5),
+        "lfoRate": (3, 7), "lfoToCutoff": (0.0, 0.2), "lfoToPitch": (0.0, 0.3),
+        "lfoToPW": (0.0, 0.2), "lfoToAmp": (0.0, 0.1),
+        "ringMod": (0.0, 0.2), "drive": (0.1, 0.5), "chorus": (0.0, 0.3),
+    },
+    "pad": {    # lush, slow, wide, evolving
+        "detune": (5, 25), "oscShape": (0.2, 0.8), "pulseWidth": (0.3, 0.7),
+        "subLevel": (0.1, 0.5), "noiseLevel": (0.0, 0.1),
+        "cutoff": (400, 2500), "resonance": (0.1, 0.4), "filterEnvAmt": (0.2, 0.7),
+        "fAtk": (0.3, 2.0), "fDec": (0.5, 2.0), "fSus": (0.4, 0.9), "fRel": (1.0, 5.0),
+        "aAtk": (0.4, 2.5), "aDec": (0.5, 2.0), "aSus": (0.6, 1.0), "aRel": (1.5, 6.0),
+        "lfoRate": (0.1, 1.5), "lfoToCutoff": (0.0, 0.4), "lfoToPitch": (0.0, 0.1),
+        "lfoToPW": (0.0, 0.4), "lfoToAmp": (0.0, 0.2),
+        "ringMod": (0.0, 0.1), "drive": (0.0, 0.2), "chorus": (0.4, 0.9),
+    },
+    "percussion": {  # plucky, transient, short
+        "detune": (0, 10), "oscShape": (0.3, 1.0), "pulseWidth": (0.1, 0.6),
+        "subLevel": (0.0, 0.4), "noiseLevel": (0.1, 0.6),
+        "cutoff": (800, 6000), "resonance": (0.3, 0.8), "filterEnvAmt": (0.4, 0.9),
+        "fAtk": (0.001, 0.01), "fDec": (0.03, 0.25), "fSus": (0.0, 0.2), "fRel": (0.03, 0.2),
+        "aAtk": (0.001, 0.01), "aDec": (0.05, 0.35), "aSus": (0.0, 0.15), "aRel": (0.03, 0.25),
+        "lfoRate": (2, 10), "lfoToCutoff": (0.0, 0.2), "lfoToPitch": (0.0, 0.1),
+        "lfoToPW": (0.0, 0.2), "lfoToAmp": (0.0, 0.1),
+        "ringMod": (0.0, 0.4), "drive": (0.2, 0.7), "chorus": (0.0, 0.2),
+    },
+}
+# Which Molly scope each artist leans on when guided generation spawns a MOLLY.
+ARTIST_MOLLY_SCOPE: dict[str, str] = {
+    "vidna_obmana": "pad", "lustmord": "pad", "bernard_parmegiani": "pad",
+    "ben_frost": "lead", "autechre": "percussion",
+}
+
+
+def molly_value(rng, meta: ParamMetadata, scope: str) -> float | None:
+    """A scope-appropriate value for a MOLLY param (or None to defer to the generic
+    guided shaping for params the scope recipe doesn't cover)."""
+    table = MOLLY_SCOPE.get(scope) or MOLLY_SCOPE["lead"]
+    short = meta.id.split(".", 1)[-1]
+    if short in table:
+        lo, hi = table[short]
+        return meta.clamp(rng.uniform(lo, hi))
+    return None
 
 
 def _logrand(rng, lo: float, hi: float) -> float:
