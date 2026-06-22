@@ -444,8 +444,9 @@ def _c_macro_targets(d):
 
 
 @command("macro_randomize")
-def _c_macro_randomize(_d):
-    state.randomize_macros()
+def _c_macro_randomize(d):
+    mid = d.get("id")
+    state.randomize_macro(mid) if mid else state.randomize_macros()
 
 
 @command("lfos_enabled")

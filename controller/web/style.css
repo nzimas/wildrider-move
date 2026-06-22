@@ -398,7 +398,7 @@ main:not(.detail-collapsed) #canvas-wrap { height: 54vh; }
 #mod-panel .tab.active { color: #000; background: var(--accent); border-color: var(--accent); font-weight: 700; }
 #btn-lfos-enable.active { background: var(--good); color: #000; border-color: var(--good); }
 /* macro rows */
-.macro-row { display: grid; grid-template-columns: 34px 1fr 58px 84px; gap: 6px;
+.macro-row { display: grid; grid-template-columns: 32px 1fr 54px 72px 24px; gap: 5px;
   align-items: center; margin-top: 6px; }
 .macro-name { font-weight: 700; font-size: 11px; color: var(--accent); }
 .macro-row input[type=range] { width: 100%; accent-color: var(--fill); }

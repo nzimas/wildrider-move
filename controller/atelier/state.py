@@ -1105,6 +1105,18 @@ class StateManager:
             self._push_param(mid, pid, node)
         self._notify({"type": "macros"})
 
+    def randomize_macro(self, macro_id: str) -> None:
+        """Per-macro randomizer: re-pick this macro's destination count, its actual
+        destinations, and its slider value."""
+        m = self.control.macros.get(macro_id)
+        if not m:
+            return
+        m.value = round(self.rng.random(), 3)
+        self._assign_macro_targets(m, self.rng.randint(2, 6))
+        for (mid, pid, node, _b) in m.apply(self.patch):
+            self._push_param(mid, pid, node)
+        self._notify({"type": "macros"})
+
     def randomize_macros(self) -> None:
         """Block randomizer: random macro count, random destination count + actual
         destinations per macro, and random slider values."""

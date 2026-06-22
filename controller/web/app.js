@@ -917,6 +917,8 @@ function renderMacros() {
     const tip = el("span", "macro-tip", `→ ${summary || "none"}`);
     tip.title = (mac.targets || []).map((t) => `${t.module_id}.${shortP(t)}`).join("\n");
     row.append(tip);
+    row.append(seqDice("Randomize this macro's destinations + value",
+      () => send("macro_randomize", { id: mac.id })));
     root.append(row);
   }
   if (!macros.length) root.append(el("div", "rand-hint", "no macros — set a count or hit 🎲 randomize"));
