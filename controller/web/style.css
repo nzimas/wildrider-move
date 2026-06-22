@@ -76,14 +76,22 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 button.danger { color: var(--bad); border-color: var(--bad); }
 button.active { background: var(--accent); color: #000; }
 
+/* Canvas top-left, side panel down the right (full height), and the selected
+   module's parameters BELOW the canvas spanning its full width. */
 main {
-  display: grid; grid-template-columns: 340px 1fr 340px; gap: 10px;
-  padding: 10px; align-items: start;
+  display: grid; grid-template-columns: 1fr 340px; grid-template-rows: auto auto;
+  gap: 10px; padding: 10px; align-items: start;
 }
-/* No module selected: drop the detail column so the canvas gets the room. */
-main.detail-collapsed { grid-template-columns: 1fr 340px; }
+#canvas-wrap { grid-column: 1; grid-row: 1; }
+#detail { grid-column: 1; grid-row: 2; }
+#side { grid-column: 2; grid-row: 1 / span 2; }
+/* No module selected: hide the detail row so the canvas keeps full height. */
 main.detail-collapsed #detail { display: none; }
-@media (max-width: 1200px) { main, main.detail-collapsed { grid-template-columns: 1fr; } }
+@media (max-width: 1000px) {
+  main { grid-template-columns: 1fr; }
+  #side { grid-column: 1; grid-row: auto; }
+  #detail { grid-row: auto; }
+}
 
 /* ---- node-graph canvas ------------------------------------------------- */
 #canvas-wrap {
@@ -91,6 +99,9 @@ main.detail-collapsed #detail { display: none; }
   border: 1px solid var(--border); border-radius: 8px;
   height: calc(100vh - 96px); overflow: auto;
 }
+/* when a module is selected, give the canvas the top portion and the params the
+   rest of the viewport below it */
+main:not(.detail-collapsed) #canvas-wrap { height: 54vh; }
 #canvas { position: relative; width: 4000px; height: 2400px;
   background-image: radial-gradient(var(--border) 1px, transparent 1px);
   background-size: 26px 26px; }
@@ -187,7 +198,12 @@ main.detail-collapsed #detail { display: none; }
 .module-chip .badge { font-size: 10px; color: var(--ink-dim); }
 .module-chip.bypassed { opacity: .5; }
 
-#detail { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; min-height: 300px; }
+#detail { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; max-height: calc(100vh - 54vh - 116px); overflow-y: auto; }
+/* sections flow into balanced columns to use the full width below the canvas */
+.detail-body { columns: 300px; column-gap: 16px; margin-top: 8px; }
+.detail-body .dsec { break-inside: avoid; margin: 0 0 12px; display: inline-block; width: 100%; }
+.detail-body .group-title { margin-top: 0; }
 #detail .mod-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 #detail h2 { margin: 0; font-size: 16px; }
 .role { color: var(--ink-dim); font-size: 11px; }

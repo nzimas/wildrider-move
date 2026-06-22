@@ -550,19 +550,24 @@ function renderDetail() {
   if (spec.gestures && spec.gestures.length)
     root.append(el("div", "gestures", "gestures: " + spec.gestures.join(" · ")));
 
+  // Sections flow into balanced columns below the canvas (use the full width).
+  const body = el("div", "detail-body");
+  root.append(body);
+
   // DX7 preset browser / bank loader (preset + bankSel are handled here, not as
   // generic global sliders).
-  if (m.type === "DX7") renderDX7Panel(root, m);
+  if (m.type === "DX7") renderDX7Panel(body, m);
 
   // global params (DX7 splits into its own sections; every section has a 🎲)
   if (spec.global_params.length) {
-    if (m.type === "DX7") renderDX7Globals(root, m, spec);
-    else renderSection(root, "global", m, spec.global_params, null);
+    if (m.type === "DX7") renderDX7Globals(body, m, spec);
+    else renderSection(body, "global", m, spec.global_params, null);
   }
 
   // per-node params with node tabs
   if (spec.node_params.length) {
-    root.append(sectionHeader(`node ${selNode}`, m,
+    const sec = el("div", "dsec");
+    sec.append(sectionHeader(`node ${selNode}`, m,
       spec.node_params.map((meta) => ({ param: meta.id, node: selNode }))));
     const tabs = el("div", "node-tabs");
     for (let i = 0; i < m.node_count; i++) {
@@ -570,12 +575,13 @@ function renderDetail() {
       b.onclick = () => { selNode = i; renderDetail(); };
       tabs.append(b);
     }
-    root.append(tabs);
-    for (const meta of spec.node_params) root.append(mkParam(m, meta, selNode));
+    sec.append(tabs);
+    for (const meta of spec.node_params) sec.append(mkParam(m, meta, selNode));
+    body.append(sec);
   }
 
   // per-module LFO bank
-  renderModuleLFOs(root, m, spec);
+  renderModuleLFOs(body, m, spec);
 }
 
 function slotOf(m, pid, node) {
@@ -609,8 +615,10 @@ function sectionHeader(label, m, specs) {
 // Render a titled param section (header + rows). `node` null = global params.
 function renderSection(root, label, m, metas, node) {
   if (!metas || !metas.length) return;
-  root.append(sectionHeader(label, m, metas.map((meta) => ({ param: meta.id, node: node }))));
-  for (const meta of metas) root.append(mkParam(m, meta, node));
+  const sec = el("div", "dsec");
+  sec.append(sectionHeader(label, m, metas.map((meta) => ({ param: meta.id, node: node }))));
+  for (const meta of metas) sec.append(mkParam(m, meta, node));
+  root.append(sec);
 }
 
 // DX7 globals split into sections (voice / manual subsections), each with its own
@@ -644,7 +652,7 @@ function renderDX7Panel(root, m) {
   };
 
   root.append(el("div", "group-title", "DX7"));
-  const wrap = el("div", "dx7-panel");
+  const wrap = el("div", "dsec dx7-panel");
 
   // mode toggle
   const modeRow = el("div", "row");
@@ -723,7 +731,8 @@ function renderModuleLFOs(root, m, spec) {
   const bank = m.per_module_lfos || {};
   const enabled = !!m.per_module_lfos_enabled;
 
-  root.append(el("div", "group-title", "module LFOs"));
+  const sec = el("div", "dsec");
+  sec.append(el("div", "group-title", "module LFOs"));
   const head = el("div", "row");
   const en = el("button", enabled ? "active" : "", enabled ? "LFOs on" : "LFOs off");
   en.onclick = () => send("set_per_module_lfos_enabled", { module: m.id, enabled: !enabled });
@@ -731,7 +740,7 @@ function renderModuleLFOs(root, m, spec) {
   const rnd = el("button", null, "🎲 randomize");
   rnd.onclick = () => send("randomize_per_module_lfos", { module: m.id });
   head.append(rnd);
-  root.append(head);
+  sec.append(head);
 
   const grid = el("div", "module-lfo-grid");
   for (const meta of allParams) {
@@ -760,7 +769,8 @@ function renderModuleLFOs(root, m, spec) {
     row.append(cb, label, sh, rate, depth);
     grid.append(row);
   }
-  root.append(grid);
+  sec.append(grid);
+  root.append(sec);
 }
 
 function mkRange(val, oninput) {
