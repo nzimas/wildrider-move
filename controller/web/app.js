@@ -1149,11 +1149,10 @@ function fmtSize(b) {
 }
 $("btn-recordings").onclick = openRecordingsModal;
 
-// rewire the patch — keep modules, regenerate connections. Patch-wide, so it
-// follows the Free vs Guided contract (Guided also reshapes params + modulation).
+// rewire the patch — regenerate connections only; params are left untouched.
 $("btn-rewire").onclick = () => {
   if (!S || !S.modules || !S.modules.length) return;
-  pickStyle((style) => send("rewire_patch", { style }), "Rewire patch");
+  send("rewire_patch");
 };
 
 // clear patch

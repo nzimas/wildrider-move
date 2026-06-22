@@ -1235,18 +1235,14 @@ class StateManager:
         self._notify({"type": "patch_replaced"})
 
     def rewire_patch(self, style: str | None = None) -> None:
-        """Keep the current modules (and their params / node counts / MIDI links /
-        modulation topology) but regenerate the audio connection graph. Free = a new
-        legal wiring only; Guided = new wiring AND reshape params, wet mix and the
-        modulation bank to the chosen artist's aesthetic."""
+        """Regenerate ONLY the audio connection graph. Everything else — params,
+        wet/dry, node counts, MIDI links, modulation — is left exactly as is; rewire
+        changes wiring, never sound-per-module. (`style` is accepted but ignored.)"""
         ids = list(self.patch.modules.keys())
         if not ids:
             return
-        self.patch.connections.clear()       # keep modules; drop only the wiring
+        self.patch.connections.clear()       # keep modules + params; drop only wiring
         self._wire_random(ids)
-        if style and style != "free":
-            self._apply_style(None, style, self.patch.expert_override)
-            self._apply_guided_lfos(style)
         self._resync_all()
         self._sync_graph()
         self._notify({"type": "patch_replaced"})
