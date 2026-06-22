@@ -66,6 +66,15 @@ input[type="text"] { background: var(--panel2); border: 1px solid var(--border);
 .pill.good { color: var(--good); border-color: var(--good); }
 .pill.bad { color: var(--bad); border-color: var(--bad); }
 .pill.warn { color: var(--warn); border-color: var(--warn); }
+/* engine status: a dot only — green + pulsing when SC is online, red when not */
+.conn-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; flex: none; }
+.conn-dot.on { background: var(--good); box-shadow: 0 0 5px var(--good); animation: conn-pulse 1.2s ease-in-out infinite; }
+.conn-dot.off { background: var(--bad); box-shadow: 0 0 5px var(--bad); }
+@keyframes conn-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+/* output meters, inline in the topbar next to the cpu reading */
+.topmeters { width: 64px; display: flex; flex-direction: column; gap: 2px; }
+.topmeters .bar { height: 5px; background: var(--track); border-radius: 2px; overflow: hidden; margin: 0; }
+.topmeters .bar > span { display: block; height: 100%; background: var(--fill); width: 0; transition: width .08s linear; }
 
 button {
   background: var(--panel2); border: 1px solid var(--border); border-radius: 5px;
@@ -258,8 +267,6 @@ main:not(.detail-collapsed) #canvas-wrap { height: 54vh; }
 .row.morph select { flex: 1; }
 .row.morph input[type=range] { flex: 2; }
 
-#meters .bar { height: 10px; background: var(--track); border-radius: 3px; margin: 3px 0; overflow: hidden; }
-#meters .bar > span { display: block; height: 100%; background: var(--fill); width: 0; transition: width .08s linear; }
 .gestures { font-size: 10px; color: var(--ink-dim); margin-top: 6px; }
 
 #lfo-panel h3 { color: var(--accent); }

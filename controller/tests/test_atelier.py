@@ -149,10 +149,10 @@ def _state():
 
 def test_default_patch_builds():
     st = _state()
-    # main serial chain + sampler lane + viz lane
-    assert len(st.patch.modules) == 9
+    # main serial chain DX7 -> ... -> VERB
+    assert len(st.patch.modules) == 8
     present = {m.type for m in st.patch.modules.values()}
-    for t in ["DX7", "FBANK", "PITCH", "TIME", "COMB", "GAIN", "SDLY", "VERB", "VIZ"]:
+    for t in ["DX7", "FBANK", "PITCH", "TIME", "COMB", "GAIN", "SDLY", "VERB"]:
         assert t in present
     # the default is a serial chain expressed as connection edges
     types = {m.id: m.type for m in st.patch.modules.values()}
@@ -170,9 +170,9 @@ def test_default_patch_builds():
 def test_connection_legality_and_cycles():
     st = _state()
     g = {m.type: m.id for m in st.patch.modules.values()}
-    # DX7 is a pure source (no input); VIZ has neither port
+    # DX7 is a pure source (no input)
     assert not st.patch.can_input(g["DX7"])
-    assert not st.patch.can_output(g["VIZ"]) and not st.patch.can_input(g["VIZ"])
+    assert st.patch.can_output(g["DX7"])
     assert st.patch.connection_legal(g["FBANK"], g["DX7"])[0] is False     # DX7 has no input
     # GAIN -> FBANK would close a cycle (FBANK ->...-> GAIN already exists)
     assert st.patch.connection_legal(g["GAIN"], g["FBANK"])[0] is False

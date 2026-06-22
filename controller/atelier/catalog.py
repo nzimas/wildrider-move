@@ -345,34 +345,6 @@ GAIN = ModuleSpec(
 )
 
 # --------------------------------------------------------------------------- #
-# 5.8 VIZ — diagnostic / performative display layer (never affects audio)
-# --------------------------------------------------------------------------- #
-VIZ = ModuleSpec(
-    type="VIZ",
-    role="Metering, scopes, spectrogram, modulation map; no audio change.",
-    node_meaning="View layer, not DSP voice.",
-    synthdef="viz",
-    insert_capable=False,
-    generative_capable=False,
-    max_nodes=8,
-    is_audio=False,
-    cpu_per_node=0.3,
-    gestures=["inspect", "diagnose", "perform-visually"],
-    node_params=[
-        P("viz.source", "Source", curve=Curve.ENUM, enum=["master", "lane", "module", "bus", "modRoute"], default=0, modulatable=False),
-        P("viz.scale", "Scale", curve=Curve.ENUM, enum=["lin", "log"], default=1, modulatable=False),
-        P("viz.decay", "Decay", default=0.5, modulatable=False),
-        P("viz.hold", "Hold", default=0.0, modulatable=False),
-        P("viz.range", "Range", unit="dB", rmin=-120.0, rmax=0.0, default=-90.0, formatter="dBValue", modulatable=False),
-    ],
-    global_params=[
-        P("viz.viewMode", "View Mode", curve=Curve.ENUM,
-          enum=["meter", "scope", "spectrum", "spectrogram", "correlation", "modMap", "nodeMap"],
-          default=0, modulatable=False),
-        P("viz.updateRate", "Update Rate", unit="Hz", rmin=1.0, rmax=60.0, default=20.0, formatter="Hz", modulatable=False),
-        P("viz.colorPolicy", "Color Policy", curve=Curve.ENUM, enum=["standard", "highContrast", "mono"], default=0, modulatable=False),
-    ],
-)
 
 
 # --------------------------------------------------------------------------- #
@@ -990,14 +962,14 @@ CATALOG: dict[str, ModuleSpec] = {
     m.type: m for m in (SEQ, DX7, MOLLY, FBANK, PITCH, TIME, COMB, GAIN, SDLY, VERB,
                         CLOUDS, GRAINS, RINGS, BEN, BUCHLOID, ENV, GATE, PLAITS, DISTORT,
                         OVERDRIVE, AMPSIM, EQUALIZER, FLANGER, PHASER, RINGMOD,
-                        BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER, VIZ)
+                        BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER)
 }
 
 # Ordered lanes (source -> processors -> spatial tail).
 DEFAULT_LANE_ORDER = ["SEQ", "DX7", "MOLLY", "FBANK", "PITCH", "TIME", "COMB", "GAIN",
                       "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "PLAITS",
                       "DISTORT", "OVERDRIVE", "AMPSIM", "EQUALIZER", "FLANGER", "PHASER", "RINGMOD",
-                      "BITCRUSHER", "LOFI", "TREMOLO", "WAVEFOLDER", "VIZ"]
+                      "BITCRUSHER", "LOFI", "TREMOLO", "WAVEFOLDER"]
 
 
 def spec(module_type: str) -> ModuleSpec:

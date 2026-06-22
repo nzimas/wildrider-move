@@ -1098,8 +1098,7 @@ class StateManager:
     # ------------------------------------------------------------------ #
     def init_default(self) -> None:
         """Build the default as a free-form graph: a serial chain
-        DX7 -> FBANK -> PITCH -> TIME -> COMB -> GAIN -> SDLY -> VERB laid out
-        left-to-right on the canvas, plus a VIZ display."""
+        DX7 -> FBANK -> PITCH -> TIME -> COMB -> GAIN -> SDLY -> VERB."""
         chain = ["DX7", "FBANK", "PITCH", "TIME", "COMB", "GAIN", "SDLY", "VERB"]
         prev = None
         for i, t in enumerate(chain):
@@ -1107,7 +1106,6 @@ class StateManager:
             if prev:
                 self.patch.add_connection(prev, mod.id)
             prev = mod.id
-        self.add_module("VIZ", node_count=1, x=40 + 8 * 210, y=260)
 
         def m(t):
             return next(mm for mm in self.patch.modules.values() if mm.type == t)

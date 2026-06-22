@@ -7,14 +7,15 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Wildrider — Electroacoustic Instrument</title>
-  <link rel="stylesheet" href="/static/style.css?v=45" />
+  <link rel="stylesheet" href="/static/style.css?v=46" />
 </head>
 <body data-contrast="normal">
   <header id="topbar">
     <div class="brand">WILDRIDER<span class="sub">electroacoustic workbench</span></div>
     <div class="status">
-      <span id="conn" class="pill bad">engine: offline</span>
+      <span id="conn" class="conn-dot off" title="SC engine"></span>
       <span id="cpu" class="pill">cpu: –</span>
+      <div id="meters" class="topmeters" title="output level"></div>
     </div>
     <div class="transport">
       <button id="btn-audio" title="Toggle live audio stream">▶ audio</button>
@@ -54,10 +55,6 @@
         <div class="rand-buttons">
           <button id="btn-rand-all" title="Randomize — choose Patch, Params or Chain">🎲 Randomize</button>
         </div>
-      </div>
-      <div class="panel" id="meters-panel">
-        <h3>VIZ — meters</h3>
-        <div id="meters"></div>
       </div>
       <div class="panel" id="scenes-panel">
         <h3>Scenes</h3>
@@ -100,6 +97,6 @@
 
   <div id="modal" hidden><div class="modal-card" id="modal-card"></div></div>
   <script src="/static/vendor/hls.min.js"></script>
-  <script src="/static/app.js?v=45"></script>
+  <script src="/static/app.js?v=46"></script>
 </body>
 </html>

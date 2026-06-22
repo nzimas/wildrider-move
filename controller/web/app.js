@@ -106,14 +106,14 @@ function applyMorphFrame(ev) {
 // ---------------------------------------------------------------- topbar
 function setConn(ok) {
   const p = $("conn");
-  p.textContent = `engine: ${ok ? "online" : "offline"}`;
-  p.className = "pill " + (ok ? "good" : "bad");
+  p.className = "conn-dot " + (ok ? "on" : "off");
+  p.title = ok ? "SC engine online" : "SC engine offline";
 }
 function updateEngine(ev) {
   setConn(ev.connected);
   const cpu = ev.cpu || {};
   const c = $("cpu");
-  c.textContent = `cpu: ${Math.round((cpu.peak || 0) * 100)}% / ${cpu.nodes || 0} nodes`;
+  c.textContent = `cpu: ${Math.round((cpu.peak || 0) * 100)}%`;
   c.className = "pill " + (ev.cpu_warn ? "warn" : "");
   renderMeters(ev.meters || []);
 }
