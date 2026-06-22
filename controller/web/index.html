@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Wildrider — Electroacoustic Instrument</title>
-  <link rel="stylesheet" href="/static/style.css?v=46" />
+  <link rel="stylesheet" href="/static/style.css?v=47" />
 </head>
 <body data-contrast="normal">
   <header id="topbar">
@@ -38,10 +38,12 @@
         <div id="canvas">
           <svg id="wires" width="4000" height="2400"></svg>
         </div>
-        <button id="btn-add" class="canvas-btn" title="Add a module to the patch">＋</button>
-        <button id="btn-rewire" class="canvas-btn" title="Rewire the patch — new connections only (params unchanged)">🔀</button>
-        <button id="btn-clear" class="canvas-btn danger" title="Clear the entire patch">🧽</button>
       </section>
+      <!-- canvas tools overlay the canvas from #stack (outside the scroll area) so
+           they stay put when the canvas is scrolled -->
+      <button id="btn-add" class="canvas-btn" title="Add a module to the patch">＋</button>
+      <button id="btn-rewire" class="canvas-btn" title="Rewire the patch — new connections only (params unchanged)">🔀</button>
+      <button id="btn-clear" class="canvas-btn danger" title="Clear the entire patch">🧽</button>
       <section id="detail" aria-label="Selected module"></section>
     </div>
     <aside id="side">
@@ -75,28 +77,11 @@
         </div>
         <div id="lfos"></div>
       </div>
-      <div class="panel" id="mod-panel">
-        <h3>Polyadic sources</h3>
-        <div id="mod-sources"></div>
-        <div class="row">
-          <select id="src-type">
-            <option value="random_continuous">random continuous</option>
-            <option value="random_stepped">random stepped</option>
-            <option value="controlled_macro">controlled macro</option>
-            <option value="envelope">envelope</option>
-            <option value="clock">clock / phasor</option>
-            <option value="analysis">analysis follower</option>
-            <option value="gesture">gesture</option>
-          </select>
-          <button id="btn-add-src">+ source</button>
-        </div>
-        <div id="mod-routes"></div>
-      </div>
     </aside>
   </main>
 
   <div id="modal" hidden><div class="modal-card" id="modal-card"></div></div>
   <script src="/static/vendor/hls.min.js"></script>
-  <script src="/static/app.js?v=46"></script>
+  <script src="/static/app.js?v=47"></script>
 </body>
 </html>

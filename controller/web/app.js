@@ -879,19 +879,17 @@ $("lfo-count").onchange = () => send("lfo_count", { count: parseInt($("lfo-count
 $("btn-lfo-rand").onclick = () => send("lfo_randomize");
 
 function renderModSources() {
-  const root = $("mod-sources"); root.innerHTML = "";
+  const root = $("mod-sources"); if (!root) return; root.innerHTML = "";
   for (const s of (S.mod_sources || []).filter((x) => !x.is_lfo)) {
     const row = el("div", "mod-source");
     row.append(el("span", null, `${s.label || s.id} · ${s.type}`));
-    const rate = mkRange(Math.min(1, s.rate / 10), () => {});
-    rate.disabled = true;
     row.append(el("span", null, `rate ${s.rate}`));
     root.append(row);
   }
 }
 
 function renderModRoutes() {
-  const root = $("mod-routes"); root.innerHTML = "";
+  const root = $("mod-routes"); if (!root) return; root.innerHTML = "";
   for (const r of (S.mod_routes || []).filter((x) => !(x.source_id || "").startsWith("lfo"))) {
     const row = el("div", "mod-route");
     row.append(el("span", null, `${r.source_id} → ${r.dest_module_id}.${r.dest_param_id.split(".").pop()} (${r.node_scope}, d=${r.depth})`));
@@ -901,12 +899,6 @@ function renderModRoutes() {
     root.append(row);
   }
 }
-
-$("btn-add-src").onclick = () => {
-  const type = $("src-type").value;
-  const id = "src_" + ((S.mod_sources || []).length + 1);
-  send("add_mod_source", { id, type, label: type.split("_")[0] });
-};
 
 function rowLabel(label, control) { const r = el("div", "row"); r.append(el("label", null, label), control); return r; }
 function closeModal() { $("modal").hidden = true; }
