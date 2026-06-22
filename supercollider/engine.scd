@@ -132,6 +132,7 @@
 		~masterSynth = Synth.tail(~gMaster, ("master_" ++ channels).asSymbol, [\in, ~masterBus.index, \out, 0]);
 		~analysisSynth = Synth.tail(~gRec, ("analysis_" ++ channels).asSymbol, [\in, 0]);
 		~built = true;
+		s.startAliveThread(0.0, 0.5);   // poll /status so avgCPU / numSynths stay live
 		~ctrl.value.sendMsg('/atelier/ready');
 		"Atelier engine ready: % ch @ % Hz / % block".format(channels, sr, block).postln;
 	});
@@ -362,13 +363,14 @@
 		"master", "rms", m[3], "master", "centroid", m[4], "master", "noisiness", m[5]);
 }, '/atelier/analysisRaw');
 
-// periodic CPU report
+// periodic CPU report. SystemClock (not AppClock) so it actually ticks in the
+// headless engine; s.avgCPU / numSynths are filled by the server status watcher.
 ~cpuTask = Routine({
 	loop {
 		~built.if { ~ctrl.value.sendMsg('/atelier/cpu', s.avgCPU / 100, s.peakCPU / 100, s.numSynths) };
 		1.0.wait;
 	}
-}).play(AppClock);
+}).play(SystemClock);
 
 "Atelier engine loaded; awaiting /atelier/boot".postln;
 )

@@ -121,7 +121,6 @@ function updateEngine(ev) {
 // ---------------------------------------------------------------- render all
 function renderAll() {
   if (!S) return;
-  $("seed").textContent = `seed: ${S.global.root_seed}`;
   renderCanvas();
   renderDetail();
   renderScenes();
@@ -917,7 +916,7 @@ function closeModal() { $("modal").hidden = true; }
 // module, or the whole patch, with a shared "random amount" (GRM-style: 0 keeps
 // results near current, 1 is fully random within each param's policy range).
 function randAmount() { return parseFloat($("rand-amt").value); }
-function randExpert() { return $("rand-expert").checked; }
+function randExpert() { return false; }   // expert/unsafe ranges removed from the UI
 
 $("rand-amt").oninput = () => { $("rand-amt-val").textContent = Math.round(randAmount() * 100) + "%"; };
 
@@ -1002,10 +1001,7 @@ function openChainBuilder() {
   row.append(cancel, gen); card.append(row);
   $("modal").hidden = false;
 }
-$("btn-rand-module").onclick = () => {
-  if (!sel) { alert("Select a module first."); return; }
-  pickStyle((style) => send("randomize", { scope: "module", module: sel, amount: randAmount(), expert: randExpert(), style }), "Randomize module");
-};
+// (per-module randomize lives on the selected module's 🎲 in the params panel)
 
 // ---------------------------------------------------------------- patch save / load (modal-style)
 async function openSaveModal() {
