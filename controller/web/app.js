@@ -125,6 +125,8 @@ function renderAll() {
   renderDetail();
   renderScenes();
   renderLFOs();
+  renderModControls();
+  renderMacros();
   renderModSources();
   renderModRoutes();
 }
@@ -877,6 +879,55 @@ function renderLFOs() {
 
 $("lfo-count").onchange = () => send("lfo_count", { count: parseInt($("lfo-count").value, 10) });
 $("btn-lfo-rand").onclick = () => send("lfo_randomize");
+
+// LFOs / Macros tabs
+function showModTab(which) {
+  $("tab-lfos").classList.toggle("active", which === "lfos");
+  $("tab-macros").classList.toggle("active", which === "macros");
+  $("lfos-tab").hidden = which !== "lfos";
+  $("macros-tab").hidden = which !== "macros";
+}
+$("tab-lfos").onclick = () => showModTab("lfos");
+$("tab-macros").onclick = () => showModTab("macros");
+
+// LFO bank global enable/disable
+$("btn-lfos-enable").onclick = () => send("lfos_enabled", { enabled: !(S && S.lfos_enabled !== false) });
+
+// Macros bank
+$("macro-count").onchange = () => send("macro_count", { count: parseInt($("macro-count").value, 10) || 0 });
+$("btn-macro-rand").onclick = () => send("macro_randomize");
+
+function renderMacros() {
+  const root = $("macros"); if (!root) return; root.innerHTML = "";
+  const macros = (S.control && S.control.macros) || [];
+  if (document.activeElement !== $("macro-count")) $("macro-count").value = macros.length;
+  const shortP = (t) => (t.param_id || "").split(".").pop();
+  for (const mac of macros) {
+    const row = el("div", "macro-row");
+    row.append(el("span", "macro-name", mac.name || mac.id));
+    const val = mkRange(mac.value || 0, (v) => send("macro", { id: mac.id, value: v }));
+    val.title = "macro value — drives all its destinations";
+    row.append(val);
+    const dl = el("label", "macro-dest", "dest ");
+    const dn = el("input"); dn.type = "number"; dn.min = 0; dn.max = 24; dn.value = (mac.targets || []).length;
+    dn.style.width = "44px";
+    dn.onchange = () => send("macro_targets", { id: mac.id, count: parseInt(dn.value, 10) || 0 });
+    dl.append(dn); row.append(dl);
+    const summary = (mac.targets || []).map(shortP).join(", ");
+    const tip = el("span", "macro-tip", `→ ${summary || "none"}`);
+    tip.title = (mac.targets || []).map((t) => `${t.module_id}.${shortP(t)}`).join("\n");
+    row.append(tip);
+    root.append(row);
+  }
+  if (!macros.length) root.append(el("div", "rand-hint", "no macros — set a count or hit 🎲 randomize"));
+}
+
+// reflect LFO-enable state on its button
+function renderModControls() {
+  const on = !(S && S.lfos_enabled === false);
+  const b = $("btn-lfos-enable");
+  if (b) { b.textContent = on ? "LFOs on" : "LFOs off"; b.classList.toggle("active", on); }
+}
 
 function renderModSources() {
   const root = $("mod-sources"); if (!root) return; root.innerHTML = "";

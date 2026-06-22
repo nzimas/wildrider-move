@@ -270,10 +270,29 @@ def test_migration_v1_to_v2_feedback():
 
 
 def test_macro_drives_targets():
+    from atelier.control import Macro, MacroTarget
     st = _state()
-    st.set_macro("m_presence", 1.0)
     gain = next(m for m in st.patch.modules.values() if m.type == "GAIN")
+    mac = Macro(id="m1", name="M1", targets=[
+        MacroTarget(module_id=gain.id, param_id="gain.gain", node=-1, lo=0.0, hi=1.0)])
+    st.control.add_macro(mac)
+    st.set_macro("m1", 1.0)
     assert gain.node_slots[0]["gain.gain"].base == pytest.approx(gain.node_slots[0]["gain.gain"].meta.rmax)
+
+
+def test_macro_bank_count_and_randomize():
+    st = _state()
+    assert len(st.control.macros) == 0           # no default macros now
+    st.set_macro_count(3)
+    assert len(st.control.macros) == 3
+    assert all(len(m.targets) >= 1 for m in st.control.macros.values())
+    st.randomize_macros()
+    assert 2 <= len(st.control.macros) <= 6
+    # lfo bank can be globally disabled/enabled
+    st.set_lfos_enabled(False)
+    assert st.lfos_enabled is False
+    st.set_lfos_enabled(True)
+    assert st.lfos_enabled is True
 
 
 def test_mi_modules_clouds_rings():

@@ -433,6 +433,26 @@ def _c_macro(d):
     state.set_macro(d["id"], float(d["value"]))
 
 
+@command("macro_count")
+def _c_macro_count(d):
+    state.set_macro_count(int(d["count"]))
+
+
+@command("macro_targets")
+def _c_macro_targets(d):
+    state.set_macro_targets(d["id"], int(d["count"]))
+
+
+@command("macro_randomize")
+def _c_macro_randomize(_d):
+    state.randomize_macros()
+
+
+@command("lfos_enabled")
+def _c_lfos_enabled(d):
+    state.set_lfos_enabled(bool(d["enabled"]))
+
+
 @command("controller")
 def _c_controller(d):
     state.handle_controller(d.get("transport", "osc"), d["selector"],

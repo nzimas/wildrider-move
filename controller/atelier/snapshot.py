@@ -109,6 +109,7 @@ def full_snapshot(state: StateManager) -> dict[str, Any]:
         "scenes": state.scenes.to_list(),
         "active_scene": state.scenes.active,
         "control": state.control.to_dict(),
+        "lfos_enabled": getattr(state, "lfos_enabled", True),
         "buffers": [b.to_dict() for b in p.buffers.values()],
         "engine": {
             "connected": state.bridge.connected,

@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Wildrider — Electroacoustic Instrument</title>
-  <link rel="stylesheet" href="/static/style.css?v=47" />
+  <link rel="stylesheet" href="/static/style.css?v=48" />
 </head>
 <body data-contrast="normal">
   <header id="topbar">
@@ -69,19 +69,32 @@
           <label>morph <input type="range" id="morph-time" min="0" max="30" step="0.1" value="0"> <span id="morph-time-val">0.0 s</span></label>
         </div>
       </div>
-      <div class="panel" id="lfo-panel">
-        <h3>Modulation — LFOs</h3>
-        <div class="row">
-          <label>count <input type="number" id="lfo-count" min="1" max="30" value="8" style="width:56px"></label>
-          <button id="btn-lfo-rand" title="Randomize all LFO shapes, rates, depths and targets">🎲 randomize LFOs</button>
+      <div class="panel" id="mod-panel">
+        <div class="tabs">
+          <button id="tab-lfos" class="tab active">Modulation — LFOs</button>
+          <button id="tab-macros" class="tab">Macros</button>
         </div>
-        <div id="lfos"></div>
+        <div id="lfos-tab" class="tab-body">
+          <div class="row">
+            <button id="btn-lfos-enable" title="Enable / disable the LFO bank">LFOs on</button>
+            <label>count <input type="number" id="lfo-count" min="1" max="30" value="8" style="width:50px"></label>
+            <button id="btn-lfo-rand" title="Randomize all LFO shapes, rates, depths and targets">🎲</button>
+          </div>
+          <div id="lfos"></div>
+        </div>
+        <div id="macros-tab" class="tab-body" hidden>
+          <div class="row">
+            <label>macros <input type="number" id="macro-count" min="0" max="16" value="0" style="width:50px"></label>
+            <button id="btn-macro-rand" title="Randomize macro count, destinations and values">🎲 randomize</button>
+          </div>
+          <div id="macros"></div>
+        </div>
       </div>
     </aside>
   </main>
 
   <div id="modal" hidden><div class="modal-card" id="modal-card"></div></div>
   <script src="/static/vendor/hls.min.js"></script>
-  <script src="/static/app.js?v=47"></script>
+  <script src="/static/app.js?v=48"></script>
 </body>
 </html>

@@ -389,3 +389,18 @@ main:not(.detail-collapsed) #canvas-wrap { height: 54vh; }
   padding: 5px 10px; color: var(--ink); cursor: pointer; font-size: 13px; }
 #btn-logout:hover { border-color: var(--bad); color: var(--bad); }
 #user { color: var(--accent); border-color: var(--accent); }
+
+/* ---- LFOs / Macros tabbed panel --------------------------------------- */
+#mod-panel .tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+#mod-panel .tab { flex: 1; padding: 5px 6px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--ink-dim); background: var(--panel2);
+  border: 1px solid var(--border); border-radius: 5px; cursor: pointer; }
+#mod-panel .tab.active { color: #000; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+#btn-lfos-enable.active { background: var(--good); color: #000; border-color: var(--good); }
+/* macro rows */
+.macro-row { display: grid; grid-template-columns: 34px 1fr 58px 84px; gap: 6px;
+  align-items: center; margin-top: 6px; }
+.macro-name { font-weight: 700; font-size: 11px; color: var(--accent); }
+.macro-row input[type=range] { width: 100%; accent-color: var(--fill); }
+.macro-dest { font-size: 10px; color: var(--ink-dim); display: flex; align-items: center; gap: 3px; }
+.macro-tip { font-size: 10px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

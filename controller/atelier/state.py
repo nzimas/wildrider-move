@@ -39,6 +39,7 @@ class StateManager:
         self._listeners: list[Callable[[dict], None]] = []
         self._panic = False
         self.cpu_warn = False
+        self.lfos_enabled = True          # global on/off for the LFO bank
         self._morph_state: dict[str, Any] | None = None
         self._scene_morph: dict[str, Any] | None = None   # active timed scene morph
         self._last_tick = time.monotonic()
@@ -1048,6 +1049,101 @@ class StateManager:
                                       node if node is not None else -1, slot.effective)
         self._notify({"type": "macro", "id": macro_id, "value": value})
 
+    # -- macro bank (user-defined macros, each targeting many destinations) -- #
+    def _macro_candidates(self) -> list[tuple[str, str, int | None]]:
+        """Every randomizable, modulatable destination across the patch. Node
+        params target all voices (-1); globals target node None."""
+        out: list[tuple[str, str, int | None]] = []
+        for mid, m in self.patch.modules.items():
+            for p in m.spec.node_params:
+                if p.modulatable and p.randomize_policy is not RandomizePolicy.OFF:
+                    out.append((mid, p.id, -1))
+            for p in m.spec.global_params:
+                if p.modulatable and p.randomize_policy is not RandomizePolicy.OFF:
+                    out.append((mid, p.id, None))
+        return out
+
+    def _assign_macro_targets(self, macro: Macro, count: int) -> None:
+        cands = self._macro_candidates()
+        macro.targets = []
+        if not cands:
+            return
+        k = max(0, min(int(count), len(cands)))
+        for mid, pid, node in self.rng.sample(cands, k):
+            macro.targets.append(MacroTarget(
+                module_id=mid, param_id=pid, node=node,
+                lo=round(self.rng.uniform(0.0, 0.35), 3),
+                hi=round(self.rng.uniform(0.6, 1.0), 3),
+                invert=self.rng.random() < 0.25))
+
+    def _next_macro_index(self) -> int:
+        i = 1
+        while f"macro_{i}" in self.control.macros:
+            i += 1
+        return i
+
+    def set_macro_count(self, n: int) -> None:
+        """Grow/shrink the macro bank to n macros (new ones get a few random
+        destinations; existing macros are kept)."""
+        n = max(0, min(16, int(n)))
+        while len(self.control.macros) < n:
+            i = self._next_macro_index()
+            mac = Macro(id=f"macro_{i}", name=f"M{i}", page="Macro", value=0.0)
+            self._assign_macro_targets(mac, self.rng.randint(2, 4))
+            self.control.add_macro(mac)
+        while len(self.control.macros) > n:
+            self.control.macros.pop(list(self.control.macros)[-1])
+        self._notify({"type": "macros"})
+
+    def set_macro_targets(self, macro_id: str, count: int) -> None:
+        """Re-pick a macro's destinations to `count` of them."""
+        m = self.control.macros.get(macro_id)
+        if not m:
+            return
+        self._assign_macro_targets(m, count)
+        for (mid, pid, node, _b) in m.apply(self.patch):
+            self._push_param(mid, pid, node)
+        self._notify({"type": "macros"})
+
+    def randomize_macros(self) -> None:
+        """Block randomizer: random macro count, random destination count + actual
+        destinations per macro, and random slider values."""
+        self.control.macros.clear()
+        for i in range(1, self.rng.randint(2, 6) + 1):
+            mac = Macro(id=f"macro_{i}", name=f"M{i}", page="Macro",
+                        value=round(self.rng.random(), 3))
+            self._assign_macro_targets(mac, self.rng.randint(2, 6))
+            for (mid, pid, node, _b) in mac.apply(self.patch):
+                pass
+            self.control.add_macro(mac)
+        self._resync_all()
+        self._notify({"type": "macros"})
+
+    def _push_param(self, mid: str, pid: str, node: int | None) -> None:
+        m = self.patch.modules.get(mid)
+        slot = self.patch.find_slot(mid, pid, node)
+        if m and slot:
+            self.bridge.set_param(mid, m.short_pid(pid),
+                                  node if node is not None else -1, slot.effective)
+
+    def set_lfos_enabled(self, enabled: bool) -> None:
+        """Global on/off for the LFO bank — gate its routes and reset any lingering
+        offset so params return to base when turned off."""
+        self.lfos_enabled = bool(enabled)
+        for r in self.mod.routes.values():
+            src = self.mod.sources.get(r.source_id)
+            if src and getattr(src, "is_lfo", False):
+                r.enable = self.lfos_enabled
+        if not self.lfos_enabled:
+            for m in self.patch.modules.values():
+                for slot in m.global_slots.values():
+                    slot.mod_norm = 0.0
+                for nd in m.node_slots:
+                    for slot in nd.values():
+                        slot.mod_norm = 0.0
+            self._resync_all()
+        self._notify({"type": "lfos_enabled", "enabled": self.lfos_enabled})
+
     def handle_controller(self, transport: str, selector: str, channel: int, value: float) -> None:
         changed = self.control.handle_incoming(transport, selector, channel, value, self.patch)
         for item in changed:
@@ -1153,11 +1249,6 @@ class StateManager:
         # LFO bank: 8 assignable LFOs by default (expandable to 30).
         self.ensure_lfos(8)
 
-        # a performance macro: master presence via GAIN gain across all nodes
-        mac = Macro(id="m_presence", name="Presence", page="Spatial")
-        gain = m("GAIN")
-        mac.targets.append(MacroTarget(module_id=gain.id, param_id="gain.gain", node=-1))
-        self.control.add_macro(mac)
         self._auto_layout()          # distribute evenly on the canvas (not one row)
         self._sync_graph()
         self.reseed(self.patch.root_seed)
