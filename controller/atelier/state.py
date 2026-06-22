@@ -1160,6 +1160,7 @@ class StateManager:
         gain = m("GAIN")
         mac.targets.append(MacroTarget(module_id=gain.id, param_id="gain.gain", node=-1))
         self.control.add_macro(mac)
+        self._auto_layout()          # distribute evenly on the canvas (not one row)
         self._sync_graph()
         self.reseed(self.patch.root_seed)
 
@@ -1277,15 +1278,18 @@ class StateManager:
         self._notify({"type": "patch_replaced"})
 
     def _auto_layout(self) -> None:
+        """Lay modules out as a wrapping serpentine grid so a patch fills the canvas
+        evenly instead of stretching into one long off-screen row. Signal order is
+        preserved left-to-right, snaking down each row so wiring stays readable."""
+        import math
         order = self.patch.topo_order()
-        depth: dict[str, int] = {}
-        for mid in order:
-            ins = self.patch.incoming(mid)
-            depth[mid] = 0 if not ins else 1 + max((depth.get(i, 0) for i in ins), default=0)
-        rows: dict[int, int] = {}
-        for mid in order:
-            d = depth[mid]
-            r = rows.get(d, 0)
-            rows[d] = r + 1
-            self.patch.modules[mid].x = 40 + d * 210
-            self.patch.modules[mid].y = 40 + r * 150
+        n = len(order)
+        if not n:
+            return
+        cols = max(2, min(6, round(math.sqrt(n * 1.6))))   # squarish, capped width
+        gx, gy, x0, y0 = 220, 150, 40, 40
+        for i, mid in enumerate(order):
+            r, c = divmod(i, cols)
+            c = c if (r % 2 == 0) else (cols - 1 - c)       # serpentine: keep flow continuous
+            self.patch.modules[mid].x = x0 + c * gx
+            self.patch.modules[mid].y = y0 + r * gy
