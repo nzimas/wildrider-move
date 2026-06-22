@@ -207,6 +207,15 @@ WET: dict[str, dict[str, float]] = {
     "autechre": {"VERB": 0.3, "SDLY": 0.5, "CLOUDS": 0.55, "GRAINS": 0.6, "COMB": 0.55, "FBANK": 0.6, "PITCH": 0.5, "TIME": 0.55, "DISTORT": 0.65},
 }
 
+# Default wet for the ported pedal FX (applied to every artist that doesn't set
+# its own). EQ is full-wet; modulation/grit FX sit lower in the blend.
+_FX_WET = {"OVERDRIVE": 0.6, "AMPSIM": 0.6, "EQUALIZER": 1.0, "FLANGER": 0.45,
+           "PHASER": 0.45, "RINGMOD": 0.4, "BITCRUSHER": 0.5, "LOFI": 0.5,
+           "TREMOLO": 0.6, "WAVEFOLDER": 0.5}
+for _a in WET:
+    for _t, _v in _FX_WET.items():
+        WET[_a].setdefault(_t, _v)
+
 
 def _clamp01(x: float) -> float:
     return 0.0 if x < 0 else 1.0 if x > 1 else x
@@ -301,6 +310,18 @@ MODULE_PALETTE: dict[str, dict] = {
         "sources_count": (1, 2), "count": (4, 6), "require": ["GATE"],
     },
 }
+
+# Fold the ported pedal FX into each artist's effect palette so guided generation
+# can reach for them where they fit the aesthetic.
+_PALETTE_FX = {
+    "vidna_obmana": {"EQUALIZER": 1, "FLANGER": 1, "TREMOLO": 1},
+    "lustmord": {"EQUALIZER": 1, "LOFI": 1},
+    "bernard_parmegiani": {"FLANGER": 2, "PHASER": 2, "RINGMOD": 1, "EQUALIZER": 1},
+    "ben_frost": {"OVERDRIVE": 2, "AMPSIM": 1, "BITCRUSHER": 2, "WAVEFOLDER": 2},
+    "autechre": {"BITCRUSHER": 2, "RINGMOD": 2, "LOFI": 2, "PHASER": 1},
+}
+for _a, _fx in _PALETTE_FX.items():
+    MODULE_PALETTE[_a]["effects"].update(_fx)
 
 # Modulation bank behaviour. rate band is in Hz (log-distributed); depth 0..1 but
 # kept MODEST — depth is a full-range multiplier, so high values swing params wildly

@@ -838,14 +838,166 @@ MOLLY = ModuleSpec(
 )
 
 
+# =========================================================================== #
+# Pedal FX — a fleet of classic effects ported from 21echoes/pedalboard. Each is
+# an insert (mono-summed -> processed -> spread/panned), with the module wet/dry
+# as the mix and a per-effect amp + pan. Kept compact and modulatable.
+# =========================================================================== #
+def _fx_tail(prefix: str, amp_default: float = 0.85):
+    return [
+        P(f"{prefix}.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=amp_default,
+          curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.4, 1.0)),
+        P(f"{prefix}.pan", "Pan", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR,
+          formatter="float2", musical=(-0.85, 0.85)),
+    ]
+
+
+def _fx_enable(prefix: str):
+    return P(f"{prefix}.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"],
+             default=1, randomize=RandomizePolicy.OFF, modulatable=False)
+
+
+OVERDRIVE = ModuleSpec(
+    type="OVERDRIVE", role="Soft-clipping overdrive with tone tilt (pedalboard).",
+    node_meaning="Overdrive stage.", synthdef="overdrive", insert_capable=True,
+    generative_capable=False, max_nodes=4, cpu_per_node=1.0, gestures=["overdrive", "warm-clip"],
+    node_params=[
+        _fx_enable("overdrive"),
+        P("overdrive.drive", "Drive", rmin=1.0, rmax=50.0, default=4.0, curve=Curve.EXP, musical=(1.5, 24.0)),
+        P("overdrive.tone", "Tone", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.6, 0.7)),
+        *_fx_tail("overdrive", 0.8),
+    ], global_params=[],
+)
+
+AMPSIM = ModuleSpec(
+    type="AMPSIM", role="Guitar amp simulator: drive + 3-band tone stack + cabinet (pedalboard).",
+    node_meaning="Amp + cabinet stage.", synthdef="ampsim", insert_capable=True,
+    generative_capable=False, max_nodes=4, cpu_per_node=1.4, gestures=["amp", "cabinet", "grind"],
+    node_params=[
+        _fx_enable("ampsim"),
+        P("ampsim.gain", "Gain", rmin=1.0, rmax=40.0, default=6.0, curve=Curve.EXP, musical=(2.0, 20.0)),
+        P("ampsim.bass", "Bass", unit="dB", rmin=-15.0, rmax=15.0, default=0.0, curve=Curve.BIPOLAR, formatter="dB1", musical=(-8.0, 8.0)),
+        P("ampsim.mid", "Mid", unit="dB", rmin=-15.0, rmax=15.0, default=0.0, curve=Curve.BIPOLAR, formatter="dB1", musical=(-8.0, 8.0)),
+        P("ampsim.treble", "Treble", unit="dB", rmin=-15.0, rmax=15.0, default=0.0, curve=Curve.BIPOLAR, formatter="dB1", musical=(-8.0, 8.0)),
+        *_fx_tail("ampsim", 0.8),
+    ], global_params=[],
+)
+
+EQUALIZER = ModuleSpec(
+    type="EQUALIZER", role="Three-band parametric EQ: low/high shelves + sweepable mid (pedalboard).",
+    node_meaning="EQ stage.", synthdef="equalizer", insert_capable=True,
+    generative_capable=False, max_nodes=2, cpu_per_node=1.0, gestures=["eq", "tone-shape"],
+    node_params=[
+        _fx_enable("equalizer"),
+        P("equalizer.low", "Low", unit="dB", rmin=-18.0, rmax=18.0, default=0.0, curve=Curve.BIPOLAR, formatter="dB1", musical=(-10.0, 10.0)),
+        P("equalizer.midGain", "Mid", unit="dB", rmin=-18.0, rmax=18.0, default=0.0, curve=Curve.BIPOLAR, formatter="dB1", musical=(-10.0, 10.0)),
+        P("equalizer.midFreq", "Mid Freq", unit="Hz", rmin=150.0, rmax=6000.0, default=900.0, curve=Curve.EXP, formatter="Hz", musical=(300.0, 3500.0)),
+        P("equalizer.high", "High", unit="dB", rmin=-18.0, rmax=18.0, default=0.0, curve=Curve.BIPOLAR, formatter="dB1", musical=(-10.0, 10.0)),
+        *_fx_tail("equalizer", 1.0),
+    ], global_params=[],
+)
+
+FLANGER = ModuleSpec(
+    type="FLANGER", role="Modulated short-delay flanger with feedback (pedalboard).",
+    node_meaning="Flanger stage.", synthdef="flanger", insert_capable=True,
+    generative_capable=False, max_nodes=2, cpu_per_node=1.1, gestures=["flange", "jet", "sweep"],
+    node_params=[
+        _fx_enable("flanger"),
+        P("flanger.rate", "Rate", unit="Hz", rmin=0.02, rmax=8.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 2.0)),
+        P("flanger.depth", "Depth", default=0.6, musical=(0.3, 1.0)),
+        P("flanger.feedback", "Feedback", rmin=0.0, rmax=0.95, default=0.4, danger=DangerClass.FEEDBACK, musical=(0.0, 0.8)),
+        *_fx_tail("flanger", 1.0),
+    ], global_params=[],
+)
+
+PHASER = ModuleSpec(
+    type="PHASER", role="Six-stage all-pass phaser swept by an LFO, with feedback (pedalboard).",
+    node_meaning="Phaser stage.", synthdef="phaser", insert_capable=True,
+    generative_capable=False, max_nodes=2, cpu_per_node=1.2, gestures=["phase", "sweep", "swirl"],
+    node_params=[
+        _fx_enable("phaser"),
+        P("phaser.rate", "Rate", unit="Hz", rmin=0.02, rmax=8.0, default=0.4, curve=Curve.EXP, formatter="float2", musical=(0.05, 2.0)),
+        P("phaser.depth", "Depth", default=0.7, musical=(0.3, 1.0)),
+        P("phaser.feedback", "Feedback", rmin=0.0, rmax=0.9, default=0.3, danger=DangerClass.FEEDBACK, musical=(0.0, 0.7)),
+        *_fx_tail("phaser", 1.0),
+    ], global_params=[],
+)
+
+RINGMOD = ModuleSpec(
+    type="RINGMOD", role="Ring modulator: multiply the signal by a sine carrier (pedalboard).",
+    node_meaning="Ring-mod stage.", synthdef="ringmod", insert_capable=True,
+    generative_capable=False, max_nodes=4, cpu_per_node=0.8, gestures=["ringmod", "metallic", "clang"],
+    node_params=[
+        _fx_enable("ringmod"),
+        P("ringmod.freq", "Frequency", unit="Hz", rmin=1.0, rmax=4000.0, default=200.0, curve=Curve.EXP, formatter="Hz", musical=(30.0, 1200.0)),
+        *_fx_tail("ringmod", 0.9),
+    ], global_params=[],
+)
+
+BITCRUSHER = ModuleSpec(
+    type="BITCRUSHER", role="Bit-depth + sample-rate reduction (pedalboard).",
+    node_meaning="Bitcrush stage.", synthdef="bitcrusher", insert_capable=True,
+    generative_capable=False, max_nodes=4, cpu_per_node=0.8, gestures=["bitcrush", "downsample", "digital-grit"],
+    node_params=[
+        _fx_enable("bitcrusher"),
+        P("bitcrusher.bits", "Bits", rmin=1.0, rmax=24.0, default=8.0, rate=Rate.DISCRETE, formatter="int", musical=(3.0, 12.0)),
+        P("bitcrusher.downsample", "Downsample", rmin=1.0, rmax=64.0, default=4.0, curve=Curve.EXP, formatter="float2", musical=(1.0, 24.0)),
+        *_fx_tail("bitcrusher", 0.9),
+    ], global_params=[],
+)
+
+LOFI = ModuleSpec(
+    type="LOFI", role="Lo-fi degrade: bit/sample-rate crush + band-limit + hiss (pedalboard).",
+    node_meaning="Lo-fi stage.", synthdef="lofi", insert_capable=True,
+    generative_capable=False, max_nodes=4, cpu_per_node=1.0, gestures=["lo-fi", "radio", "tape-grunge"],
+    node_params=[
+        _fx_enable("lofi"),
+        P("lofi.bits", "Bits", rmin=1.0, rmax=24.0, default=10.0, rate=Rate.DISCRETE, formatter="int", musical=(4.0, 14.0)),
+        P("lofi.downsample", "Downsample", rmin=1.0, rmax=48.0, default=6.0, curve=Curve.EXP, formatter="float2", musical=(1.0, 20.0)),
+        P("lofi.cutoff", "Tone", unit="Hz", rmin=200.0, rmax=12000.0, default=4000.0, curve=Curve.EXP, formatter="Hz", musical=(800.0, 7000.0)),
+        P("lofi.noise", "Hiss", default=0.1, musical=(0.0, 0.4)),
+        *_fx_tail("lofi", 0.9),
+    ], global_params=[],
+)
+
+TREMOLO = ModuleSpec(
+    type="TREMOLO", role="Amplitude tremolo with selectable LFO shape (pedalboard).",
+    node_meaning="Tremolo stage.", synthdef="tremolo", insert_capable=True,
+    generative_capable=False, max_nodes=2, cpu_per_node=0.7, gestures=["tremolo", "chop", "pulse"],
+    node_params=[
+        _fx_enable("tremolo"),
+        P("tremolo.rate", "Rate", unit="Hz", rmin=0.05, rmax=20.0, default=4.0, curve=Curve.EXP, formatter="float2", musical=(0.5, 10.0)),
+        P("tremolo.depth", "Depth", default=0.6, musical=(0.2, 1.0)),
+        P("tremolo.shape", "Shape", curve=Curve.ENUM, enum=["sine", "triangle", "square"], default=0, modulatable=False),
+        *_fx_tail("tremolo", 1.0),
+    ], global_params=[],
+)
+
+WAVEFOLDER = ModuleSpec(
+    type="WAVEFOLDER", role="West-coast wavefolder: fold the waveform back on itself (pedalboard).",
+    node_meaning="Wavefolder stage.", synthdef="wavefolder", insert_capable=True,
+    generative_capable=False, max_nodes=4, cpu_per_node=1.0, gestures=["wavefold", "harmonics", "west-coast"],
+    node_params=[
+        _fx_enable("wavefolder"),
+        P("wavefolder.fold", "Fold", rmin=1.0, rmax=20.0, default=2.0, curve=Curve.EXP, musical=(1.5, 12.0)),
+        P("wavefolder.bias", "Bias", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.6, 0.6)),
+        *_fx_tail("wavefolder", 0.8),
+    ], global_params=[],
+)
+
+
 CATALOG: dict[str, ModuleSpec] = {
     m.type: m for m in (SEQ, DX7, MOLLY, FBANK, PITCH, TIME, COMB, GAIN, SDLY, VERB,
-                        CLOUDS, GRAINS, RINGS, BEN, BUCHLOID, ENV, GATE, PLAITS, DISTORT, VIZ)
+                        CLOUDS, GRAINS, RINGS, BEN, BUCHLOID, ENV, GATE, PLAITS, DISTORT,
+                        OVERDRIVE, AMPSIM, EQUALIZER, FLANGER, PHASER, RINGMOD,
+                        BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER, VIZ)
 }
 
 # Ordered lanes (source -> processors -> spatial tail).
 DEFAULT_LANE_ORDER = ["SEQ", "DX7", "MOLLY", "FBANK", "PITCH", "TIME", "COMB", "GAIN",
-                      "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "PLAITS", "DISTORT", "VIZ"]
+                      "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "PLAITS",
+                      "DISTORT", "OVERDRIVE", "AMPSIM", "EQUALIZER", "FLANGER", "PHASER", "RINGMOD",
+                      "BITCRUSHER", "LOFI", "TREMOLO", "WAVEFOLDER", "VIZ"]
 
 
 def spec(module_type: str) -> ModuleSpec:

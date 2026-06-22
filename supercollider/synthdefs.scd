@@ -176,6 +176,110 @@
 		Out.ar(out, ~killbad.(XFade2.ar(dry, y, (wet * 2 - 1)) * (1 - bypass) + (dry * bypass)));
 	}).add;
 
+	// ---- Pedal FX fleet (ported from 21echoes/pedalboard) -----------------
+	// Shared insert wrapper: sum input to mono, process, spread+pan, wet/bypass.
+	~fxOut = { |dry, y, pan, amp, enable, wet, bypass|
+		var w = ~spread.(LeakDC.ar(y) * amp * enable, nchan, pan);
+		~killbad.(XFade2.ar(dry, w, (wet * 2 - 1)) * (1 - bypass) + (dry * bypass));
+	};
+
+	SynthDef(("overdrive" ++ suf).asSymbol, { |out = 0, in = 0, drive = 4, tone = 0,
+		amp = 0.8, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan), x = Mix(dry) / nchan, y;
+		x = BHiShelf.ar(x, 1500, 1.0, tone * 9);
+		x = BLowShelf.ar(x, 220, 1.0, tone.neg * 6);
+		y = (x * drive.max(0.01)).tanh;
+		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
+	}).add;
+
+	SynthDef(("ampsim" ++ suf).asSymbol, { |out = 0, in = 0, gain = 6, bass = 0, mid = 0,
+		treble = 0, amp = 0.8, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan), x = Mix(dry) / nchan, y;
+		y = (x * gain.max(0.01)).tanh;                 // preamp distortion
+		y = BLowShelf.ar(y, 120, 1.0, bass);           // tone stack
+		y = BPeakEQ.ar(y, 750, 0.8, mid);
+		y = BHiShelf.ar(y, 3000, 1.0, treble);
+		y = LPF.ar(y, 5500);                           // speaker cabinet roll-off
+		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
+	}).add;
+
+	SynthDef(("equalizer" ++ suf).asSymbol, { |out = 0, in = 0, low = 0, midGain = 0,
+		midFreq = 900, high = 0, amp = 1, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan), x = Mix(dry) / nchan, y;
+		y = BLowShelf.ar(x, 120, 1.0, low);
+		y = BPeakEQ.ar(y, midFreq.clip(150, 6000), 1.0, midGain);
+		y = BHiShelf.ar(y, 4000, 1.0, high);
+		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
+	}).add;
+
+	SynthDef(("flanger" ++ suf).asSymbol, { |out = 0, in = 0, rate = 0.3, depth = 0.6,
+		feedback = 0.4, amp = 1, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan), x = Mix(dry) / nchan, lfo, dt, fb, y;
+		lfo = SinOsc.kr(rate, 0, 0.5, 0.5);            // 0..1
+		dt = (0.0006 + (depth * 0.006 * lfo)).clip(0.0001, 0.02);
+		fb = LocalIn.ar(1);
+		y = DelayC.ar(x + (fb * feedback.clip(0, 0.95)), 0.02, dt);
+		LocalOut.ar(~killbad.(y));
+		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
+	}).add;
+
+	SynthDef(("phaser" ++ suf).asSymbol, { |out = 0, in = 0, rate = 0.4, depth = 0.7,
+		feedback = 0.3, amp = 1, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan), x = Mix(dry) / nchan, c, fb, sig, y;
+		c = SinOsc.kr(rate) * depth * 0.9;             // swept all-pass coefficient
+		fb = LocalIn.ar(1);
+		sig = x + (fb * feedback.clip(0, 0.9));
+		6.do { sig = FOS.ar(sig, c, 1.0, c) };          // 6 first-order all-pass stages
+		LocalOut.ar(~killbad.(sig));
+		y = (x + sig) * 0.5;                            // notches from dry+phased sum
+		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
+	}).add;
+
+	SynthDef(("ringmod" ++ suf).asSymbol, { |out = 0, in = 0, freq = 200,
+		amp = 0.9, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan), x = Mix(dry) / nchan;
+		var y = x * SinOsc.ar(freq.clip(0.1, 18000));
+		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
+	}).add;
+
+	SynthDef(("bitcrusher" ++ suf).asSymbol, { |out = 0, in = 0, bits = 8, downsample = 4,
+		amp = 0.9, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan), x = Mix(dry) / nchan, levels, y;
+		levels = (2 ** bits.clip(1, 24)).max(2);
+		y = (x * levels).round / levels;
+		y = Latch.ar(y, Impulse.ar((SampleRate.ir / downsample.max(1)).clip(200, SampleRate.ir)));
+		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
+	}).add;
+
+	SynthDef(("lofi" ++ suf).asSymbol, { |out = 0, in = 0, bits = 10, downsample = 6,
+		cutoff = 4000, noise = 0.1, amp = 0.9, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan), x = Mix(dry) / nchan, levels, y;
+		levels = (2 ** bits.clip(1, 24)).max(2);
+		y = (x * levels).round / levels;
+		y = Latch.ar(y, Impulse.ar((SampleRate.ir / downsample.max(1)).clip(200, SampleRate.ir)));
+		y = LPF.ar(y, cutoff.clip(200, 12000));
+		y = HPF.ar(y, 180);                            // thin, radio-ish low end
+		y = y + PinkNoise.ar(noise * 0.06);            // hiss
+		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
+	}).add;
+
+	SynthDef(("tremolo" ++ suf).asSymbol, { |out = 0, in = 0, rate = 4, depth = 0.6,
+		shape = 0, amp = 1, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan), x = Mix(dry) / nchan, lfo, modu, y;
+		lfo = Select.kr(shape.clip(0, 2), [SinOsc.kr(rate), LFTri.kr(rate), LFPulse.kr(rate, 0, 0.5) * 2 - 1]);
+		modu = (1 - depth) + (depth * (lfo * 0.5 + 0.5));
+		y = x * modu;
+		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
+	}).add;
+
+	SynthDef(("wavefolder" ++ suf).asSymbol, { |out = 0, in = 0, fold = 2, bias = 0,
+		amp = 0.8, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan), x = Mix(dry) / nchan, d, y;
+		d = (x + bias) * fold.max(0.01);
+		y = sin(d.fold2(1) * (pi / 2));                // fold back + smooth the creases
+		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
+	}).add;
+
 	// ---- BEN: Benjolis-inspired chaotic twin-oscillator / rungler voice ----
 	// Port of scazan/benjolis' Engine_Benjolis.sc. Requires sc3-plugins
 	// (PulseDPW, SVF, DFM1). The rungler is an 8-bit shift register fed by
