@@ -52,8 +52,12 @@ STATUS_FILE = SHARE / "status.json"
 # ui.js -> controller: the JS sandbox has file IO but no UDP socket, so the
 # overtake ui.js writes commands/macro values here and the controller polls it.
 CONTROL_FILE = SHARE / "control.json"
-SNAP_HZ = float(_env("WR_SNAPSHOT_HZ", "5"))
+SNAP_HZ = float(_env("WR_SNAPSHOT_HZ", "8"))           # status.json rate (cheap)
 CONTROL_HZ = float(_env("WR_CONTROL_HZ", "60"))
+# The full 180KB snapshot.json is unused by the ui.js today and writing it often
+# caused JACK XRuns; write it sparsely (or disable) to protect the audio thread.
+WRITE_FULL_SNAPSHOT = _env("WR_FULL_SNAPSHOT", "1") != "0"
+FULL_SNAPSHOT_EVERY_S = float(_env("WR_FULL_SNAPSHOT_EVERY_S", "3"))
 
 
 class HeadlessController:
@@ -135,7 +139,7 @@ class HeadlessController:
         disp.map("/wr/param", self._h_param)
         disp.map("/wr/scene", self._h_scene)
         disp.map("/wr/panic", self._h_panic)
-        disp.map("/wr/snapshot", lambda *_: self._write_snapshot())
+        disp.map("/wr/snapshot", lambda *_: self._write_full_snapshot())
         try:
             self._ctrl_server = ThreadingOSCUDPServer(("127.0.0.1", CONTROL_PORT), disp)
             threading.Thread(target=self._ctrl_server.serve_forever, daemon=True).start()
@@ -308,35 +312,30 @@ class HeadlessController:
 
     # -- snapshot (controller -> ui.js screen) ----------------------------- #
     def _snapshot_loop(self) -> None:
+        # status.json is small + cheap (the ui.js reads it every frame); write it
+        # often. snapshot.json is the full 180 KB picture (nothing reads it yet) —
+        # building + writing it 5x/s was starving scsynth's audio thread and
+        # causing JACK XRuns (clicks/pops), so write it rarely.
         period = 1.0 / max(0.5, SNAP_HZ)
+        full_every = max(1, int(round(SNAP_HZ * FULL_SNAPSHOT_EVERY_S)))
+        i = 0
         while not self._stop.is_set():
-            self._write_snapshot()
+            self._write_status()
+            if WRITE_FULL_SNAPSHOT and (i % full_every == 0):
+                self._write_full_snapshot()
+            i += 1
             time.sleep(period)
 
-    def _write_snapshot(self) -> None:
+    def _write_status(self) -> None:
+        """Tiny status file the overtake ui.js reads every frame. Built DIRECTLY
+        from state (no full_snapshot) so the hot path stays cheap."""
         try:
-            snap = full_snapshot(self.state)
-            snap["_engine"] = {"connected": self.bridge.connected,
-                               "cpu": self.bridge.cpu, "meters": self.bridge.meters}
-            tmp = SNAP_FILE.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(snap, separators=(",", ":")))
-            tmp.replace(SNAP_FILE)
-            self._write_status(snap)
-        except Exception:
-            pass
-
-    def _write_status(self, snap: dict) -> None:
-        """Tiny status file for the overtake ui.js to read cheaply every frame
-        (parsing the full snapshot per display tick would lag the loop)."""
-        try:
-            mods = snap.get("modules", {})
             status = {
                 "ready": self._built.is_set(),
                 "engine": self.bridge.connected,
                 "cpu": round(self.bridge.cpu.get("avg", 0.0), 1),  # SC avgCPU is already %
                 "nodes": self.bridge.cpu.get("nodes", 0),
-                "modules": len(mods) if isinstance(mods, (list, dict)) else 0,
-                "scene": snap.get("active_scene"),
+                "modules": len(self.state.patch.modules),
                 "meters": [round(m, 3) for m in (self.bridge.meters or [])[:2]],
                 "grid": self._grid(),       # pad cell -> {type, cat, on}
                 "macros": self._macros_status(),
@@ -344,6 +343,17 @@ class HeadlessController:
             tmp = STATUS_FILE.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(status, separators=(",", ":")))
             tmp.replace(STATUS_FILE)
+        except Exception:
+            pass
+
+    def _write_full_snapshot(self) -> None:
+        try:
+            snap = full_snapshot(self.state)
+            snap["_engine"] = {"connected": self.bridge.connected,
+                               "cpu": self.bridge.cpu, "meters": self.bridge.meters}
+            tmp = SNAP_FILE.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(snap, separators=(",", ":")))
+            tmp.replace(SNAP_FILE)
         except Exception:
             pass
 

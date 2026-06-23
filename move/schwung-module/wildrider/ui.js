@@ -39,13 +39,15 @@ const PAD_NOTES = [
 const NOTE_TO_CELL = {};
 for (let i = 0; i < 32; i++) NOTE_TO_CELL[PAD_NOTES[i]] = i;
 
-/* Category colours: [on (bright), off (dim)] */
-const CAT_COLORS = {
-    gen:  [BrightGreen, ForestGreen],
-    fx:   [AzureBlue, RoyalBlue],
-    both: [ElectricViolet, Violet],   /* RINGS / FBANK — generator AND processor */
-    midi: [VividYellow, Mustard]
+/* Category colours when ON (function colour). When a module is OFF it is shown
+ * in WHITE (a clear, category-independent "muted" state). */
+const CAT_ON = {
+    gen:  BrightGreen,
+    fx:   AzureBlue,
+    both: ElectricViolet,             /* RINGS / FBANK — generator AND processor */
+    midi: VividYellow
 };
+const OFF_COLOR = White;
 
 let phase = 0;
 let launched = false;
@@ -98,8 +100,7 @@ function renderLEDs() {
         const g = cellMap[cell];
         let color = Black;
         if (g) {
-            const pair = CAT_COLORS[g.cat] || CAT_COLORS.fx;
-            color = g.on ? pair[0] : pair[1];
+            color = g.on ? (CAT_ON[g.cat] || CAT_ON.fx) : OFF_COLOR;
         }
         setLED(PAD_NOTES[cell], color);
     }

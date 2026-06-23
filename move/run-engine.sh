@@ -5,6 +5,11 @@
 set -e
 WR=/data/UserData/wildrider
 RNBO=/data/UserData/rnbo
+# The Schwung menu launches us with HOME unset; sclang then tries to mkdir
+# /.local/share/SuperCollider (filesystem root) and fails -> Server.default is
+# nil -> the engine never boots. Point HOME at an ableton-writable dir (as RNBO
+# does). Without this it boots over ssh (su sets HOME) but NOT from the menu.
+export HOME=/data/UserData
 export LD_LIBRARY_PATH=$WR/lib:$RNBO/lib
 export JACK_DRIVER_DIR=/data/UserData/schwung/lib/jack
 export JACK_NO_AUDIO_RESERVATION=1
@@ -39,3 +44,10 @@ while [ $i -lt 60 ]; do
     i=$((i+1)); sleep 1
 done
 echo "[engine] --- log tail ---"; tail -n 12 "$ENGLOG"
+
+# Core isolation for click-free audio: dedicate cores 1-2 to the audio thread
+# (scsynth + jackd) and keep sclang on core 0 (with the controller). Core 3 is
+# left for the SPI/display driver. Without this, the Python controller and
+# sclang preempt scsynth at SCHED_OTHER -> JACK XRuns (clicks/pops).
+for p in $(pgrep -x scsynth) $(pgrep -x jackd); do taskset -pc 1-2 "$p" >/dev/null 2>&1; done
+for p in $(pgrep -x sclang); do taskset -pc 0 "$p" >/dev/null 2>&1; done
