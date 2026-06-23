@@ -205,6 +205,20 @@ class HeadlessController:
         except Exception:
             pass
 
+    def rewire(self) -> None:
+        """Track 2 short-press: rewire the connections (new signal-chain order),
+        keep params. Re-normalize since the order change shifts the level."""
+        self.state.rewire_patch()
+        threading.Thread(target=self._normalize_patch, daemon=True).start()
+
+    def rewire_randomize(self) -> None:
+        """Track 2 long-press: rewire AND re-roll every module's parameters in the
+        current artist aesthetic (a much bigger change than rewire alone)."""
+        self._safe(lambda: self.state._apply_style(
+            None, self._style, self.state.patch.expert_override))
+        self.state.rewire_patch()           # also re-pushes the new params + graph
+        threading.Thread(target=self._normalize_patch, daemon=True).start()
+
     def toggle_lfo(self, i: int) -> None:
         if 0 <= i < 16:
             lid = f"lfo{i + 1}"
@@ -372,7 +386,9 @@ class HeadlessController:
         if cmd == "newpatch":
             self._safe(self.new_patch)
         elif cmd == "rewire":
-            self._safe(self.state.rewire_patch)
+            self._safe(self.rewire)
+        elif cmd == "rewirerand":
+            self._safe(self.rewire_randomize)
         elif cmd == "toggle":
             self._safe(lambda: self.toggle_pad(arg))
         elif cmd == "delete":

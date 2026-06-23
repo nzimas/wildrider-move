@@ -61,6 +61,7 @@ let macrosSynced = false;
 let seq = 0, lastCmd = '', lastArg = -1;
 let track3Held = false;
 let shiftHeld = false;
+let row2Down = 0;              /* Track 2 press time, for short/long detect */
 let lfoStates = new Array(16).fill(false);   /* 16 step-button global LFOs on/off */
 const STEP_BASE = 16;          /* step buttons = MIDI notes 16..31 */
 const LFO_ON_COLOR = VividYellow;
@@ -140,6 +141,7 @@ function clearHeld() { if (overlay && (overlay.kind === 'name' || overlay.kind =
 function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phase + 30; screenDirty = true; }
 function showVol(v) { overlay = { kind: 'vol', val: v }; overlayUntil = phase + 30; screenDirty = true; }
 function showLfo(i, label) { overlay = { kind: 'lfo', idx: i, label: label }; overlayUntil = phase + 24; screenDirty = true; }
+function showAction(label) { overlay = { kind: 'action', label: label }; overlayUntil = phase + 24; screenDirty = true; }
 
 function bar(frac) {   /* draw a 0..1 bar */
     if (typeof draw_rect === 'function') draw_rect(6, 34, 116, 14, 1);
@@ -163,6 +165,8 @@ function drawScreen() {
         } else if (overlay.kind === 'lfo') {
             print(0, 8, 'LFO ' + (overlay.idx + 1), 2);
             print(0, 40, overlay.label, 1);
+        } else if (overlay.kind === 'action') {
+            print(0, 24, overlay.label, 2);
         } else {
             const i = overlay.idx;
             print(0, 6, 'M' + (i + 1), 2);
@@ -219,7 +223,7 @@ globalThis.tick = function () {
     }
     if (ledDirty) renderLEDs();
     /* Expire a timed overlay (macro / volume) -> revert to the idle screen once. */
-    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'vol' || overlay.kind === 'lfo') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
+    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'vol' || overlay.kind === 'lfo' || overlay.kind === 'action') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
     /* Redraw ONLY when something changed (or a macro slider is live), so the
      * SPI display isn't flushed 133x/s — that contention was XRunning audio. */
     if (screenDirty) { drawScreen(); screenDirty = false; }
@@ -279,8 +283,15 @@ globalThis.onMidiMessageInternal = function (data) {
     if (status === 0xB0) {
         if (d1 === MoveBack && d2 > 0) { if (typeof host_exit_module === 'function') host_exit_module(); return; }
         if (d1 === MoveShift) { shiftHeld = d2 > 0; return; }
-        if (d1 === MoveRow1 && d2 > 0) { macrosSynced = false; levels = {}; lastLevel = null; sendCmd('newpatch', -1); return; }
-        if (d1 === MoveRow2 && d2 > 0) { sendCmd('rewire', -1); return; }
+        if (d1 === MoveRow1 && d2 > 0) { macrosSynced = false; levels = {}; lastLevel = null; sendCmd('newpatch', -1); showAction('NEW PATCH'); return; }
+        /* Track 2: short press = rewire connections; long press = rewire AND
+         * re-randomize all module parameters (decide on release). */
+        if (d1 === MoveRow2) {
+            if (d2 > 0) { row2Down = Date.now(); }
+            else if ((Date.now() - row2Down) >= LONG_PRESS_MS) { sendCmd('rewirerand', -1); showAction('REWIRE + RND'); }
+            else { sendCmd('rewire', -1); showAction('REWIRE'); }
+            return;
+        }
         if (d1 === MoveRow3) { track3Held = d2 > 0; return; }
         /* Main volume knob: while a pad is held -> that module's level (amp);
          * otherwise -> the engine master gain (overall volume). */

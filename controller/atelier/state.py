@@ -1354,7 +1354,9 @@ class StateManager:
                 chain = [m for m in chain if m != gen]
             elif chain:
                 heads, chain = [chain[0]], chain[1:]
-        # order the effect chain by canonical signal flow (light jitter within a tier)
+        # order the effect chain by canonical signal flow (a coherent foundation);
+        # variety between patches comes from the module set + params. Free-form
+        # chaos is the job of rewire (_wire_random), not of the guided foundation.
         chain.sort(key=lambda mid: (aesthetics.chain_rank(self.patch.modules[mid].type),
                                     self.rng.random()))
         if chain:
@@ -1417,7 +1419,10 @@ class StateManager:
         if not ids:
             return
         self.patch.connections.clear()       # keep modules + params; drop only wiring
-        self._wire_guided(ids)               # deliberate signal chain (not spaghetti)
+        # Rewire is FREE-FORM: guided generation builds the solid foundation at the
+        # patch level; rewire then throws it into anything-goes territory (random
+        # DAG, multiple parallel paths) — a big, audible change every time.
+        self._wire_random(ids)
         self._resync_all()
         self._sync_graph()
         self._notify({"type": "patch_replaced"})
