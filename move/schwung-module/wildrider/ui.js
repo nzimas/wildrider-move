@@ -60,6 +60,8 @@ let macroVal = new Array(8).fill(0);
 let macrosSynced = false;
 let seq = 0, lastCmd = '', lastArg = -1;
 let track3Held = false;
+let heldCell = -1, heldStart = 0, heldNameShown = false;   /* pad press tracking */
+const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
 let overlay = null;            /* {kind:'name'|'macro', ...} */
 let overlayUntil = -1;
 let ledDirty = true;
@@ -156,6 +158,7 @@ globalThis.init = function () {
     phase = 0; launched = false; lastStatusAt = -100;
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
     macroVal = new Array(8).fill(0); seq = 0; track3Held = false;
+    heldCell = -1; heldStart = 0; heldNameShown = false;
     overlay = null; overlayUntil = -1; ledDirty = true; screenDirty = true;
 };
 
@@ -177,6 +180,11 @@ globalThis.tick = function () {
     if (!launched) return;
 
     if (phase - lastStatusAt >= 6) { readStatus(); lastStatusAt = phase; }   /* ~5Hz at 30Hz refresh */
+    /* Long-press crossed the threshold: reveal the module name (no toggle). */
+    if (heldCell >= 0 && !heldNameShown && (Date.now() - heldStart) >= LONG_PRESS_MS) {
+        const g = cellMap[heldCell];
+        if (g) { showName(g); heldNameShown = true; }
+    }
     if (ledDirty) renderLEDs();
     /* Expire a timed (macro) overlay -> revert to the idle screen once. */
     if (overlay && overlay.kind === 'macro' && phase >= overlayUntil) { overlay = null; screenDirty = true; }
@@ -190,24 +198,30 @@ globalThis.onMidiMessageInternal = function (data) {
     const d1 = data[1];
     const d2 = data[2];
 
-    /* Pad press (note-on, velocity>0) */
+    /* Pad DOWN (note-on, velocity>0): start tracking the press. We decide on
+     * RELEASE — a short tap toggles on/off; a long hold shows the module name
+     * (revealed in tick() once it crosses the threshold) and does NOT toggle. */
     if (status === 0x90 && d2 > 0 && d1 >= 68 && d1 <= 99) {
         const cell = NOTE_TO_CELL[d1];
         const g = cellMap[cell];
         if (g === undefined || g === null) return;   /* empty pad */
-        if (track3Held) {
-            sendCmd('delete', cell);
-        } else {
-            g.on = !g.on;                 /* optimistic local feedback */
-            ledDirty = true;
-            sendCmd('toggle', cell);
-            showName(g);                  /* held until pad release */
-        }
+        if (track3Held) { sendCmd('delete', cell); return; }   /* delete: immediate */
+        heldCell = cell; heldStart = Date.now(); heldNameShown = false;
         return;
     }
-    /* Pad release: clear the held module-name overlay. */
+    /* Pad UP: short tap -> toggle; long hold -> nothing (name was just shown). */
     if (status === 0x80 || (status === 0x90 && d2 === 0)) {
-        if (d1 >= 68 && d1 <= 99) clearName();
+        if (d1 >= 68 && d1 <= 99) {
+            const cell = NOTE_TO_CELL[d1];
+            if (heldCell === cell) {
+                if ((Date.now() - heldStart) < LONG_PRESS_MS) {
+                    const g = cellMap[cell];
+                    if (g) { g.on = !g.on; ledDirty = true; sendCmd('toggle', cell); }
+                }
+                if (heldNameShown) clearName();
+                heldCell = -1; heldNameShown = false;
+            }
+        }
         return;
     }
 
