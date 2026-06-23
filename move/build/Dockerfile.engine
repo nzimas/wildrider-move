@@ -1,0 +1,68 @@
+# Build a Qt-LESS SuperCollider (sclang + scsynth) from source for the Move.
+#
+# Ubuntu's apt sclang links Qt5/QtWebEngine and HANGS headless on the device
+# (QtCollider init searches for QtWebEngineProcess). A source build with
+# SC_QT=OFF removes all Qt linkage -> clean headless sclang. This is the
+# standard embedded-SuperCollider approach (norns, Bela). glibc 2.35 (ubuntu
+# 22.04) == the Move, so the binaries load against the device's own libc.
+
+ARG SC_VERSION=Version-3.13.0
+
+# ---- Stage 1: compile SuperCollider (Qt off) ------------------------------
+FROM ubuntu:22.04 AS scbuild
+ARG SC_VERSION
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git ca-certificates cmake build-essential pkg-config \
+        libjack-jackd2-dev libsndfile1-dev libfftw3-dev \
+        libreadline-dev libncurses-dev libudev-dev libasound2-dev \
+        libavahi-client-dev libx11-dev libxt-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "${SC_VERSION}" --recurse-submodules \
+        --shallow-submodules https://github.com/supercollider/supercollider.git /sc
+WORKDIR /sc/build
+# Headless: no Qt, no IDE, no editors, no Ableton Link, no supernova.
+RUN cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DSC_QT=OFF -DSC_IDE=OFF -DSC_ED=OFF -DSC_EL=OFF -DSC_VIM=OFF \
+        -DSC_ABLETON_LINK=OFF -DSUPERNOVA=OFF -DNATIVE=OFF -DSC_HIDAPI=OFF \
+    && make -j"$(nproc)" \
+    && make install DESTDIR=/install
+
+# ---- Stage 2: compile mi-UGens against the SC source ----------------------
+FROM scbuild AS miugens
+RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
+        https://github.com/v7b1/mi-UGens.git /src
+WORKDIR /src/build
+# mi-UGens wants ${SC_PATH}/include/{plugin_interface,common}; the SC source
+# tree already has that layout under /sc.
+RUN cmake .. -DSC_PATH=/sc -DCMAKE_BUILD_TYPE=Release \
+    && make -j"$(nproc)" MiClouds MiRings MiPlaits
+# Collect BOTH the compiled plugins (.so/.scx, for scsynth) and the sclang
+# class files (.sc — MiClouds.sc/MiRings.sc/MiPlaits.sc, without which sclang
+# doesn't know the UGen classes and SynthDefs referencing them fail to compile).
+RUN mkdir -p /miugens/classes \
+    && find /src/build \( -name "*.scx" -o -name "*.so" \) -exec cp {} /miugens/ \; \
+    && cp /src/sc/Classes/MiClouds.sc /src/sc/Classes/MiRings.sc \
+          /src/sc/Classes/MiPlaits.sc /miugens/classes/
+
+# ---- Stage 3: assemble the bundle -----------------------------------------
+FROM ubuntu:22.04 AS assembler
+ENV DEBIAN_FRONTEND=noninteractive
+# sc3-plugins (.so) from apt are SC plugin-API compatible and load on our
+# source-built scsynth; libsndfile1 + file are needed at assembly time.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        sc3-plugins libsndfile1 file \
+    && rm -rf /var/lib/apt/lists/*
+# Drop the Qt-less SC install into place (so command -v sclang/scsynth works
+# and the SCClassLibrary + plugins land under /usr/local).
+COPY --from=scbuild /install/usr/local /usr/local
+RUN ldconfig
+COPY --from=miugens /miugens /miugens
+COPY assemble-bundle.sh /assemble-bundle.sh
+RUN chmod +x /assemble-bundle.sh && SC_QTLESS=1 /assemble-bundle.sh
+
+# ---- Stage 4: export-only -------------------------------------------------
+FROM scratch AS export
+COPY --from=assembler /bundle /

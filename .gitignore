@@ -7,3 +7,10 @@ data/recordings/
 data/stream/
 !data/.gitkeep
 .DS_Store
+
+# Move build artifacts: the exported aarch64 bundle (binaries) + build logs.
+# Reproducible via move/build/build.sh; not source.
+move/dist/
+move/build/*.log
+move/build/tone.osc
+move/build/wrtone.scsyndef

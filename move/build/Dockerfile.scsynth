@@ -1,0 +1,49 @@
+# Cross-build a relocatable aarch64/glibc-2.35 SuperCollider bundle for the
+# Ableton Move (RPi CM4, AbletonOS, glibc 2.35). Built on the Mac via
+# `docker buildx --platform linux/arm64`; the device never sees Docker.
+#
+# Ubuntu 22.04 ships glibc 2.35 — identical to the Move — so binaries built here
+# load against the device's own libc. The final stage is `scratch` so buildx
+# --output exports just the bundle tree to the host.
+
+# ---- Stage 1: compile mi-UGens (Clouds/Rings/Plaits) ----------------------
+FROM ubuntu:22.04 AS miugens
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git cmake build-essential pkg-config ca-certificates \
+        supercollider-dev libsndfile1-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
+        https://github.com/v7b1/mi-UGens.git /src
+# mi-UGens' cmake expects a SuperCollider *source* layout; map the Debian
+# supercollider-dev headers + system libsndfile into that shape.
+RUN mkdir -p /scsdk/external_libraries \
+    && ln -s /usr/include/SuperCollider /scsdk/include \
+    && ln -s /usr/include /scsdk/external_libraries/libsndfile
+WORKDIR /src/build
+RUN cmake .. -DSC_PATH=/scsdk -DCMAKE_BUILD_TYPE=Release \
+    && make -j"$(nproc)" MiClouds MiRings MiPlaits
+RUN mkdir -p /miugens \
+    && find /src/build \( -name "*.scx" -o -name "*.so" \) -exec cp {} /miugens/ \;
+
+# ---- Stage 2: gather scsynth + plugins + libs into /bundle ----------------
+FROM ubuntu:22.04 AS assembler
+ENV DEBIAN_FRONTEND=noninteractive
+# supercollider-language gives sclang + the SCClassLibrary (the engine host:
+# boot.scd/engine.scd/synthdefs.scd run under sclang). It pulls Qt5 — sclang
+# starts headless (offscreen) without initialising WebEngine; the Qt libs +
+# the offscreen platform plugin are bundled so the device needs no system Qt.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        supercollider-server \
+        supercollider-language \
+        sc3-plugins \
+        libsndfile1 \
+        file \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=miugens /miugens /miugens
+COPY assemble-bundle.sh /assemble-bundle.sh
+RUN chmod +x /assemble-bundle.sh && /assemble-bundle.sh
+
+# ---- Stage 3: export-only -------------------------------------------------
+FROM scratch AS export
+COPY --from=assembler /bundle /
