@@ -18,20 +18,24 @@ export ATELIER_BLOCK=64
 export CONTROLLER_HOST=127.0.0.1
 export CONTROLLER_PORT=57140
 export PATH=$WR/bin:$PATH
+# Logs live under the (ableton-owned) wildrider tree, NOT /tmp: the runner is
+# launched as `ableton` from the Schwung menu and cannot write root-owned files.
+LOGS=$WR/logs; mkdir -p "$LOGS"
+JACKLOG=$LOGS/jackd.log; ENGLOG=$LOGS/engine.log
 
 echo "[engine] starting jackd -d shadow"
-pgrep -x jackd >/dev/null 2>&1 || { $RNBO/bin/jackd -d shadow > /tmp/wr_jackd.log 2>&1 & sleep 2; }
-grep -q "attached to shared memory" /tmp/wr_jackd.log 2>/dev/null && echo "[engine] shadow attached"
+pgrep -x jackd >/dev/null 2>&1 || { $RNBO/bin/jackd -d shadow > "$JACKLOG" 2>&1 & sleep 2; }
+grep -q "attached to shared memory" "$JACKLOG" 2>/dev/null && echo "[engine] shadow attached"
 
 echo "[engine] starting sclang (boot.scd) — pinned to cores 0-2"
 taskset 0x7 $WR/bin/sclang -l $WR/share/sclang_conf.yaml $WR/sc/wr-boot.scd \
-    > /tmp/wr_engine.log 2>&1 &
-echo "[engine] sclang pid=$!  (log: /tmp/wr_engine.log)"
+    > "$ENGLOG" 2>&1 &
+echo "[engine] sclang pid=$!  (log: $ENGLOG)"
 echo "[engine] waiting for boot ..."
 i=0
 while [ $i -lt 60 ]; do
-    grep -q "server ready\|SuperCollider 3 server ready" /tmp/wr_engine.log 2>/dev/null && break
-    grep -qi "ERROR\|FAILURE\|Exception" /tmp/wr_engine.log 2>/dev/null && { echo "[engine] error:"; tail -n 20 /tmp/wr_engine.log; exit 1; }
+    grep -q "server ready\|SuperCollider 3 server ready" "$ENGLOG" 2>/dev/null && break
+    grep -qi "ERROR\|FAILURE\|Exception" "$ENGLOG" 2>/dev/null && { echo "[engine] error:"; tail -n 20 "$ENGLOG"; exit 1; }
     i=$((i+1)); sleep 1
 done
-echo "[engine] --- log tail ---"; tail -n 12 /tmp/wr_engine.log
+echo "[engine] --- log tail ---"; tail -n 12 "$ENGLOG"

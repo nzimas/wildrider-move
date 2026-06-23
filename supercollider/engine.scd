@@ -112,8 +112,12 @@
 		}).add;
 		// master loudness guard: NaN/Inf kill + brickwall limiter so runaway
 		// feedback can never clip the output (blueprint panic/loudness policy).
-		SynthDef(("master_" ++ channels).asSymbol, { |in = 0, out = 0|
-			Out.ar(out, Limiter.ar(~killbad.(In.ar(in, channels)), 0.95, 0.01));
+		// Master makeup gain into the brickwall limiter. Wildrider-Move patches
+		// (ambient aesthetics + long wet/dry FX chains) often sit ~20-30 dB down;
+		// the gain lifts them to an audible level on the Move speaker while the
+		// Limiter still guarantees no clipping. Tunable via the \gain arg.
+		SynthDef(("master_" ++ channels).asSymbol, { |in = 0, out = 0, gain = 6|
+			Out.ar(out, Limiter.ar(~killbad.(In.ar(in, channels)) * gain, 0.95, 0.01));
 		}).add;
 		s.sync;
 		// DX7: allocate LFO wavetable buffers + load the bundled factory bank once.

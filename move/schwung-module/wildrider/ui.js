@@ -106,8 +106,11 @@ function renderLEDs() {
     ledDirty = false;
 }
 
-/* ---- screen ---- */
-function showName(g) { overlay = { kind: 'name', type: g.type, cat: g.cat, on: g.on }; overlayUntil = phase + 36; }
+/* ---- screen ----
+ * Name overlay is HELD: shown from pad-down until pad-up (overlayUntil = +inf,
+ * cleared on release). Macro overlay is timed. */
+function showName(g) { overlay = { kind: 'name', type: g.type, cat: g.cat, on: g.on }; overlayUntil = 1e12; }
+function clearName() { if (overlay && overlay.kind === 'name') { overlay = null; } }
 function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phase + 30; }
 
 function drawScreen() {
@@ -179,11 +182,15 @@ globalThis.onMidiMessageInternal = function (data) {
             g.on = !g.on;                 /* optimistic local feedback */
             ledDirty = true;
             sendCmd('toggle', cell);
-            showName(g);
+            showName(g);                  /* held until pad release */
         }
         return;
     }
-    if (status === 0x80 || (status === 0x90 && d2 === 0)) return;  /* pad release: no-op */
+    /* Pad release: clear the held module-name overlay. */
+    if (status === 0x80 || (status === 0x90 && d2 === 0)) {
+        if (d1 >= 68 && d1 <= 99) clearName();
+        return;
+    }
 
     if (status === 0xB0) {
         if (d1 === MoveBack && d2 > 0) { if (typeof host_exit_module === 'function') host_exit_module(); return; }

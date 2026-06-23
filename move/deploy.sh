@@ -21,5 +21,5 @@ else
     echo "(no rsync on device; using tar-over-ssh)"
     tar -C "$HERE/dist/bundle" -czf - . | ssh "root@$HOST" "tar -C $DEST -xzf -"
 fi
-ssh "root@$HOST" "chmod +x $DEST/bin/* $DEST/*.sh 2>/dev/null; ls -la $DEST"
-echo "Done."
+ssh "root@$HOST" "chmod +x $DEST/bin/* $DEST/*.sh 2>/dev/null; chown -R ableton:users $DEST; ls -la $DEST"
+echo "Done. (owned by ableton — the runtime user that the Schwung menu launches as)"
