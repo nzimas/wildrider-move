@@ -74,6 +74,7 @@ class HeadlessController:
     # -- lifecycle --------------------------------------------------------- #
     def start(self) -> None:
         SHARE.mkdir(parents=True, exist_ok=True)
+        self._write_modules_list()
         self.bridge.start()
         self.state.init_default()
         self._gen_macros()              # every patch loads 8 macros (incl. startup)
@@ -204,6 +205,34 @@ class HeadlessController:
             self.bridge.send("/atelier/mastergain", round(gain, 2))
         except Exception:
             pass
+
+    def _write_modules_list(self) -> None:
+        """Static list of selectable module types for the CHAINS picker ui.js."""
+        try:
+            from .catalog import CATALOG
+            types = [t for t in CATALOG if CATALOG[t].is_audio]
+            (SHARE / "modules.json").write_text(json.dumps(types))
+        except Exception:
+            pass
+
+    def chains_patch(self, selection) -> None:
+        """CHAINS generate: selection = [[type, count], ...] -> guided patch built
+        from exactly those modules/instances. + macros + 16 LFOs + normalize."""
+        types = []
+        for item in selection or []:
+            try:
+                t, n = str(item[0]), int(item[1])
+            except Exception:
+                continue
+            types += [t] * max(0, min(8, n))
+        if not types:
+            return
+        self._style = self.state.rng.choice(ARTISTS)
+        self.state.chain_patch(types, self._style)
+        self.state.init_global_lfos(self._style)
+        self._gen_macros()
+        self._pad_map = {}
+        threading.Thread(target=self._normalize_patch, daemon=True).start()
 
     def rewire(self) -> None:
         """Track 2 short-press: rewire the connections (new signal-chain order),
@@ -382,8 +411,11 @@ class HeadlessController:
             if isinstance(seq, int) and seq != last_seq:
                 last_seq = seq
                 cmd = doc.get("cmd")
-                arg = doc.get("arg", -1)
-                self._dispatch_cmd(str(cmd), int(arg) if isinstance(arg, (int, float)) else -1)
+                if cmd == "chainsgen":          # carries a variable-length selection
+                    self._safe(lambda: self.chains_patch(doc.get("chains", [])))
+                else:
+                    arg = doc.get("arg", -1)
+                    self._dispatch_cmd(str(cmd), int(arg) if isinstance(arg, (int, float)) else -1)
 
     def _dispatch_cmd(self, cmd: str, arg: int) -> None:
         if cmd == "newpatch":

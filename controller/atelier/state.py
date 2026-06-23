@@ -1437,6 +1437,32 @@ class StateManager:
         self._sync_graph()
         self._notify({"type": "patch_replaced"})
 
+    def chain_patch(self, types: list[str], style: str | None = None) -> None:
+        """CHAINS (Move): build a guided patch from an EXPLICIT module list (the
+        user picked the modules + instance counts). Like random_chain but wired
+        with the deliberate _wire_guided (a coherent foundation, since the user
+        chose the parts) and capped to the 32-pad grid, up to 8 of a type."""
+        from .catalog import CATALOG
+        used: dict[str, int] = {}
+        chosen: list[str] = []
+        for t in types:
+            if (t in CATALOG and CATALOG[t].is_audio
+                    and used.get(t, 0) < 8 and len(chosen) < 32):
+                chosen.append(t)
+                used[t] = used.get(t, 0) + 1
+        if not chosen:
+            return
+        self._teardown_modules()
+        ids = [self.add_module(t, node_count=1).id for t in chosen]
+        self._wire_guided(ids)               # coherent foundation
+        if style and style != "free":
+            self._apply_style(None, style, self.patch.expert_override)
+            self._apply_guided_lfos(style)
+        self._auto_layout()
+        self._resync_all()
+        self._sync_graph()
+        self._notify({"type": "patch_replaced"})
+
     def random_chain(self, types: list[str], style: str | None = None) -> None:
         """Chain scope: build a new random legal graph from the user-selected
         modules. Free = new modules keep defaults; Guided = each module's params are
