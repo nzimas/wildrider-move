@@ -621,19 +621,29 @@ class StateManager:
         if not targets:
             return
         prof = aesthetics.LFO_PROFILE.get(style) if style else None
+        # Depth is deliberately STRONG for the Move global LFOs: they are user-
+        # toggled and must be obviously audible when switched on (the artist
+        # profiles' "modest" depths were inaudible). -200..200% range; 0.45-0.95
+        # is a clear, musical swing without going fully unhinged.
+        depth = self.rng.uniform(0.45, 0.95)
         if prof:
             shape = self.rng.choice(prof["shapes"])
             rate = aesthetics._logrand(self.rng, *prof["rate"])
-            depth = self.rng.uniform(*prof["depth"])
             roles = prof.get("roles", set())
             pref = [(m, p) for (m, p, role) in self._classified_mod_targets() if role in roles]
             mid, pid = self.rng.choice(pref) if pref else self.rng.choice(targets)
         else:
             shape = self.rng.choice(["sine", "triangle", "sh"])
             rate = 0.03 * ((4.0 / 0.03) ** self.rng.random())
-            depth = self.rng.uniform(0.25, 0.9)
             mid, pid = self.rng.choice(targets)
         self.set_lfo(lid, shape=shape, rate=rate, depth=depth, target=f"{mid}|{pid}")
+
+    def randomize_all_lfos(self, style: str | None = None) -> None:
+        """Re-randomize ALL 16 global LFOs (shape/rate/depth/target), preserving
+        each one's on/off state (set_lfo keeps the existing route's enable)."""
+        for lid in self.lfo_ids()[:16]:
+            self._rand_one_lfo(lid, style)
+        self._notify({"type": "lfos_randomized"})
 
     def init_global_lfos(self, style: str | None = None, n: int = 16) -> None:
         """Every patch loads `n` global LFOs: randomized but OFF (disabled). The

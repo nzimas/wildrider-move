@@ -229,6 +229,9 @@ class HeadlessController:
         if 0 <= i < 16:
             self.state.rerandomize_lfo(f"lfo{i + 1}", self._style)
 
+    def randomize_all_lfos(self) -> None:
+        self.state.randomize_all_lfos(self._style)
+
     def _lfos_status(self) -> list:
         out = []
         for i in range(16):
@@ -397,6 +400,8 @@ class HeadlessController:
             self._safe(lambda: self.toggle_lfo(arg))
         elif cmd == "lforand":
             self._safe(lambda: self.rerandomize_lfo(arg))
+        elif cmd == "lforandall":
+            self._safe(self.randomize_all_lfos)
         elif cmd == "panic":
             self._safe(getattr(self.state, "panic", None) or self.bridge.panic)
 

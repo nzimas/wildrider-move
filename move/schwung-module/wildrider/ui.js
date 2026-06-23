@@ -61,6 +61,7 @@ let macrosSynced = false;
 let seq = 0, lastCmd = '', lastArg = -1;
 let track3Held = false;
 let shiftHeld = false;
+let returnHeld = false, returnUsed = false;   /* Back/return key as a modifier */
 let row2Down = 0;              /* Track 2 press time, for short/long detect */
 let lfoStates = new Array(16).fill(false);   /* 16 step-button global LFOs on/off */
 const STEP_BASE = 16;          /* step buttons = MIDI notes 16..31 */
@@ -191,6 +192,7 @@ globalThis.init = function () {
     phase = 0; launched = false; lastStatusAt = -100;
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
     macroVal = new Array(8).fill(0); seq = 0; track3Held = false; shiftHeld = false;
+    returnHeld = false; returnUsed = false; row2Down = 0;
     lfoStates = new Array(16).fill(false);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
     levels = {}; masterGain = 6; lastLevel = null;
@@ -238,6 +240,11 @@ globalThis.onMidiMessageInternal = function (data) {
      * Shift+press re-randomizes that one LFO (keeping its on/off state). */
     if (status === 0x90 && d2 > 0 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {
         const i = d1 - STEP_BASE;
+        if (returnHeld) {                       /* return + step1 = randomize ALL LFOs */
+            returnUsed = true;
+            if (i === 0) { sendCmd('lforandall', -1); showAction('RND ALL LFOS'); }
+            return;                             /* don't toggle while return is held */
+        }
         if (shiftHeld) {
             sendCmd('lforand', i);
             showLfo(i, 'RND');
@@ -281,7 +288,13 @@ globalThis.onMidiMessageInternal = function (data) {
     }
 
     if (status === 0xB0) {
-        if (d1 === MoveBack && d2 > 0) { if (typeof host_exit_module === 'function') host_exit_module(); return; }
+        /* Return/Back key: held = modifier (return+step1 = randomize all LFOs);
+         * a plain tap (no step used) still exits the runner. */
+        if (d1 === MoveBack) {
+            if (d2 > 0) { returnHeld = true; returnUsed = false; }
+            else { if (!returnUsed && typeof host_exit_module === 'function') host_exit_module(); returnHeld = false; }
+            return;
+        }
         if (d1 === MoveShift) { shiftHeld = d2 > 0; return; }
         if (d1 === MoveRow1 && d2 > 0) { macrosSynced = false; levels = {}; lastLevel = null; sendCmd('newpatch', -1); showAction('NEW PATCH'); return; }
         /* Track 2: short press = rewire connections; long press = rewire AND
