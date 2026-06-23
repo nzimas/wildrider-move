@@ -185,6 +185,25 @@ class HeadlessController:
         self.state.init_global_lfos(self._style)
         self._gen_macros()
         self._pad_map = {}              # reflow the grid for the new module set
+        threading.Thread(target=self._normalize_patch, daemon=True).start()
+
+    def _normalize_patch(self) -> None:
+        """Per-patch loudness: measure the patch at unity makeup gain, then set
+        the master makeup so it peaks ~0.6 (headroom below the 0.95 limiter). This
+        lifts quiet ambient patches to audible AND keeps loud/harsh patches from
+        slamming the limiter into crackle. Runs off the control loop (it sleeps)."""
+        try:
+            self.bridge.send("/atelier/mastergain", 1.0)
+            time.sleep(0.9)                 # let the patch settle + meters update
+            peak = 0.0
+            for _ in range(6):              # take the max over a short window
+                m = self.bridge.meters or []
+                peak = max([peak] + [float(x) for x in m])
+                time.sleep(0.08)
+            gain = 6.0 if peak < 1e-3 else max(1.5, min(10.0, 0.6 / peak))
+            self.bridge.send("/atelier/mastergain", round(gain, 2))
+        except Exception:
+            pass
 
     def toggle_lfo(self, i: int) -> None:
         if 0 <= i < 16:
