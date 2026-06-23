@@ -22,6 +22,6 @@ tar -C "$ROOT/supercollider" -czf - boot.scd engine.scd synthdefs.scd dx7.scd DX
 tar -C "$HERE/sc" -czf - wr-boot.scd | ssh "root@$HOST" "tar -C $DEST/sc -xzf -"
 
 echo "-> launch scripts"
-scp "$HERE/run-engine.sh" "$HERE/run-controller.sh" "root@$HOST:$DEST/"
-ssh "root@$HOST" "chmod +x $DEST/run-engine.sh $DEST/run-controller.sh; ls -la $DEST"
+scp "$HERE/run-engine.sh" "$HERE/run-controller.sh" "$HERE/run-stack.sh" "root@$HOST:$DEST/"
+ssh "root@$HOST" "chmod +x $DEST/run-engine.sh $DEST/run-controller.sh $DEST/run-stack.sh"
 echo "Done."

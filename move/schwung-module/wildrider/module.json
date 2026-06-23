@@ -1,0 +1,20 @@
+{
+    "id": "wildrider",
+    "name": "Wildrider",
+    "abbrev": "WLD",
+    "version": "0.1.0",
+    "description": "Wildrider electroacoustic instrument — SuperCollider engine takeover (Macros, scenes, SEQ) driven from the Move",
+    "author": "nzimas",
+    "license": "MIT",
+    "ui": "ui.js",
+    "api_version": 2,
+    "component_type": "overtake",
+    "requires_path": "/data/UserData/wildrider/bin/sclang",
+    "capabilities": {
+        "audio_out": true,
+        "audio_in": true,
+        "midi_in": true,
+        "midi_out": false,
+        "aftertouch": true
+    }
+}

@@ -44,6 +44,7 @@ CONTROL_PORT = int(_env("WR_CONTROL_PORT", "57150"))    # ui.js -> controller
 CONTROL_RATE = float(_env("ATELIER_CONTROL_RATE", "60"))
 SHARE = Path(_env("WR_SHARE", "/data/UserData/wildrider/share"))
 SNAP_FILE = SHARE / "snapshot.json"
+STATUS_FILE = SHARE / "status.json"
 SNAP_HZ = float(_env("WR_SNAPSHOT_HZ", "5"))
 
 
@@ -155,6 +156,27 @@ class HeadlessController:
             tmp = SNAP_FILE.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(snap, separators=(",", ":")))
             tmp.replace(SNAP_FILE)
+            self._write_status(snap)
+        except Exception:
+            pass
+
+    def _write_status(self, snap: dict) -> None:
+        """Tiny status file for the overtake ui.js to read cheaply every frame
+        (parsing the full snapshot per display tick would lag the loop)."""
+        try:
+            mods = snap.get("modules", {})
+            status = {
+                "ready": self._built.is_set(),
+                "engine": self.bridge.connected,
+                "cpu": round(self.bridge.cpu.get("avg", 0.0), 1),  # SC avgCPU is already %
+                "nodes": self.bridge.cpu.get("nodes", 0),
+                "modules": len(mods) if isinstance(mods, (list, dict)) else 0,
+                "scene": snap.get("active_scene"),
+                "meters": [round(m, 3) for m in (self.bridge.meters or [])[:2]],
+            }
+            tmp = STATUS_FILE.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(status, separators=(",", ":")))
+            tmp.replace(STATUS_FILE)
         except Exception:
             pass
 
