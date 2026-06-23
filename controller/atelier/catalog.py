@@ -958,15 +958,18 @@ WAVEFOLDER = ModuleSpec(
 )
 
 
+# NB (Wildrider-Move): SEQ (MIDI sequencer) is intentionally excluded — the Move
+# takeover does not use it. Its ModuleSpec + SeqEngine remain in the codebase for
+# desktop parity, but it is not registered, so it never appears in any patch/grid.
 CATALOG: dict[str, ModuleSpec] = {
-    m.type: m for m in (SEQ, DX7, MOLLY, FBANK, PITCH, TIME, COMB, GAIN, SDLY, VERB,
+    m.type: m for m in (DX7, MOLLY, FBANK, PITCH, TIME, COMB, GAIN, SDLY, VERB,
                         CLOUDS, GRAINS, RINGS, BEN, BUCHLOID, ENV, GATE, PLAITS, DISTORT,
                         OVERDRIVE, AMPSIM, EQUALIZER, FLANGER, PHASER, RINGMOD,
                         BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER)
 }
 
 # Ordered lanes (source -> processors -> spatial tail).
-DEFAULT_LANE_ORDER = ["SEQ", "DX7", "MOLLY", "FBANK", "PITCH", "TIME", "COMB", "GAIN",
+DEFAULT_LANE_ORDER = ["DX7", "MOLLY", "FBANK", "PITCH", "TIME", "COMB", "GAIN",
                       "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "PLAITS",
                       "DISTORT", "OVERDRIVE", "AMPSIM", "EQUALIZER", "FLANGER", "PHASER", "RINGMOD",
                       "BITCRUSHER", "LOFI", "TREMOLO", "WAVEFOLDER"]

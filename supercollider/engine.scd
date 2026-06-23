@@ -336,7 +336,10 @@
 	}, '/atelier/panic'),
 	OSCdef(\spatial, { |m| /* channel changes require rebuild on next boot */ }, '/atelier/spatial'),
 	OSCdef(\reseed, { |m| /* seeds live in the controller; nothing server-side */ }, '/atelier/reseed'),
-	OSCdef(\ping, { |m| ~ctrl.value.sendMsg('/atelier/ready') }, '/atelier/ping'),
+	// Only confirm readiness once the boot block has actually finished (buses +
+	// groups exist). Replying mid-boot makes the controller build_graph against a
+	// nil ~masterBus -> 'index' errors. ~built is set at the end of ~boot.
+	OSCdef(\ping, { |m| (~built ? false).if { ~ctrl.value.sendMsg('/atelier/ready') } }, '/atelier/ping'),
 	OSCdef(\feedback, { |m| /* armed feedback edges: see ~rebuildLane refinement */ }, '/atelier/feedback'),
 	OSCdef(\recorder, { |m| /* recorder/resampling hook */ }, '/atelier/recorder'),
 	// CD-quality WAV capture off JACK (see record.sh). The controller picks the

@@ -27,9 +27,13 @@ import threading
 import time
 from pathlib import Path
 
+from . import aesthetics
 from .osc_bridge import OSCBridge
 from .snapshot import full_snapshot
 from .state import StateManager
+
+# Guided "artist-inspired" styles a new patch is generated in (Track 1).
+ARTISTS = list(aesthetics.MODULE_PALETTE.keys()) or ["vidna_obmana"]
 
 
 def _env(name: str, default: str) -> str:
@@ -45,7 +49,11 @@ CONTROL_RATE = float(_env("ATELIER_CONTROL_RATE", "60"))
 SHARE = Path(_env("WR_SHARE", "/data/UserData/wildrider/share"))
 SNAP_FILE = SHARE / "snapshot.json"
 STATUS_FILE = SHARE / "status.json"
+# ui.js -> controller: the JS sandbox has file IO but no UDP socket, so the
+# overtake ui.js writes commands/macro values here and the controller polls it.
+CONTROL_FILE = SHARE / "control.json"
 SNAP_HZ = float(_env("WR_SNAPSHOT_HZ", "5"))
+CONTROL_HZ = float(_env("WR_CONTROL_HZ", "60"))
 
 
 class HeadlessController:
@@ -56,12 +64,14 @@ class HeadlessController:
         self._stop = threading.Event()
         self._built = threading.Event()
         self._ctrl_server = None
+        self._pad_map: dict = {}        # module id -> stable pad cell (0-31)
 
     # -- lifecycle --------------------------------------------------------- #
     def start(self) -> None:
         SHARE.mkdir(parents=True, exist_ok=True)
         self.bridge.start()
         self.state.init_default()
+        self._gen_macros()              # every patch loads 8 macros (incl. startup)
         # Build the DSP graph only once the engine signals readiness. The engine
         # sets ~masterBus etc. at the *end* of its async boot block and then
         # sends /atelier/ready; building before that races (nil bus -> errors).
@@ -71,6 +81,7 @@ class HeadlessController:
         threading.Thread(target=self._handshake_loop, daemon=True).start()
         self._start_control_channel()
         threading.Thread(target=self._snapshot_loop, daemon=True).start()
+        threading.Thread(target=self._control_file_loop, daemon=True).start()
         print(f"[wildrider] headless controller up — engine {SC_HOST}:{SC_PORT}, "
               f"control :{CONTROL_PORT}, snapshot {SNAP_FILE}", flush=True)
 
@@ -116,7 +127,11 @@ class HeadlessController:
             print("[wildrider] pythonosc missing — control channel disabled", flush=True)
             return
         disp = Dispatcher()
-        disp.map("/wr/macro", self._h_macro)
+        disp.map("/wr/macro", self._h_macro)         # knob i (0-7) -> macro value
+        disp.map("/wr/newpatch", self._h_newpatch)   # track 1: new guided patch
+        disp.map("/wr/rewire", self._h_rewire)       # track 2: rewire connections
+        disp.map("/wr/pad/toggle", self._h_pad_toggle)  # short-press: module on/off
+        disp.map("/wr/pad/delete", self._h_pad_delete)  # track3 + pad: delete module
         disp.map("/wr/param", self._h_param)
         disp.map("/wr/scene", self._h_scene)
         disp.map("/wr/panic", self._h_panic)
@@ -127,8 +142,21 @@ class HeadlessController:
         except Exception as e:
             print(f"[wildrider] control channel bind failed: {e}", flush=True)
 
-    def _h_macro(self, _addr, macro_id="m0", value=0.0) -> None:
-        self._safe(lambda: self.state.set_macro(str(macro_id), float(value)))
+    def _h_macro(self, _addr, index=0, value=0.0) -> None:
+        # The 8 encoders map to macro_1..macro_8 by index.
+        self._safe(lambda: self.state.set_macro(f"macro_{int(index) + 1}", float(value)))
+
+    def _h_newpatch(self, _addr, *_a) -> None:
+        self._safe(self.new_patch)
+
+    def _h_rewire(self, _addr, *_a) -> None:
+        self._safe(self.state.rewire_patch)
+
+    def _h_pad_toggle(self, _addr, pad=-1) -> None:
+        self._safe(lambda: self.toggle_pad(int(pad)))
+
+    def _h_pad_delete(self, _addr, pad=-1) -> None:
+        self._safe(lambda: self.delete_pad(int(pad)))
 
     def _h_param(self, _addr, mid="", pid="", node=-1, value=0.0) -> None:
         n = None if int(node) < 0 else int(node)
@@ -140,6 +168,143 @@ class HeadlessController:
     def _h_panic(self, _addr, *_a) -> None:
         fn = getattr(self.state, "panic", None) or self.bridge.panic
         self._safe(fn)
+
+    # -- patch / grid / macros (the Move canvas model) --------------------- #
+    def new_patch(self) -> None:
+        """Track 1: generate a fresh guided artist-inspired patch + 8 macros."""
+        style = self.state.rng.choice(ARTISTS)
+        self.state.random_patch(style=style)
+        self._gen_macros()
+        self._pad_map = {}              # reflow the grid for the new module set
+
+    def _gen_macros(self) -> None:
+        """Every patch loads 8 macros, each with 1-5 random destinations and a
+        random modulation direction (MacroTarget.invert)."""
+        from .control import Macro
+        st = self.state
+        st.control.macros.clear()
+        for i in range(1, 9):
+            mac = Macro(id=f"macro_{i}", name=f"M{i}", page="Macro", value=0.0)
+            st._assign_macro_targets(mac, st.rng.randint(1, 5))
+            st.control.add_macro(mac)
+        st._resync_all()
+
+    def toggle_pad(self, pad: int) -> None:
+        """Short-press a module pad: flip the module on/off (bypass)."""
+        mid = self._pad_to_mid(pad)
+        if not mid:
+            return
+        m = self.state.patch.modules[mid]
+        m.bypass = not m.bypass
+        self.state.bridge.module_bypass(mid, m.bypass)
+
+    def delete_pad(self, pad: int) -> None:
+        """Track3 + pad: remove the module at that pad; its cell clears."""
+        mid = self._pad_to_mid(pad)
+        if not mid:
+            return
+        self.state.remove_module(mid)
+        self._pad_map.pop(mid, None)
+
+    @staticmethod
+    def _category(spec) -> str:
+        if not spec.is_audio or spec.type == "SEQ":
+            return "midi"
+        if spec.generative_capable and spec.insert_capable:
+            return "both"            # RINGS / FBANK — generator AND processor
+        if spec.generative_capable:
+            return "gen"
+        return "fx"
+
+    def _ensure_pad_map(self) -> None:
+        """Assign each module a STABLE pad cell (0-31). New modules take the next
+        free cell in signal-flow order; removed modules free their cell — so
+        toggling/deleting never reflows the others."""
+        live = list(self.state.patch.modules.keys())
+        for mid in [m for m in self._pad_map if m not in live]:
+            del self._pad_map[mid]
+        used = set(self._pad_map.values())
+        for mid in self.state.patch.topo_order():
+            if mid in self._pad_map:
+                continue
+            for cell in range(32):
+                if cell not in used:
+                    self._pad_map[mid] = cell
+                    used.add(cell)
+                    break
+
+    def _pad_to_mid(self, pad: int):
+        for mid, cell in self._pad_map.items():
+            if cell == pad:
+                return mid
+        return None
+
+    def _grid(self) -> list:
+        self._ensure_pad_map()
+        out = []
+        for mid, cell in self._pad_map.items():
+            m = self.state.patch.modules.get(mid)
+            if not m:
+                continue
+            out.append({"pad": cell, "type": m.type,
+                        "cat": self._category(m.spec), "on": not m.bypass})
+        return out
+
+    def _macros_status(self) -> list:
+        out = []
+        for i in range(1, 9):
+            mac = self.state.control.macros.get(f"macro_{i}")
+            out.append({"id": f"M{i}",
+                        "val": round(getattr(mac, "value", 0.0), 3) if mac else 0.0,
+                        "targets": len(mac.targets) if mac else 0})
+        return out
+
+    # -- control file (ui.js -> controller, polled) ------------------------ #
+    def _control_file_loop(self) -> None:
+        """Poll control.json written by the overtake ui.js. Shape:
+            {"seq": <int>, "cmd": "newpatch|rewire|toggle|delete", "arg": <int>,
+             "macros": [8 floats 0..1]}
+        macros are applied every poll (idempotent); cmd only when seq advances."""
+        period = 1.0 / max(10.0, CONTROL_HZ)
+        last_seq = -1
+        last_macros = [None] * 8
+        while not self._stop.is_set():
+            time.sleep(period)
+            try:
+                if not CONTROL_FILE.exists():
+                    continue
+                doc = json.loads(CONTROL_FILE.read_text() or "{}")
+            except Exception:
+                continue  # partial write / parse error — skip this frame
+            macros = doc.get("macros")
+            if isinstance(macros, list):
+                for i, v in enumerate(macros[:8]):
+                    try:
+                        fv = float(v)
+                    except (TypeError, ValueError):
+                        continue
+                    if last_macros[i] is None or abs(fv - last_macros[i]) > 1e-4:
+                        last_macros[i] = fv
+                        self._safe(lambda i=i, fv=fv:
+                                   self.state.set_macro(f"macro_{i + 1}", fv))
+            seq = doc.get("seq")
+            if isinstance(seq, int) and seq != last_seq:
+                last_seq = seq
+                cmd = doc.get("cmd")
+                arg = doc.get("arg", -1)
+                self._dispatch_cmd(str(cmd), int(arg) if isinstance(arg, (int, float)) else -1)
+
+    def _dispatch_cmd(self, cmd: str, arg: int) -> None:
+        if cmd == "newpatch":
+            self._safe(self.new_patch)
+        elif cmd == "rewire":
+            self._safe(self.state.rewire_patch)
+        elif cmd == "toggle":
+            self._safe(lambda: self.toggle_pad(arg))
+        elif cmd == "delete":
+            self._safe(lambda: self.delete_pad(arg))
+        elif cmd == "panic":
+            self._safe(getattr(self.state, "panic", None) or self.bridge.panic)
 
     # -- snapshot (controller -> ui.js screen) ----------------------------- #
     def _snapshot_loop(self) -> None:
@@ -173,6 +338,8 @@ class HeadlessController:
                 "modules": len(mods) if isinstance(mods, (list, dict)) else 0,
                 "scene": snap.get("active_scene"),
                 "meters": [round(m, 3) for m in (self.bridge.meters or [])[:2]],
+                "grid": self._grid(),       # pad cell -> {type, cat, on}
+                "macros": self._macros_status(),
             }
             tmp = STATUS_FILE.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(status, separators=(",", ":")))
