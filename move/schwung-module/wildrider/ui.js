@@ -148,6 +148,11 @@ function drawScreen() {
 
 /* ================= host entry points ================= */
 globalThis.init = function () {
+    // The host ticks ui.js (and flushes the SPI display) at 133Hz by default;
+    // that per-tick work on the audio cores preempts scsynth -> JACK XRuns
+    // (clicks/pops). 30Hz is plenty for the screen/LED feedback and gives the
+    // audio thread far more uninterrupted time.
+    if (typeof host_set_refresh_rate === 'function') host_set_refresh_rate(30);
     phase = 0; launched = false; lastStatusAt = -100;
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
     macroVal = new Array(8).fill(0); seq = 0; track3Held = false;
@@ -171,7 +176,7 @@ globalThis.tick = function () {
     }
     if (!launched) return;
 
-    if (phase - lastStatusAt >= 18) { readStatus(); lastStatusAt = phase; }
+    if (phase - lastStatusAt >= 6) { readStatus(); lastStatusAt = phase; }   /* ~5Hz at 30Hz refresh */
     if (ledDirty) renderLEDs();
     /* Expire a timed (macro) overlay -> revert to the idle screen once. */
     if (overlay && overlay.kind === 'macro' && phase >= overlayUntil) { overlay = null; screenDirty = true; }

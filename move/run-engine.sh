@@ -18,7 +18,9 @@ export SC_PLUGIN_PATH=$WR/plugins              # UGen plugins (backup to wr-boot
 # Engine config (44.1k = the Move shadow rate; mono-in/stereo-out).
 export ATELIER_SR=44100
 export ATELIER_CHANNELS=2
-export ATELIER_BLOCK=64
+export ATELIER_BLOCK=128            # match the shadow JACK period (128) -> one
+                                   # control block per audio callback = less
+                                   # per-cycle overhead (fewer XRuns)
 # Telemetry / handshake target = the local headless controller.
 export CONTROLLER_HOST=127.0.0.1
 export CONTROLLER_PORT=57140

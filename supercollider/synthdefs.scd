@@ -807,11 +807,10 @@
 	SynthDef(("analysis" ++ suf).asSymbol, { |in = 0|
 		var sig = In.ar(in, nchan);
 		var mono = Mix(sig) / nchan;
-		var chain = FFT(LocalBuf(2048), mono);
+		// Move takeover: dropped the continuous FFT(2048)+SpecCentroid+SpecFlatness
+		// (big scsynth CPU on the CM4 -> JACK XRuns; unused by the Move UI).
 		var rms = Amplitude.kr(mono);
-		var centroid = SpecCentroid.kr(chain).explin(20, 20000, 0, 1);
-		var flatness = SpecFlatness.kr(chain);
-		SendReply.kr(Impulse.kr(20), '/atelier/meters', Amplitude.kr(sig));
-		SendReply.kr(Impulse.kr(15), '/atelier/analysisRaw', [rms, centroid, flatness]);
+		SendReply.kr(Impulse.kr(12), '/atelier/meters', Amplitude.kr(sig));
+		SendReply.kr(Impulse.kr(8), '/atelier/analysisRaw', [rms, 0, 0]);
 	}).add;
 };
