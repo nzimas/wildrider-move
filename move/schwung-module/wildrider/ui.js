@@ -63,6 +63,10 @@ let track3Held = false;
 let overlay = null;            /* {kind:'name'|'macro', ...} */
 let overlayUntil = -1;
 let ledDirty = true;
+let lastSig = '';              /* signature of the visible state (gates redraws) */
+let screenDirty = true;        /* redraw the screen only when this is set —
+                                  drawing every tick (133Hz) floods the SPI
+                                  display and XRuns the audio thread. */
 
 function sys(cmd) { if (typeof host_system_cmd === 'function') host_system_cmd(cmd); }
 function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
@@ -90,8 +94,13 @@ function readStatus() {
     if (!macrosSynced && Array.isArray(s.macros) && s.macros.length) {
         for (let i = 0; i < 8 && i < s.macros.length; i++) macroVal[i] = s.macros[i].val || 0;
         macrosSynced = true;
+        screenDirty = true;
     }
-    ledDirty = true;
+    /* Only mark dirty when the VISIBLE state changed (not cpu/meter jitter), so
+     * an idle patch causes ZERO LED/SPI traffic — that traffic XRuns audio. */
+    var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
+        return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',');
+    if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
 }
 
 /* ---- LEDs ---- */
@@ -110,9 +119,9 @@ function renderLEDs() {
 /* ---- screen ----
  * Name overlay is HELD: shown from pad-down until pad-up (overlayUntil = +inf,
  * cleared on release). Macro overlay is timed. */
-function showName(g) { overlay = { kind: 'name', type: g.type, cat: g.cat, on: g.on }; overlayUntil = 1e12; }
-function clearName() { if (overlay && overlay.kind === 'name') { overlay = null; } }
-function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phase + 30; }
+function showName(g) { overlay = { kind: 'name', type: g.type, cat: g.cat, on: g.on }; overlayUntil = 1e12; screenDirty = true; }
+function clearName() { if (overlay && overlay.kind === 'name') { overlay = null; screenDirty = true; } }
+function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phase + 30; screenDirty = true; }
 
 function drawScreen() {
     if (typeof clear_screen !== 'function' || typeof print !== 'function') return;
@@ -142,7 +151,7 @@ globalThis.init = function () {
     phase = 0; launched = false; lastStatusAt = -100;
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
     macroVal = new Array(8).fill(0); seq = 0; track3Held = false;
-    overlay = null; overlayUntil = -1; ledDirty = true;
+    overlay = null; overlayUntil = -1; ledDirty = true; screenDirty = true;
 };
 
 globalThis.tick = function () {
@@ -164,7 +173,11 @@ globalThis.tick = function () {
 
     if (phase - lastStatusAt >= 18) { readStatus(); lastStatusAt = phase; }
     if (ledDirty) renderLEDs();
-    drawScreen();
+    /* Expire a timed (macro) overlay -> revert to the idle screen once. */
+    if (overlay && overlay.kind === 'macro' && phase >= overlayUntil) { overlay = null; screenDirty = true; }
+    /* Redraw ONLY when something changed (or a macro slider is live), so the
+     * SPI display isn't flushed 133x/s — that contention was XRunning audio. */
+    if (screenDirty) { drawScreen(); screenDirty = false; }
 };
 
 globalThis.onMidiMessageInternal = function (data) {
