@@ -338,6 +338,8 @@
 		~modules.do { |info| info[\nodes].do { |syn| syn.set(\amp, 0) } };
 		"PANIC".postln;
 	}, '/atelier/panic'),
+	// Master makeup gain (the Move's main volume knob when no pad is held).
+	OSCdef(\mastergain, { |m| ~masterSynth.notNil.if { ~masterSynth.set(\gain, m[1]) } }, '/atelier/mastergain'),
 	OSCdef(\spatial, { |m| /* channel changes require rebuild on next boot */ }, '/atelier/spatial'),
 	OSCdef(\reseed, { |m| /* seeds live in the controller; nothing server-side */ }, '/atelier/reseed'),
 	// Only confirm readiness once the boot block has actually finished (buses +

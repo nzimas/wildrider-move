@@ -202,6 +202,15 @@ class HeadlessController:
         m.bypass = not m.bypass
         self.state.bridge.module_bypass(mid, m.bypass)
 
+    def set_pad_level(self, pad: int, level: float) -> None:
+        """Set the audio level (the module synth's `amp` arg) of the module at a
+        pad. Every module synthdef has an `amp` arg; the engine .set's it on all
+        the module's nodes (node -1)."""
+        mid = self._pad_to_mid(pad)
+        if not mid:
+            return
+        self.state.bridge.set_param(mid, "amp", -1, max(0.0, min(2.0, float(level))))
+
     def delete_pad(self, pad: int) -> None:
         """Track3 + pad: remove the module at that pad; its cell clears."""
         mid = self._pad_to_mid(pad)
@@ -272,6 +281,8 @@ class HeadlessController:
         period = 1.0 / max(10.0, CONTROL_HZ)
         last_seq = -1
         last_macros = [None] * 8
+        last_level = None
+        last_gain = None
         while not self._stop.is_set():
             time.sleep(period)
             try:
@@ -291,6 +302,24 @@ class HeadlessController:
                         last_macros[i] = fv
                         self._safe(lambda i=i, fv=fv:
                                    self.state.set_macro(f"macro_{i + 1}", fv))
+            # Per-module level: hold a pad + main knob -> that module's amp.
+            lvl = doc.get("level")
+            if isinstance(lvl, dict):
+                key = (lvl.get("pad"), round(float(lvl.get("val", 1.0)), 3))
+                if key != last_level:
+                    last_level = key
+                    self._safe(lambda p=lvl.get("pad"), v=lvl.get("val"):
+                               self.set_pad_level(int(p), float(v)))
+            # Master gain: main knob with no pad held -> the engine makeup gain.
+            mg = doc.get("mastergain")
+            if mg is not None:
+                try:
+                    mgf = round(float(mg), 3)
+                except (TypeError, ValueError):
+                    mgf = None
+                if mgf is not None and mgf != last_gain:
+                    last_gain = mgf
+                    self._safe(lambda v=mgf: self.bridge.send("/atelier/mastergain", v))
             seq = doc.get("seq")
             if isinstance(seq, int) and seq != last_seq:
                 last_seq = seq

@@ -17,7 +17,7 @@
 import {
     Black, BrightGreen, ForestGreen, AzureBlue, RoyalBlue,
     ElectricViolet, Violet, VividYellow, Mustard, White,
-    MoveShift, MoveBack, MoveKnob1, MoveKnob8,
+    MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveMaster,
     MoveRow1, MoveRow2, MoveRow3
 } from '/data/UserData/move-anything/shared/constants.mjs';
 import { setLED, decodeDelta } from '/data/UserData/move-anything/shared/input_filter.mjs';
@@ -60,8 +60,11 @@ let macroVal = new Array(8).fill(0);
 let macrosSynced = false;
 let seq = 0, lastCmd = '', lastArg = -1;
 let track3Held = false;
-let heldCell = -1, heldStart = 0, heldNameShown = false;   /* pad press tracking */
+let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
+let levels = {};               /* cell -> module audio level (amp), default 1.0 */
+let masterGain = 6;            /* engine master makeup gain (main knob, no pad) */
+let lastLevel = null;          /* {pad,val} last module-level change, for control.json */
 let overlay = null;            /* {kind:'name'|'macro', ...} */
 let overlayUntil = -1;
 let ledDirty = true;
@@ -75,7 +78,8 @@ function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
 
 function writeControl() {
     if (typeof host_write_file !== 'function') return;
-    const doc = { seq: seq, cmd: lastCmd, arg: lastArg, macros: macroVal };
+    const doc = { seq: seq, cmd: lastCmd, arg: lastArg, macros: macroVal, mastergain: masterGain };
+    if (lastLevel) doc.level = lastLevel;
     host_write_file(CONTROL_FILE, JSON.stringify(doc));
 }
 function sendCmd(cmd, arg) { seq++; lastCmd = cmd; lastArg = arg; writeControl(); }
@@ -122,8 +126,15 @@ function renderLEDs() {
  * Name overlay is HELD: shown from pad-down until pad-up (overlayUntil = +inf,
  * cleared on release). Macro overlay is timed. */
 function showName(g) { overlay = { kind: 'name', type: g.type, cat: g.cat, on: g.on }; overlayUntil = 1e12; screenDirty = true; }
-function clearName() { if (overlay && overlay.kind === 'name') { overlay = null; screenDirty = true; } }
+function showLevel(g, v) { overlay = { kind: 'level', type: g.type, val: v }; overlayUntil = 1e12; screenDirty = true; }   /* held while pad down */
+function clearHeld() { if (overlay && (overlay.kind === 'name' || overlay.kind === 'level')) { overlay = null; screenDirty = true; } }
 function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phase + 30; screenDirty = true; }
+function showVol(v) { overlay = { kind: 'vol', val: v }; overlayUntil = phase + 30; screenDirty = true; }
+
+function bar(frac) {   /* draw a 0..1 bar */
+    if (typeof draw_rect === 'function') draw_rect(6, 34, 116, 14, 1);
+    if (typeof fill_rect === 'function') fill_rect(8, 36, Math.max(0, Math.round(frac * 112)), 10, 1);
+}
 
 function drawScreen() {
     if (typeof clear_screen !== 'function' || typeof print !== 'function') return;
@@ -132,12 +143,17 @@ function drawScreen() {
         if (overlay.kind === 'name') {
             print(0, 8, overlay.type, 2);
             print(0, 40, overlay.cat.toUpperCase() + (overlay.on ? '  ON' : '  OFF'), 1);
+        } else if (overlay.kind === 'level') {
+            print(0, 6, overlay.type, 2);
+            print(0, 22, 'LEVEL', 1);
+            bar(overlay.val / 2);
+        } else if (overlay.kind === 'vol') {
+            print(0, 6, 'VOLUME', 2);
+            bar(overlay.val / 12);
         } else {
             const i = overlay.idx;
             print(0, 6, 'M' + (i + 1), 2);
-            const w = Math.round(macroVal[i] * 112);
-            if (typeof draw_rect === 'function') draw_rect(6, 34, 116, 14, 1);
-            if (typeof fill_rect === 'function') fill_rect(8, 36, Math.max(0, w), 10, 1);
+            bar(macroVal[i]);
         }
         return;
     }
@@ -158,7 +174,8 @@ globalThis.init = function () {
     phase = 0; launched = false; lastStatusAt = -100;
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
     macroVal = new Array(8).fill(0); seq = 0; track3Held = false;
-    heldCell = -1; heldStart = 0; heldNameShown = false;
+    heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
+    levels = {}; masterGain = 6; lastLevel = null;
     overlay = null; overlayUntil = -1; ledDirty = true; screenDirty = true;
 };
 
@@ -180,14 +197,15 @@ globalThis.tick = function () {
     if (!launched) return;
 
     if (phase - lastStatusAt >= 6) { readStatus(); lastStatusAt = phase; }   /* ~5Hz at 30Hz refresh */
-    /* Long-press crossed the threshold: reveal the module name (no toggle). */
-    if (heldCell >= 0 && !heldNameShown && (Date.now() - heldStart) >= LONG_PRESS_MS) {
+    /* Long-press crossed the threshold: reveal the module name (no toggle).
+     * Skip if the level was already being shown (master knob turned while held). */
+    if (heldCell >= 0 && !heldNameShown && !heldAdjusted && (Date.now() - heldStart) >= LONG_PRESS_MS) {
         const g = cellMap[heldCell];
         if (g) { showName(g); heldNameShown = true; }
     }
     if (ledDirty) renderLEDs();
-    /* Expire a timed (macro) overlay -> revert to the idle screen once. */
-    if (overlay && overlay.kind === 'macro' && phase >= overlayUntil) { overlay = null; screenDirty = true; }
+    /* Expire a timed overlay (macro / volume) -> revert to the idle screen once. */
+    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'vol') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
     /* Redraw ONLY when something changed (or a macro slider is live), so the
      * SPI display isn't flushed 133x/s — that contention was XRunning audio. */
     if (screenDirty) { drawScreen(); screenDirty = false; }
@@ -206,20 +224,22 @@ globalThis.onMidiMessageInternal = function (data) {
         const g = cellMap[cell];
         if (g === undefined || g === null) return;   /* empty pad */
         if (track3Held) { sendCmd('delete', cell); return; }   /* delete: immediate */
-        heldCell = cell; heldStart = Date.now(); heldNameShown = false;
+        heldCell = cell; heldStart = Date.now(); heldNameShown = false; heldAdjusted = false;
         return;
     }
-    /* Pad UP: short tap -> toggle; long hold -> nothing (name was just shown). */
+    /* Pad UP: short tap (and no name/level interaction) -> toggle; otherwise the
+     * hold was for showing the name / adjusting the level, so don't toggle. */
     if (status === 0x80 || (status === 0x90 && d2 === 0)) {
         if (d1 >= 68 && d1 <= 99) {
             const cell = NOTE_TO_CELL[d1];
             if (heldCell === cell) {
-                if ((Date.now() - heldStart) < LONG_PRESS_MS) {
+                const shortTap = (Date.now() - heldStart) < LONG_PRESS_MS;
+                if (shortTap && !heldNameShown && !heldAdjusted) {
                     const g = cellMap[cell];
                     if (g) { g.on = !g.on; ledDirty = true; sendCmd('toggle', cell); }
                 }
-                if (heldNameShown) clearName();
-                heldCell = -1; heldNameShown = false;
+                clearHeld();
+                heldCell = -1; heldNameShown = false; heldAdjusted = false;
             }
         }
         return;
@@ -228,9 +248,29 @@ globalThis.onMidiMessageInternal = function (data) {
     if (status === 0xB0) {
         if (d1 === MoveBack && d2 > 0) { if (typeof host_exit_module === 'function') host_exit_module(); return; }
         if (d1 === MoveShift) { return; }
-        if (d1 === MoveRow1 && d2 > 0) { macrosSynced = false; sendCmd('newpatch', -1); return; }
+        if (d1 === MoveRow1 && d2 > 0) { macrosSynced = false; levels = {}; lastLevel = null; sendCmd('newpatch', -1); return; }
         if (d1 === MoveRow2 && d2 > 0) { sendCmd('rewire', -1); return; }
         if (d1 === MoveRow3) { track3Held = d2 > 0; return; }
+        /* Main volume knob: while a pad is held -> that module's level (amp);
+         * otherwise -> the engine master gain (overall volume). */
+        if (d1 === MoveMaster) {
+            const delta = decodeDelta(d2);
+            if (delta === 0) return;
+            if (heldCell >= 0) {
+                const c = heldCell;
+                if (levels[c] === undefined) levels[c] = 1.0;
+                levels[c] = Math.max(0, Math.min(2, levels[c] + delta * 0.03));
+                lastLevel = { pad: c, val: levels[c] };
+                heldAdjusted = true;
+                writeControl();
+                if (cellMap[c]) showLevel(cellMap[c], levels[c]);
+            } else {
+                masterGain = Math.max(0, Math.min(12, masterGain + delta * 0.3));
+                writeControl();
+                showVol(masterGain);
+            }
+            return;
+        }
         if (d1 >= MoveKnob1 && d1 <= MoveKnob8) {
             const i = d1 - MoveKnob1;
             const delta = decodeDelta(d2);

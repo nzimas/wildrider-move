@@ -15,6 +15,7 @@
         "audio_in": true,
         "midi_in": true,
         "midi_out": false,
-        "aftertouch": true
+        "aftertouch": true,
+        "claims_master_knob": true
     }
 }
