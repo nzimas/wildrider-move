@@ -69,6 +69,7 @@ class HeadlessController:
         self._built = threading.Event()
         self._ctrl_server = None
         self._pad_map: dict = {}        # module id -> stable pad cell (0-31)
+        self._style = ARTISTS[0]        # current patch's artist (for LFO re-rand)
 
     # -- lifecycle --------------------------------------------------------- #
     def start(self) -> None:
@@ -76,6 +77,8 @@ class HeadlessController:
         self.bridge.start()
         self.state.init_default()
         self._gen_macros()              # every patch loads 8 macros (incl. startup)
+        self._style = self.state.rng.choice(ARTISTS)
+        self.state.init_global_lfos(self._style)   # 16 LFOs, randomized, off
         # Build the DSP graph only once the engine signals readiness. The engine
         # sets ~masterBus etc. at the *end* of its async boot block and then
         # sends /atelier/ready; building before that races (nil bus -> errors).
@@ -175,11 +178,30 @@ class HeadlessController:
 
     # -- patch / grid / macros (the Move canvas model) --------------------- #
     def new_patch(self) -> None:
-        """Track 1: generate a fresh guided artist-inspired patch + 8 macros."""
-        style = self.state.rng.choice(ARTISTS)
-        self.state.random_patch(style=style)
+        """Track 1: generate a fresh guided artist-inspired patch + 8 macros +
+        16 global LFOs (randomized but off)."""
+        self._style = self.state.rng.choice(ARTISTS)
+        self.state.random_patch(style=self._style)
+        self.state.init_global_lfos(self._style)
         self._gen_macros()
         self._pad_map = {}              # reflow the grid for the new module set
+
+    def toggle_lfo(self, i: int) -> None:
+        if 0 <= i < 16:
+            lid = f"lfo{i + 1}"
+            rt = self.state.mod.routes.get(f"{lid}_rt")
+            self.state.set_lfo_enabled(lid, not (rt and rt.enable))
+
+    def rerandomize_lfo(self, i: int) -> None:
+        if 0 <= i < 16:
+            self.state.rerandomize_lfo(f"lfo{i + 1}", self._style)
+
+    def _lfos_status(self) -> list:
+        out = []
+        for i in range(16):
+            rt = self.state.mod.routes.get(f"lfo{i + 1}_rt")
+            out.append(bool(rt and rt.enable))
+        return out
 
     def _gen_macros(self) -> None:
         """Every patch loads 8 macros, each with 1-5 random destinations and a
@@ -336,6 +358,10 @@ class HeadlessController:
             self._safe(lambda: self.toggle_pad(arg))
         elif cmd == "delete":
             self._safe(lambda: self.delete_pad(arg))
+        elif cmd == "lfotoggle":
+            self._safe(lambda: self.toggle_lfo(arg))
+        elif cmd == "lforand":
+            self._safe(lambda: self.rerandomize_lfo(arg))
         elif cmd == "panic":
             self._safe(getattr(self.state, "panic", None) or self.bridge.panic)
 
@@ -368,6 +394,7 @@ class HeadlessController:
                 "meters": [round(m, 3) for m in (self.bridge.meters or [])[:2]],
                 "grid": self._grid(),       # pad cell -> {type, cat, on}
                 "macros": self._macros_status(),
+                "lfos": self._lfos_status(),   # 16 bools: step-button LFO on/off
             }
             tmp = STATUS_FILE.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(status, separators=(",", ":")))

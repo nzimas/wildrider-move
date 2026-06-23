@@ -613,6 +613,52 @@ class StateManager:
                          depth=self.rng.uniform(0.25, 0.9), target=f"{mid}|{pid}")
         self._notify({"type": "lfos_randomized"})
 
+    # -- Move global-LFO bank (16 step buttons) ---------------------------- #
+    def _rand_one_lfo(self, lid: str, style: str | None = None) -> None:
+        """Randomize one LFO's shape/rate/depth/target. Artist-aware when a style
+        is given (rate band, shapes, role-appropriate destinations)."""
+        targets = self.all_mod_targets()
+        if not targets:
+            return
+        prof = aesthetics.LFO_PROFILE.get(style) if style else None
+        if prof:
+            shape = self.rng.choice(prof["shapes"])
+            rate = aesthetics._logrand(self.rng, *prof["rate"])
+            depth = self.rng.uniform(*prof["depth"])
+            roles = prof.get("roles", set())
+            pref = [(m, p) for (m, p, role) in self._classified_mod_targets() if role in roles]
+            mid, pid = self.rng.choice(pref) if pref else self.rng.choice(targets)
+        else:
+            shape = self.rng.choice(["sine", "triangle", "sh"])
+            rate = 0.03 * ((4.0 / 0.03) ** self.rng.random())
+            depth = self.rng.uniform(0.25, 0.9)
+            mid, pid = self.rng.choice(targets)
+        self.set_lfo(lid, shape=shape, rate=rate, depth=depth, target=f"{mid}|{pid}")
+
+    def init_global_lfos(self, style: str | None = None, n: int = 16) -> None:
+        """Every patch loads `n` global LFOs: randomized but OFF (disabled). The
+        Move's 16 step buttons toggle them on; shift+button re-randomizes one."""
+        self.ensure_lfos(n)
+        for lid in self.lfo_ids()[:n]:
+            self._rand_one_lfo(lid, style)
+            rt = self.mod.routes.get(f"{lid}_rt")
+            if rt:
+                rt.enable = False
+        self._notify({"type": "lfos_randomized"})
+
+    def set_lfo_enabled(self, lid: str, on: bool) -> bool:
+        rt = self.mod.routes.get(f"{lid}_rt")
+        if not rt:
+            return False
+        rt.enable = bool(on)
+        self._notify({"type": "lfo_set", "id": lid})
+        return rt.enable
+
+    def rerandomize_lfo(self, lid: str, style: str | None = None) -> None:
+        """Re-randomize one LFO, preserving its on/off state (set_lfo keeps the
+        existing route's enable flag)."""
+        self._rand_one_lfo(lid, style)
+
     # ------------------------------------------------------------------ #
     # Scenes (performance snapshots: modules + params + LFOs).
     # ------------------------------------------------------------------ #

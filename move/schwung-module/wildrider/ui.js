@@ -60,6 +60,10 @@ let macroVal = new Array(8).fill(0);
 let macrosSynced = false;
 let seq = 0, lastCmd = '', lastArg = -1;
 let track3Held = false;
+let shiftHeld = false;
+let lfoStates = new Array(16).fill(false);   /* 16 step-button global LFOs on/off */
+const STEP_BASE = 16;          /* step buttons = MIDI notes 16..31 */
+const LFO_ON_COLOR = VividYellow;
 let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
 let levels = {};               /* cell -> module audio level (amp), default 1.0 */
@@ -102,10 +106,11 @@ function readStatus() {
         macrosSynced = true;
         screenDirty = true;
     }
+    if (Array.isArray(s.lfos)) { for (var li = 0; li < 16; li++) lfoStates[li] = !!s.lfos[li]; }
     /* Only mark dirty when the VISIBLE state changed (not cpu/meter jitter), so
      * an idle patch causes ZERO LED/SPI traffic — that traffic XRuns audio. */
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
-        return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',');
+        return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('');
     if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
 }
 
@@ -119,6 +124,10 @@ function renderLEDs() {
         }
         setLED(PAD_NOTES[cell], color);
     }
+    /* 16 step buttons (notes 16..31) = global LFO toggles: lit when enabled. */
+    for (let i = 0; i < 16; i++) {
+        setLED(STEP_BASE + i, lfoStates[i] ? LFO_ON_COLOR : Black);
+    }
     ledDirty = false;
 }
 
@@ -130,6 +139,7 @@ function showLevel(g, v) { overlay = { kind: 'level', type: g.type, val: v }; ov
 function clearHeld() { if (overlay && (overlay.kind === 'name' || overlay.kind === 'level')) { overlay = null; screenDirty = true; } }
 function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phase + 30; screenDirty = true; }
 function showVol(v) { overlay = { kind: 'vol', val: v }; overlayUntil = phase + 30; screenDirty = true; }
+function showLfo(i, label) { overlay = { kind: 'lfo', idx: i, label: label }; overlayUntil = phase + 24; screenDirty = true; }
 
 function bar(frac) {   /* draw a 0..1 bar */
     if (typeof draw_rect === 'function') draw_rect(6, 34, 116, 14, 1);
@@ -150,6 +160,9 @@ function drawScreen() {
         } else if (overlay.kind === 'vol') {
             print(0, 6, 'VOLUME', 2);
             bar(overlay.val / 12);
+        } else if (overlay.kind === 'lfo') {
+            print(0, 8, 'LFO ' + (overlay.idx + 1), 2);
+            print(0, 40, overlay.label, 1);
         } else {
             const i = overlay.idx;
             print(0, 6, 'M' + (i + 1), 2);
@@ -173,7 +186,8 @@ globalThis.init = function () {
     if (typeof host_set_refresh_rate === 'function') host_set_refresh_rate(30);
     phase = 0; launched = false; lastStatusAt = -100;
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
-    macroVal = new Array(8).fill(0); seq = 0; track3Held = false;
+    macroVal = new Array(8).fill(0); seq = 0; track3Held = false; shiftHeld = false;
+    lfoStates = new Array(16).fill(false);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
     levels = {}; masterGain = 6; lastLevel = null;
     overlay = null; overlayUntil = -1; ledDirty = true; screenDirty = true;
@@ -205,7 +219,7 @@ globalThis.tick = function () {
     }
     if (ledDirty) renderLEDs();
     /* Expire a timed overlay (macro / volume) -> revert to the idle screen once. */
-    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'vol') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
+    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'vol' || overlay.kind === 'lfo') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
     /* Redraw ONLY when something changed (or a macro slider is live), so the
      * SPI display isn't flushed 133x/s — that contention was XRunning audio. */
     if (screenDirty) { drawScreen(); screenDirty = false; }
@@ -215,6 +229,23 @@ globalThis.onMidiMessageInternal = function (data) {
     const status = data[0] & 0xF0;
     const d1 = data[1];
     const d2 = data[2];
+
+    /* Step buttons (notes 16..31) = the 16 global LFOs. Press toggles on/off;
+     * Shift+press re-randomizes that one LFO (keeping its on/off state). */
+    if (status === 0x90 && d2 > 0 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {
+        const i = d1 - STEP_BASE;
+        if (shiftHeld) {
+            sendCmd('lforand', i);
+            showLfo(i, 'RND');
+        } else {
+            lfoStates[i] = !lfoStates[i];        /* optimistic */
+            ledDirty = true;
+            sendCmd('lfotoggle', i);
+            showLfo(i, lfoStates[i] ? 'ON' : 'OFF');
+        }
+        return;
+    }
+    if (status === 0x80 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) return;  /* step release */
 
     /* Pad DOWN (note-on, velocity>0): start tracking the press. We decide on
      * RELEASE — a short tap toggles on/off; a long hold shows the module name
@@ -247,7 +278,7 @@ globalThis.onMidiMessageInternal = function (data) {
 
     if (status === 0xB0) {
         if (d1 === MoveBack && d2 > 0) { if (typeof host_exit_module === 'function') host_exit_module(); return; }
-        if (d1 === MoveShift) { return; }
+        if (d1 === MoveShift) { shiftHeld = d2 > 0; return; }
         if (d1 === MoveRow1 && d2 > 0) { macrosSynced = false; levels = {}; lastLevel = null; sendCmd('newpatch', -1); return; }
         if (d1 === MoveRow2 && d2 > 0) { sendCmd('rewire', -1); return; }
         if (d1 === MoveRow3) { track3Held = d2 > 0; return; }
