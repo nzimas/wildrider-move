@@ -137,6 +137,24 @@ for pass in 1 2 3 4 5 6; do
     [ "$before" = "$after" ] && break
 done
 
+# --- bake $ORIGIN-relative RPATH (for capability/secure-exec) ---------------
+# scsynth needs cap_sys_nice for real-time audio (no clicks), but a file with
+# capabilities runs in secure-execution mode where the loader IGNORES
+# LD_LIBRARY_PATH *and* refuses to expand $ORIGIN in RPATH. So bake an ABSOLUTE
+# DT_RPATH to the on-device lib dir (the bundle always deploys to $DEV). This is
+# honoured in secure mode; the bundle is no longer relocatable, which is fine.
+if command -v patchelf >/dev/null 2>&1; then
+    RP="$DEV/lib"
+    # Binaries also need libjack.so.0, which lives in the device's RNBO lib dir
+    # (we deliberately don't bundle it — see exclude_lib). Add it to their RPATH.
+    RP_BIN="$DEV/lib:/data/UserData/rnbo/lib"
+    patchelf --force-rpath --set-rpath "$RP_BIN" "$BUNDLE/bin/scsynth" "$BUNDLE/bin/sclang" 2>/dev/null || true
+    for f in "$BUNDLE"/plugins/*.so "$BUNDLE"/plugins/*.scx "$BUNDLE"/lib/*.so*; do
+        [ -e "$f" ] && patchelf --force-rpath --set-rpath "$RP" "$f" 2>/dev/null || true
+    done
+    echo "patched absolute RPATH on bin ($RP_BIN) + plugins/libs ($RP)"
+fi
+
 # --- manifest --------------------------------------------------------------
 {
     echo "# Wildrider-Move scsynth bundle"

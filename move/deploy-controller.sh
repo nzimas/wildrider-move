@@ -25,4 +25,7 @@ echo "-> launch scripts"
 scp "$HERE/run-engine.sh" "$HERE/run-controller.sh" "$HERE/run-stack.sh" "root@$HOST:$DEST/"
 ssh "root@$HOST" "chmod +x $DEST/run-engine.sh $DEST/run-controller.sh $DEST/run-stack.sh"
 ssh "root@$HOST" "chown -R ableton:users $DEST"
+# chown clears file capabilities — re-grant scsynth's RT caps AFTER it (this
+# script is typically run after deploy.sh, so it must have the last word).
+ssh "root@$HOST" "setcap cap_ipc_lock,cap_sys_nice,cap_sys_resource=eip $DEST/bin/scsynth 2>/dev/null; getcap $DEST/bin/scsynth"
 echo "Done."

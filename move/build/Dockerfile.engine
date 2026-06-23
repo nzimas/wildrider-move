@@ -53,7 +53,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # sc3-plugins (.so) from apt are SC plugin-API compatible and load on our
 # source-built scsynth; libsndfile1 + file are needed at assembly time.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        sc3-plugins libsndfile1 file \
+        sc3-plugins libsndfile1 file patchelf \
     && rm -rf /var/lib/apt/lists/*
 # Drop the Qt-less SC install into place (so command -v sclang/scsynth works
 # and the SCClassLibrary + plugins land under /usr/local).
