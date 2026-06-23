@@ -1290,6 +1290,34 @@ class StateManager:
             for u in self.rng.sample(cands, min(k, len(cands))):
                 self.patch.add_connection(u, mid)
 
+    def _wire_guided(self, ids: list[str]) -> None:
+        """Deliberate signal flow: the pure generators (heads) sum once into an
+        ordered serial effect chain, whose end is the single terminal -> master.
+        This reads like a real processing chain (tone -> dirt -> modulation ->
+        pitch/texture -> time -> space) instead of random parallel summing, which
+        is the main cause of cacophony and of an aesthetic never coming through."""
+        heads = [mid for mid in ids if not self.patch.can_input(mid)]   # pure sources
+        chain = [mid for mid in ids if self.patch.can_input(mid)]       # effects (+RINGS/FBANK)
+        if not heads:
+            # No pure generator picked (e.g. only RINGS/FBANK): promote one
+            # generative chain module to be the self-oscillating head.
+            gen = next((mid for mid in chain
+                        if self.patch.modules[mid].spec.generative_capable), None)
+            if gen is not None:
+                heads = [gen]
+                chain = [m for m in chain if m != gen]
+            elif chain:
+                heads, chain = [chain[0]], chain[1:]
+        # order the effect chain by canonical signal flow (light jitter within a tier)
+        chain.sort(key=lambda mid: (aesthetics.chain_rank(self.patch.modules[mid].type),
+                                    self.rng.random()))
+        if chain:
+            for h in heads:
+                self.patch.add_connection(h, chain[0])
+            for a, b in zip(chain, chain[1:]):
+                self.patch.add_connection(a, b)
+        # else: the few heads are the terminals and sum straight to master
+
     def random_patch(self, amount: float | None = None, style: str | None = None) -> None:
         """Patch scope: rewire a fresh legal graph AND generate all params (Free
         randomization, or Guided in the chosen artist's aesthetic)."""
@@ -1305,11 +1333,11 @@ class StateManager:
         if guided:
             chosen = aesthetics.pick_modules(rng, style) or []
         if not chosen:
-            n = rng.randint(4, 8)
+            n = rng.randint(4, 10)
             used: dict[str, int] = {}
 
             def take(t: str) -> None:
-                if used.get(t, 0) < 2 and len(chosen) < 8:    # never >8 total, none >2x
+                if used.get(t, 0) < 2 and len(chosen) < 16:    # never >16 total, none >2x
                     chosen.append(t)
                     used[t] = used.get(t, 0) + 1
 
@@ -1323,7 +1351,7 @@ class StateManager:
         # detuned voices = denser/cacophonic); Free stays adventurous.
         node_opts = [1, 1, 1, 2] if guided else [1, 1, 2, 3]
         ids = [self.add_module(t, node_count=rng.choice(node_opts)).id for t in chosen]
-        self._wire_random(ids)
+        self._wire_guided(ids) if guided else self._wire_random(ids)
         if guided:
             self._apply_style(None, style, self.patch.expert_override)
             self._apply_guided_lfos(style)      # motion (rhythm comes from GATE modules)
@@ -1343,7 +1371,7 @@ class StateManager:
         if not ids:
             return
         self.patch.connections.clear()       # keep modules + params; drop only wiring
-        self._wire_random(ids)
+        self._wire_guided(ids)               # deliberate signal chain (not spaghetti)
         self._resync_all()
         self._sync_graph()
         self._notify({"type": "patch_replaced"})

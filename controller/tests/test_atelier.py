@@ -188,7 +188,7 @@ def test_random_patch_within_limits():
         st.reseed(seed)
         st.random_patch()
         mods = st.patch.modules
-        assert 1 <= len(mods) <= 8                       # never more than 8
+        assert 1 <= len(mods) <= 16                      # Move fork: up to 16
         assert all(v <= 2 for v in Counter(m.type for m in mods.values()).values())  # none >2x
         assert set(st.patch.topo_order()) == set(mods)   # every module ordered (no orphans)
         assert any(mods[m].spec.generative_capable for m in mods)   # has a sound source

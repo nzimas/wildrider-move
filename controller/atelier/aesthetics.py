@@ -287,27 +287,27 @@ MODULE_PALETTE: dict[str, dict] = {
     "vidna_obmana": {  # immersive ambient — one or two warm voices bathed in space
         "sources": {"DX7": 3, "PLAITS": 2, "RINGS": 1, "MOLLY": 1},
         "effects": {"VERB": 3, "CLOUDS": 3, "GRAINS": 2, "SDLY": 2, "COMB": 1, "FBANK": 1, "PITCH": 1},
-        "sources_count": (1, 2), "count": (4, 5), "require": ["VERB", "CLOUDS"],
+        "sources_count": (1, 2), "count": (7, 12), "require": ["VERB", "CLOUDS"],
     },
     "lustmord": {  # dark ambient — a single deep drone in a cavern
         "sources": {"DX7": 3, "BUCHLOID": 1, "PLAITS": 1, "MOLLY": 1},
         "effects": {"VERB": 4, "COMB": 2, "FBANK": 1, "SDLY": 1, "PITCH": 1},
-        "sources_count": (1, 1), "count": (3, 4), "require": ["VERB"],
+        "sources_count": (1, 1), "count": (6, 10), "require": ["VERB"],
     },
     "bernard_parmegiani": {  # musique concrète — one voice, transformed in space
         "sources": {"PLAITS": 2, "RINGS": 2, "DX7": 2, "BUCHLOID": 1, "MOLLY": 1},
         "effects": {"PITCH": 3, "TIME": 3, "COMB": 2, "VERB": 2, "CLOUDS": 2, "GRAINS": 2, "SDLY": 2, "FBANK": 1, "GATE": 1},
-        "sources_count": (1, 2), "count": (4, 6), "require": ["TIME", "PITCH"],
+        "sources_count": (1, 2), "count": (8, 14), "require": ["TIME", "PITCH"],
     },
     "ben_frost": {  # abrasive — a voice driven hard, rhythmic gating, little reverb
         "sources": {"DX7": 3, "PLAITS": 2, "BUCHLOID": 1, "MOLLY": 2},
         "effects": {"DISTORT": 4, "GATE": 2, "COMB": 1, "FBANK": 1, "VERB": 1, "SDLY": 1},
-        "sources_count": (1, 2), "count": (4, 5), "require": ["DISTORT", "GATE"],
+        "sources_count": (1, 2), "count": (7, 12), "require": ["DISTORT", "GATE"],
     },
     "autechre": {  # algorithmic — one or two voices, fragmented, digital artefacts
         "sources": {"PLAITS": 3, "RINGS": 2, "DX7": 2, "MOLLY": 2},
         "effects": {"DISTORT": 2, "GATE": 3, "TIME": 2, "COMB": 2, "FBANK": 1, "SDLY": 2, "GRAINS": 2},
-        "sources_count": (1, 2), "count": (4, 6), "require": ["GATE"],
+        "sources_count": (1, 2), "count": (8, 14), "require": ["GATE"],
     },
 }
 
@@ -328,6 +328,24 @@ for _a, _fx in _PALETTE_FX.items():
 # and destabilise the patch. `routed` is the fraction of LFOs that get a target;
 # `roles` is curated to timbral/spatial motion (PITCH/LEVEL are excluded to avoid
 # atonal drift and pumping).
+# Canonical signal-flow order for a deliberate effect chain (low = early). The
+# guided wirer sorts a patch's effects by this so the processing reads like a
+# real chain (tone -> dirt -> modulation -> pitch/texture -> time -> space)
+# instead of random parallel summing, which is the main cause of cacophony.
+CHAIN_ORDER: dict[str, int] = {
+    "FBANK": 10, "EQUALIZER": 12, "COMB": 14,
+    "GATE": 20,
+    "DISTORT": 30, "OVERDRIVE": 31, "AMPSIM": 32,
+    "WAVEFOLDER": 33, "BITCRUSHER": 34, "LOFI": 35, "RINGMOD": 36,
+    "FLANGER": 40, "PHASER": 41, "TREMOLO": 42,
+    "PITCH": 50, "RINGS": 51, "CLOUDS": 52, "GRAINS": 53,
+    "SDLY": 60, "TIME": 62,
+    "VERB": 70,
+}
+def chain_rank(module_type: str) -> int:
+    return CHAIN_ORDER.get(module_type, 45)
+
+
 LFO_PROFILE: dict[str, dict] = {
     "vidna_obmana": {"count": 5, "rate": (0.01, 0.07), "depth": (0.08, 0.26),
                      "shapes": ["sine", "sine", "triangle"], "routed": 0.6,
