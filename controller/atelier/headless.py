@@ -77,10 +77,11 @@ class HeadlessController:
         SHARE.mkdir(parents=True, exist_ok=True)
         self._write_modules_list()
         self.bridge.start()
-        self.state.init_default()
-        self._gen_macros()              # every patch loads 8 macros (incl. startup)
+        # Start with an EMPTY canvas — no default patch. The user builds via Track1
+        # (new patch), CHAINS, or by pressing empty pads (grow). Macros + the 16
+        # LFOs are configured when a patch is actually created (they need modules to
+        # target), so don't init them here.
         self._style = self.state.rng.choice(ARTISTS)
-        self.state.init_global_lfos(self._style)   # 16 LFOs, randomized, off
         # Build the DSP graph only once the engine signals readiness. The engine
         # sets ~masterBus etc. at the *end* of its async boot block and then
         # sends /atelier/ready; building before that races (nil bus -> errors).

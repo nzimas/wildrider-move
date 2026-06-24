@@ -399,7 +399,11 @@ globalThis.onMidiMessageInternal = function (data) {
     }
 
     if (status === 0xB0) {
-        if (d1 === MoveBack && d2 > 0) { if (typeof host_exit_module === 'function') host_exit_module(); return; }
+        if (d1 === MoveBack && d2 > 0) {
+            sys('sh ' + WR + '/stop-stack.sh');   /* kill engine+controller so the next launch is fresh */
+            if (typeof host_exit_module === 'function') host_exit_module();
+            return;
+        }
         if (d1 === MoveShift) { shiftHeld = d2 > 0; return; }
         if (d1 === MoveRow1 && d2 > 0) {
             if (shiftHeld) { enterChains(); return; }          /* shift+Track1 = CHAINS builder */

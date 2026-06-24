@@ -22,8 +22,8 @@ tar -C "$ROOT/supercollider" -czf - boot.scd engine.scd synthdefs.scd dx7.scd DX
 tar -C "$HERE/sc" -czf - wr-boot.scd | ssh "root@$HOST" "tar -C $DEST/sc -xzf -"
 
 echo "-> launch scripts"
-scp "$HERE/run-engine.sh" "$HERE/run-controller.sh" "$HERE/run-stack.sh" "root@$HOST:$DEST/"
-ssh "root@$HOST" "chmod +x $DEST/run-engine.sh $DEST/run-controller.sh $DEST/run-stack.sh"
+scp "$HERE/run-engine.sh" "$HERE/run-controller.sh" "$HERE/run-stack.sh" "$HERE/stop-stack.sh" "root@$HOST:$DEST/"
+ssh "root@$HOST" "chmod +x $DEST/run-engine.sh $DEST/run-controller.sh $DEST/run-stack.sh $DEST/stop-stack.sh"
 ssh "root@$HOST" "chown -R ableton:users $DEST"
 # chown clears file capabilities — re-grant scsynth's RT caps AFTER it (this
 # script is typically run after deploy.sh, so it must have the last word).
