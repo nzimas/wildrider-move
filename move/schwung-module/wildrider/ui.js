@@ -17,7 +17,7 @@
 import {
     Black, BrightGreen, ForestGreen, AzureBlue, RoyalBlue,
     ElectricViolet, Violet, VividYellow, Mustard, White,
-    MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveMaster, MoveMasterTouch,
+    MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveMasterTouch,
     MoveMainKnob, MoveMainButton, MoveRow1, MoveRow2, MoveRow3
 } from '/data/UserData/move-anything/shared/constants.mjs';
 import { setLED, decodeDelta } from '/data/UserData/move-anything/shared/input_filter.mjs';
@@ -75,12 +75,9 @@ const LFO_ON_COLOR = VividYellow;
 let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
 let levels = {};               /* cell -> module audio level (amp), default 1.0 */
-let masterGain = 6;            /* engine master makeup gain (main knob, no pad) */
-/* The master knob targets EITHER a held module's level OR the global volume. We
- * latch that choice at the start of a knob "session" so releasing the pad
- * mid-turn never bleeds the turn into the global volume. null = no session,
- * -1 = global, >=0 = module cell. Reset on knob touch-release or when idle. */
-let volTarget = null, volKnobAt = 0;
+/* Per-module level is set with hold-pad + jog wheel. We latch the target cell so
+ * a pad released mid-turn keeps adjusting that module; reset when the jog idles. */
+let levelCell = -1, levelAt = 0;
 let lastLevel = null;          /* {pad,val} last module-level change, for control.json */
 let overlay = null;            /* {kind:'name'|'macro', ...} */
 let overlayUntil = -1;
@@ -95,7 +92,7 @@ function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
 
 function writeControl() {
     if (typeof host_write_file !== 'function') return;
-    const doc = { seq: seq, cmd: lastCmd, arg: lastArg, macros: macroVal, mastergain: masterGain };
+    const doc = { seq: seq, cmd: lastCmd, arg: lastArg, macros: macroVal };
     if (lastLevel) doc.level = lastLevel;
     host_write_file(CONTROL_FILE, JSON.stringify(doc));
 }
@@ -119,7 +116,7 @@ function chainsGenerate() {
     seq++; lastCmd = 'chainsgen'; lastArg = -1;
     if (typeof host_write_file === 'function') {
         host_write_file(CONTROL_FILE, JSON.stringify(
-            { seq: seq, cmd: 'chainsgen', arg: -1, macros: macroVal, mastergain: masterGain, chains: sel }));
+            { seq: seq, cmd: 'chainsgen', arg: -1, macros: macroVal, chains: sel }));
     }
     exitChains();
 }
@@ -230,7 +227,6 @@ function showName(g) { overlay = { kind: 'name', type: g.type, cat: g.cat, on: g
 function showLevel(g, v) { overlay = { kind: 'level', type: g.type, val: v }; overlayUntil = 1e12; screenDirty = true; }   /* held while pad down */
 function clearHeld() { if (overlay && (overlay.kind === 'name' || overlay.kind === 'level')) { overlay = null; screenDirty = true; } }
 function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phase + 30; screenDirty = true; }
-function showVol(v) { overlay = { kind: 'vol', val: v }; overlayUntil = phase + 30; screenDirty = true; }
 function showLfo(i, label) { overlay = { kind: 'lfo', idx: i, label: label }; overlayUntil = phase + 24; screenDirty = true; }
 function showAction(label) { overlay = { kind: 'action', label: label }; overlayUntil = phase + 24; screenDirty = true; }
 
@@ -250,9 +246,6 @@ function drawScreen() {
             print(0, 6, overlay.type, 2);
             print(0, 22, 'LEVEL', 1);
             bar(overlay.val / 2);
-        } else if (overlay.kind === 'vol') {
-            print(0, 6, 'VOLUME', 2);
-            bar(overlay.val / 12);
         } else if (overlay.kind === 'lfo') {
             print(0, 8, 'LFO ' + (overlay.idx + 1), 2);
             print(0, 40, overlay.label, 1);
@@ -286,7 +279,7 @@ globalThis.init = function () {
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
-    levels = {}; masterGain = 6; lastLevel = null; volTarget = null; volKnobAt = 0;
+    levels = {}; lastLevel = null; levelCell = -1; levelAt = 0;
     overlay = null; overlayUntil = -1; ledDirty = true; screenDirty = true;
 };
 
@@ -319,11 +312,11 @@ globalThis.tick = function () {
         const g = cellMap[heldCell];
         if (g) { showName(g); heldNameShown = true; }
     }
-    /* End a volume session if the knob has gone idle (covers a missed touch-off). */
-    if (volTarget !== null && (Date.now() - volKnobAt) > 350) volTarget = null;
+    /* Release the level-latch once the jog goes idle, so the next hold re-targets. */
+    if (levelCell >= 0 && (Date.now() - levelAt) > 350) levelCell = -1;
     if (ledDirty) renderLEDs();
     /* Expire a timed overlay (macro / volume) -> revert to the idle screen once. */
-    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'vol' || overlay.kind === 'lfo' || overlay.kind === 'action') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
+    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
     /* Redraw ONLY when something changed (or a macro slider is live), so the
      * SPI display isn't flushed 133x/s — that contention was XRunning audio. */
     if (screenDirty) { drawScreen(); screenDirty = false; }
@@ -338,8 +331,7 @@ globalThis.onMidiMessageInternal = function (data) {
 
     /* Volume-knob capacitive touch (note 8, on=127 / off<=63) -> modifier. */
     if (d1 === MoveMasterTouch && (status === 0x90 || status === 0x80)) {
-        masterTouched = (status === 0x90 && d2 >= 64);
-        if (!masterTouched) volTarget = null;     /* let go of the knob -> end the vol session */
+        masterTouched = (status === 0x90 && d2 >= 64);   /* used only by the LFO-randomize combo */
         return;
     }
 
@@ -408,27 +400,22 @@ globalThis.onMidiMessageInternal = function (data) {
             return;
         }
         if (d1 === MoveRow3) { track3Held = d2 > 0; return; }
-        /* Main volume knob: while a pad is held -> that module's level (amp);
-         * otherwise -> the engine master gain (overall volume). */
-        if (d1 === MoveMaster) {
+        /* The master knob (CC 79) is the Move's NATIVE host master volume — the
+         * host owns it, so we never touch it (intercepting would fight the host
+         * volume). Per-module level lives on the JOG wheel instead. */
+        if (d1 === MoveMainKnob) {       /* hold a pad + jog wheel -> that module's level (amp) */
             const delta = decodeDelta(d2);
             if (delta === 0) return;
-            /* Decide module-vs-global ONCE per knob session (latched), so a pad
-             * released mid-turn can't switch the same turn over to global. */
-            if (volTarget === null) volTarget = (heldCell >= 0) ? heldCell : -1;
-            volKnobAt = Date.now();
-            if (volTarget >= 0) {
-                const c = volTarget;
+            if (heldCell >= 0) levelCell = heldCell;     /* (re)latch the target while the pad is held */
+            if (levelCell >= 0) {
+                const c = levelCell;
+                levelAt = Date.now();
                 if (levels[c] === undefined) levels[c] = 1.0;
                 levels[c] = Math.max(0, Math.min(2, levels[c] + delta * 0.03));
                 lastLevel = { pad: c, val: levels[c] };
                 heldAdjusted = true;
                 writeControl();
                 if (cellMap[c]) showLevel(cellMap[c], levels[c]);
-            } else {
-                masterGain = Math.max(0, Math.min(12, masterGain + delta * 0.3));
-                writeControl();
-                showVol(masterGain);
             }
             return;
         }
