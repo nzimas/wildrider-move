@@ -657,6 +657,25 @@ class StateManager:
                 rt.enable = False
         self._notify({"type": "lfos_randomized"})
 
+    def retarget_lfos(self, style: str | None = None) -> None:
+        """Keep the 16 global LFOs valid as the module set changes (grow/delete):
+        ensure the bank exists, then (re)configure any LFO that has no route or
+        targets a module that's gone — leaving it OFF — while LFOs already pointed
+        at a live module keep their target AND on/off state untouched."""
+        if not self.all_mod_targets():
+            return
+        self.ensure_lfos(16)
+        live = set(self.patch.modules)
+        for lid in self.lfo_ids()[:16]:
+            rt = self.mod.routes.get(f"{lid}_rt")
+            if rt and rt.dest_module_id in live:
+                continue                       # valid + keep its enable/config
+            self._rand_one_lfo(lid, style)     # (re)point at a live target
+            r = self.mod.routes.get(f"{lid}_rt")
+            if r:
+                r.enable = False               # newly (re)configured -> off
+        self._notify({"type": "lfos_randomized"})
+
     def set_lfo_enabled(self, lid: str, on: bool) -> bool:
         rt = self.mod.routes.get(f"{lid}_rt")
         if not rt:

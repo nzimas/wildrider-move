@@ -78,10 +78,13 @@ class HeadlessController:
         self._write_modules_list()
         self.bridge.start()
         # Start with an EMPTY canvas — no default patch. The user builds via Track1
-        # (new patch), CHAINS, or by pressing empty pads (grow). Macros + the 16
-        # LFOs are configured when a patch is actually created (they need modules to
-        # target), so don't init them here.
+        # (new patch), CHAINS, or by pressing empty pads (grow). But the 16 global
+        # LFOs (step buttons) + 8 macros must ALWAYS exist for consistent control,
+        # so create the (empty/untargeted, off) banks now; they get targeted as
+        # modules appear (retarget_lfos on grow, full re-roll on new patch).
         self._style = self.state.rng.choice(ARTISTS)
+        self._gen_macros()
+        self.state.init_global_lfos(self._style)
         # Build the DSP graph only once the engine signals readiness. The engine
         # sets ~masterBus etc. at the *end* of its async boot block and then
         # sends /atelier/ready; building before that races (nil bus -> errors).
@@ -339,6 +342,7 @@ class HeadlessController:
         m = self.state.add_module(self.state.rng.choice(pool), node_count=1)
         self._pad_map[m.id] = cell                      # pin to the pressed pad
         self.state.wire_in_module(m.id)
+        self.state.retarget_lfos(self._style)           # give dead/empty LFOs a live target
 
     def delete_pad(self, pad: int) -> None:
         """Track3 + pad: remove the module at that pad; its cell clears."""
@@ -347,6 +351,7 @@ class HeadlessController:
             return
         self.state.remove_module(mid)
         self._pad_map.pop(mid, None)
+        self.state.retarget_lfos(self._style)           # rescue LFOs that pointed at it
 
     @staticmethod
     def _category(spec) -> str:
