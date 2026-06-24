@@ -120,7 +120,9 @@
 			 * whose slot-0 gain (~1.995) would push a near-full-scale signal to
 			 * ~1.9 and hard-clip the DAC (constant clicks). Stay ~0.45 so the
 			 * post-shadow peak lands near unity. Pair w/ the lower normalize target. */
-			Out.ar(out, Limiter.ar(~killbad.(In.ar(in, channels)) * gain, 0.45, 0.01));
+			/* gain is LAGGED (40ms): patch swaps fade the master out->rebuild->in,
+			 * so a lagged gain makes those ramps smooth instead of a click. */
+			Out.ar(out, Limiter.ar(~killbad.(In.ar(in, channels)) * gain.lag(0.04), 0.45, 0.01));
 		}).add;
 		s.sync;
 		// DX7: allocate LFO wavetable buffers + load the bundled factory bank once.
@@ -137,7 +139,10 @@
 		s.sync;
 		Synth.head(~gIn, \atelierInput, [\out, ~inBus.index]);
 		~masterSynth = Synth.tail(~gMaster, ("master_" ++ channels).asSymbol, [\in, ~masterBus.index, \out, 0]);
-		~analysisSynth = Synth.tail(~gRec, ("analysis_" ++ channels).asSymbol, [\in, 0]);
+		/* Tap the PRE-gain master bus (not bus 0): the controller can then measure
+		 * a new patch's level for normalization while the output is faded to silence
+		 * during a click-free swap. */
+		~analysisSynth = Synth.tail(~gRec, ("analysis_" ++ channels).asSymbol, [\in, ~masterBus.index]);
 		~built = true;
 		s.startAliveThread(0.0, 0.5);   // poll /status so avgCPU / numSynths stay live
 		~ctrl.value.sendMsg('/atelier/ready');

@@ -11,14 +11,17 @@
 // lane busing is layered on top by the engine (engine.scd). Feedback paths use
 // LocalIn/LocalOut with a hard LeakDC + Limiter as the blueprint requires.
 
-// Kill NaN/Inf: per-sample comparison UGens. NaN/Inf fail sig.abs < inf, so
-// Select routes bad samples to 0 and finite samples through. NOTE: a plain
-// multiplication (sig * mask) does NOT work because 0 * NaN == NaN under
-// IEEE-754; Select must be used instead.
+// Kill NaN/Inf AND bound finite blow-ups. NaN/Inf fail sig.abs < inf, so Select
+// routes bad samples to 0 and finite samples through (a plain sig*mask does NOT
+// work: 0 * NaN == NaN under IEEE-754). Then clip2(16) bounds huge FINITE values
+// — a feedback loop can run away to ~1e27 (finite, so it passes the inf test) and
+// leak a transient past the master limiter as a digital "noise burst". Because
+// ~killbad wraps every module output AND the feedback LocalOuts, clipping here
+// caps the loops at the source so runaway can't explode.
 ~killbad = { |sig|
 	var wasArray = sig.isArray;
 	var arr = sig.asArray;
-	arr = arr.collect { |ch| Select.ar(ch.abs < inf, [DC.ar(0), ch]) };
+	arr = arr.collect { |ch| Select.ar(ch.abs < inf, [DC.ar(0), ch]).clip2(16) };
 	wasArray.if({ arr }, { arr[0] });
 };
 

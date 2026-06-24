@@ -70,6 +70,7 @@ class HeadlessController:
         self._ctrl_server = None
         self._pad_map: dict = {}        # module id -> stable pad cell (0-31)
         self._style = ARTISTS[0]        # current patch's artist (for LFO re-rand)
+        self._swap_lock = threading.Lock()   # serialize click-free patch swaps
 
     # -- lifecycle --------------------------------------------------------- #
     def start(self) -> None:
@@ -181,34 +182,43 @@ class HeadlessController:
     def new_patch(self) -> None:
         """Track 1: generate a fresh guided artist-inspired patch + 8 macros +
         16 global LFOs (randomized but off)."""
-        self._style = self.state.rng.choice(ARTISTS)
-        self.state.random_patch(style=self._style)
-        self.state.init_global_lfos(self._style)
-        self._gen_macros()
-        self._pad_map = {}              # reflow the grid for the new module set
-        threading.Thread(target=self._normalize_patch, daemon=True).start()
+        def build():
+            self._style = self.state.rng.choice(ARTISTS)
+            self.state.random_patch(style=self._style)
+            self.state.init_global_lfos(self._style)
+            self._gen_macros()
+            self._pad_map = {}          # reflow the grid for the new module set
+        self._swap_patch(build)
 
-    def _normalize_patch(self) -> None:
-        """Per-patch loudness: measure the patch at unity makeup gain, then set
-        the master makeup so it peaks ~0.6 (headroom below the 0.95 limiter). This
-        lifts quiet ambient patches to audible AND keeps loud/harsh patches from
-        slamming the limiter into crackle. Runs off the control loop (it sleeps)."""
-        try:
-            self.bridge.send("/atelier/mastergain", 1.0)
-            time.sleep(0.9)                 # let the patch settle + meters update
-            peak = 0.0
-            for _ in range(6):              # take the max over a short window
-                m = self.bridge.meters or []
-                peak = max([peak] + [float(x) for x in m])
-                time.sleep(0.08)
-            # Target peak ~0.3 (well under the 0.45 limiter) so the patch sits at
-            # ~0.6 AFTER the shadow mixer's ~2x slot gain, instead of clipping the
-            # DAC. Min 0.4 lets LOUD patches be attenuated below unity (not boosted
-            # into the limiter); max 6 lifts quiet ambient patches.
-            gain = 6.0 if peak < 1e-3 else max(0.4, min(6.0, 0.3 / peak))
-            self.bridge.send("/atelier/mastergain", round(gain, 2))
-        except Exception:
-            pass
+    def _swap_patch(self, build) -> None:
+        """Click-free patch swap. Old code rebuilt at full gain, then unity-measured
+        the patch AUDIBLY before jumping the makeup — so the teardown burst rang out
+        and the new patch came in quiet then lurched up. Instead: fade the master
+        OUT (the \\gain control is lagged in the engine), rebuild while silent,
+        measure the PRE-gain level (the engine's analysis taps ~masterBus, so it
+        reads the patch regardless of the muted output), then fade back IN straight
+        at the normalized makeup. No teardown artifact, no quiet-then-loud ramp.
+        Runs in a worker so the control loop never blocks; serialized by a lock."""
+        def worker():
+            with self._swap_lock:
+                try:
+                    self.bridge.send("/atelier/mastergain", 0.0)   # fade out (lagged)
+                    time.sleep(0.07)                                # let the ramp reach ~0
+                    build()                                         # teardown + rebuild (silent)
+                    time.sleep(0.45)                                # envelopes open + meters settle
+                    peak = 0.0
+                    for _ in range(5):
+                        m = self.bridge.meters or []
+                        peak = max([peak] + [float(x) for x in m])
+                        time.sleep(0.06)
+                    # Target pre-gain peak ~0.3 so the post-shadow (~2x) signal lands
+                    # ~0.6, not clipping. Min 0.4 attenuates loud patches below unity;
+                    # max 6 lifts quiet ambient ones.
+                    gain = 6.0 if peak < 1e-3 else max(0.4, min(6.0, 0.3 / peak))
+                    self.bridge.send("/atelier/mastergain", round(gain, 2))  # fade in at level
+                except Exception:
+                    pass
+        threading.Thread(target=worker, daemon=True).start()
 
     def _write_modules_list(self) -> None:
         """Static list of selectable module types for the CHAINS picker ui.js."""
@@ -231,26 +241,26 @@ class HeadlessController:
             types += [t] * max(0, min(8, n))
         if not types:
             return
-        self._style = self.state.rng.choice(ARTISTS)
-        self.state.chain_patch(types, self._style)
-        self.state.init_global_lfos(self._style)
-        self._gen_macros()
-        self._pad_map = {}
-        threading.Thread(target=self._normalize_patch, daemon=True).start()
+        def build():
+            self._style = self.state.rng.choice(ARTISTS)
+            self.state.chain_patch(types, self._style)
+            self.state.init_global_lfos(self._style)
+            self._gen_macros()
+            self._pad_map = {}
+        self._swap_patch(build)
 
     def rewire(self) -> None:
         """Track 2 short-press: rewire the connections (new signal-chain order),
         keep params. Re-normalize since the order change shifts the level."""
-        self.state.rewire_patch()
-        threading.Thread(target=self._normalize_patch, daemon=True).start()
+        self._swap_patch(lambda: self.state.rewire_patch())
 
     def rewire_randomize(self) -> None:
         """Track 2 long-press: rewire AND re-roll every module's parameters in the
         current artist aesthetic (a much bigger change than rewire alone)."""
-        self._safe(lambda: self.state._apply_style(
-            None, self._style, self.state.patch.expert_override))
-        self.state.rewire_patch()           # also re-pushes the new params + graph
-        threading.Thread(target=self._normalize_patch, daemon=True).start()
+        def build():
+            self.state._apply_style(None, self._style, self.state.patch.expert_override)
+            self.state.rewire_patch()       # also re-pushes the new params + graph
+        self._swap_patch(build)
 
     def toggle_lfo(self, i: int) -> None:
         if 0 <= i < 16:
