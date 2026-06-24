@@ -480,10 +480,14 @@
 		decay = 0.5, lpg_colour = 0.5,
 		amp = 0.5, pan = 0,
 		bypass = 0, wet = 1, enable = 1|
-		var trig = Changed.kr(enable) + Changed.kr(trigger);
+		// MiPlaits latches the engine (model) at TRIGGER time, so re-trigger when the
+		// engine changes — otherwise it's stuck on whatever it had at the first
+		// trigger (default 0) and randomizing the engine does nothing audible.
+		var eng = engine.round(1);
+		var trig = Changed.kr(enable) + Changed.kr(trigger) + Changed.kr(eng);
 		var pl = MiPlaits.ar(
 			pitch: pitch,
-			engine: engine.round(1),
+			engine: eng,
 			harm: harm,
 			timbre: timbre,
 			morph: morph,

@@ -321,11 +321,13 @@ class HeadlessController:
         self.state.bridge.set_param(mid, "amp", -1, max(0.0, min(2.0, float(level))))
 
     def randomize_module(self, pad: int) -> None:
-        """Shift + module pad: re-roll that module's params in the current artist
-        aesthetic (no LFOs touched)."""
+        """Shift + module pad: re-roll that module's params (no LFOs touched). Uses
+        a FRESH RANDOM artist each time (not the patch's fixed one) so repeated
+        randomizing actually surprises — different aesthetic, wide spread — instead
+        of clustering around one artist's centres."""
         mid = self._pad_to_mid(pad)
         if mid:
-            self.state.randomize_module_params(mid, self._style)
+            self.state.randomize_module_params(mid, self.state.rng.choice(ARTISTS))
 
     def add_module_at(self, cell: int) -> None:
         """Press an EMPTY pad -> drop a random module of that row's class onto it
@@ -343,6 +345,9 @@ class HeadlessController:
         # cords in (grow) — no rebuild click, no onset pop.
         m = self.state.add_module(self.state.rng.choice(pool), node_count=1, sync=False)
         self._pad_map[m.id] = cell                      # pin to the pressed pad
+        # Start RANDOMIZED (fresh random artist), not at defaults — so e.g. a grown
+        # PLAITS lands on a random engine/timbre instead of always the same sound.
+        self.state.randomize_module_params(m.id, self.state.rng.choice(ARTISTS))
         self.state.wire_in_module(m.id, sync=False)
         self.state._sync_graph(grow_mid=m.id)
         self.state.retarget_lfos(self._style)           # give dead/empty LFOs a live target
