@@ -333,7 +333,9 @@
 			DFM1.ar(pwm, (rungler * runglerFilt) + filtFreq, q, gain, 1)
 		]);
 		output = Select.ar(outSignal.clip(0, 6), [tri1, osc1, tri2, osc2, pwm, sh0, filt]);
-		sig = ~spread.(LeakDC.ar((output * amp * enable).tanh), nchan, pan);
+		// BEN's raw outputs are full-scale square/pulse waves -> ~2x hotter than the
+		// other generators (DX7 sits ~-12dB). Halve it so it sits in the mix.
+		sig = ~spread.(LeakDC.ar((output * amp * enable).tanh * 0.5), nchan, pan);
 		Out.ar(out, ~killbad.(sig * (1 - bypass) * wet));
 	}).add;
 
