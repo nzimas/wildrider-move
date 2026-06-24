@@ -276,7 +276,7 @@ COMB = ModuleSpec(
     node_meaning="Comb line / resonator.",
     synthdef="comb",
     insert_capable=True,
-    generative_capable=True,   # self-oscillate / become struck voice when excited
+    generative_capable=False,  # pure processor now — RINGS is the only hybrid
     max_nodes=32,
     cpu_per_node=1.0,
     gestures=["strum", "freeze-body", "metal/wood-morph", "metallic-scatter"],
@@ -963,14 +963,14 @@ WAVEFOLDER = ModuleSpec(
 # desktop parity, but it is not registered, so it never appears in any patch/grid.
 CATALOG: dict[str, ModuleSpec] = {
     m.type: m for m in (DX7, MOLLY, PITCH, TIME, COMB, GAIN, SDLY, VERB,
-                        CLOUDS, GRAINS, RINGS, BEN, BUCHLOID, ENV, GATE, PLAITS, DISTORT,
+                        CLOUDS, GRAINS, RINGS, BEN, BUCHLOID, ENV, GATE, DISTORT,
                         OVERDRIVE, AMPSIM, EQUALIZER, FLANGER, PHASER, RINGMOD,
                         BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER)
-}   # FBANK retired from the stack (still defined above, just not registered)
+}   # FBANK + PLAITS retired from the stack (still defined above, just not registered)
 
 # Ordered lanes (source -> processors -> spatial tail).
 DEFAULT_LANE_ORDER = ["DX7", "MOLLY", "PITCH", "TIME", "COMB", "GAIN",
-                      "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE", "PLAITS",
+                      "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE",
                       "DISTORT", "OVERDRIVE", "AMPSIM", "EQUALIZER", "FLANGER", "PHASER", "RINGMOD",
                       "BITCRUSHER", "LOFI", "TREMOLO", "WAVEFOLDER"]
 

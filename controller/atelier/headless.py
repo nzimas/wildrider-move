@@ -345,8 +345,8 @@ class HeadlessController:
         # cords in (grow) — no rebuild click, no onset pop.
         m = self.state.add_module(self.state.rng.choice(pool), node_count=1, sync=False)
         self._pad_map[m.id] = cell                      # pin to the pressed pad
-        # Start RANDOMIZED (fresh random artist), not at defaults — so e.g. a grown
-        # PLAITS lands on a random engine/timbre instead of always the same sound.
+        # Start RANDOMIZED (fresh random artist), not at defaults — so a grown
+        # module lands varied from the get-go instead of always the same sound.
         self.state.randomize_module_params(m.id, self.state.rng.choice(ARTISTS))
         self.state.wire_in_module(m.id, sync=False)
         self.state._sync_graph(grow_mid=m.id)

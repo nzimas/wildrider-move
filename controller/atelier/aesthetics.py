@@ -54,9 +54,6 @@ SPECIAL: dict[str, tuple[str, bool]] = {
     "rings.bright": (BRIGHT, False),
     "rings.damp": (BRIGHT, True),
     "rings.struct": (MOTION, False),
-    "plaits.harm": (BRIGHT, False),
-    "plaits.timbre": (BRIGHT, False),
-    "plaits.morph": (MOTION, False),
     "gate.duty": (MOTION, False),
     "buchloid.timbre": (BRIGHT, False),
     "buchloid.waveFolds": (DIRT, False),
@@ -283,31 +280,31 @@ def guided_wet(rng, artist: str, module_type: str) -> float | None:
 # Pure generators (self-sounding). RINGS is the only HYBRID source — it can sit
 # silent with no input/excitation, so it must never be a patch's ONLY source, or
 # the patch has no audible generator at all.
-PURE_GENERATORS = {"DX7", "PLAITS", "MOLLY", "BUCHLOID", "BEN"}
+PURE_GENERATORS = {"DX7", "MOLLY", "BUCHLOID", "BEN"}
 
 MODULE_PALETTE: dict[str, dict] = {
     "vidna_obmana": {  # immersive ambient — one or two warm voices bathed in space
-        "sources": {"DX7": 3, "PLAITS": 2, "RINGS": 1, "MOLLY": 1},
+        "sources": {"DX7": 3, "RINGS": 1, "MOLLY": 1},
         "effects": {"VERB": 3, "CLOUDS": 3, "GRAINS": 2, "SDLY": 2, "COMB": 1, "PITCH": 1},
         "sources_count": (1, 2), "count": (7, 12), "require": ["VERB", "CLOUDS"],
     },
     "lustmord": {  # dark ambient — a single deep drone in a cavern
-        "sources": {"DX7": 3, "BUCHLOID": 1, "PLAITS": 1, "MOLLY": 1},
+        "sources": {"DX7": 3, "BUCHLOID": 1, "MOLLY": 1},
         "effects": {"VERB": 4, "COMB": 2, "SDLY": 1, "PITCH": 1},
         "sources_count": (1, 1), "count": (6, 10), "require": ["VERB"],
     },
     "bernard_parmegiani": {  # musique concrète — one voice, transformed in space
-        "sources": {"PLAITS": 2, "RINGS": 2, "DX7": 2, "BUCHLOID": 1, "MOLLY": 1},
+        "sources": {"RINGS": 2, "DX7": 2, "BUCHLOID": 1, "MOLLY": 1},
         "effects": {"PITCH": 3, "TIME": 3, "COMB": 2, "VERB": 2, "CLOUDS": 2, "GRAINS": 2, "SDLY": 2, "GATE": 1},
         "sources_count": (1, 2), "count": (8, 14), "require": ["TIME", "PITCH"],
     },
     "ben_frost": {  # abrasive — a voice driven hard, rhythmic gating, little reverb
-        "sources": {"DX7": 3, "PLAITS": 2, "BUCHLOID": 1, "MOLLY": 2},
+        "sources": {"DX7": 3, "BUCHLOID": 1, "MOLLY": 2},
         "effects": {"DISTORT": 4, "GATE": 2, "COMB": 1, "VERB": 1, "SDLY": 1},
         "sources_count": (1, 2), "count": (7, 12), "require": ["DISTORT", "GATE"],
     },
     "autechre": {  # algorithmic — one or two voices, fragmented, digital artefacts
-        "sources": {"PLAITS": 3, "RINGS": 2, "DX7": 2, "MOLLY": 2},
+        "sources": {"RINGS": 2, "DX7": 2, "MOLLY": 2},
         "effects": {"DISTORT": 2, "GATE": 3, "TIME": 2, "COMB": 2, "SDLY": 2, "GRAINS": 2},
         "sources_count": (1, 2), "count": (8, 14), "require": ["GATE"],
     },
