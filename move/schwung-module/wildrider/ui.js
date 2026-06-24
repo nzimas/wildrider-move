@@ -76,6 +76,11 @@ let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
 let levels = {};               /* cell -> module audio level (amp), default 1.0 */
 let masterGain = 6;            /* engine master makeup gain (main knob, no pad) */
+/* The master knob targets EITHER a held module's level OR the global volume. We
+ * latch that choice at the start of a knob "session" so releasing the pad
+ * mid-turn never bleeds the turn into the global volume. null = no session,
+ * -1 = global, >=0 = module cell. Reset on knob touch-release or when idle. */
+let volTarget = null, volKnobAt = 0;
 let lastLevel = null;          /* {pad,val} last module-level change, for control.json */
 let overlay = null;            /* {kind:'name'|'macro', ...} */
 let overlayUntil = -1;
@@ -281,7 +286,7 @@ globalThis.init = function () {
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
-    levels = {}; masterGain = 6; lastLevel = null;
+    levels = {}; masterGain = 6; lastLevel = null; volTarget = null; volKnobAt = 0;
     overlay = null; overlayUntil = -1; ledDirty = true; screenDirty = true;
 };
 
@@ -314,6 +319,8 @@ globalThis.tick = function () {
         const g = cellMap[heldCell];
         if (g) { showName(g); heldNameShown = true; }
     }
+    /* End a volume session if the knob has gone idle (covers a missed touch-off). */
+    if (volTarget !== null && (Date.now() - volKnobAt) > 350) volTarget = null;
     if (ledDirty) renderLEDs();
     /* Expire a timed overlay (macro / volume) -> revert to the idle screen once. */
     if (overlay && (overlay.kind === 'macro' || overlay.kind === 'vol' || overlay.kind === 'lfo' || overlay.kind === 'action') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
@@ -332,6 +339,7 @@ globalThis.onMidiMessageInternal = function (data) {
     /* Volume-knob capacitive touch (note 8, on=127 / off<=63) -> modifier. */
     if (d1 === MoveMasterTouch && (status === 0x90 || status === 0x80)) {
         masterTouched = (status === 0x90 && d2 >= 64);
+        if (!masterTouched) volTarget = null;     /* let go of the knob -> end the vol session */
         return;
     }
 
@@ -405,8 +413,12 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveMaster) {
             const delta = decodeDelta(d2);
             if (delta === 0) return;
-            if (heldCell >= 0) {
-                const c = heldCell;
+            /* Decide module-vs-global ONCE per knob session (latched), so a pad
+             * released mid-turn can't switch the same turn over to global. */
+            if (volTarget === null) volTarget = (heldCell >= 0) ? heldCell : -1;
+            volKnobAt = Date.now();
+            if (volTarget >= 0) {
+                const c = volTarget;
                 if (levels[c] === undefined) levels[c] = 1.0;
                 levels[c] = Math.max(0, Math.min(2, levels[c] + delta * 0.03));
                 lastLevel = { pad: c, val: levels[c] };
