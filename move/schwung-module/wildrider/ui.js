@@ -48,10 +48,6 @@ const CAT_ON = {
     midi: VividYellow
 };
 const OFF_COLOR = White;
-/* Faint hint on EMPTY pads: which row adds a generator (dim green) vs a
- * processor (dim blue) when pressed — the 'grow the patch' affordance. */
-const GEN_HINT = ForestGreen;
-const FX_HINT = RoyalBlue;
 
 let phase = 0;
 let launched = false;
@@ -212,12 +208,8 @@ function readStatus() {
 function renderLEDs() {
     for (let cell = 0; cell < 32; cell++) {
         const g = cellMap[cell];
-        let color;
-        if (g) {
-            color = g.on ? (CAT_ON[g.cat] || CAT_ON.fx) : OFF_COLOR;
-        } else {
-            color = (Math.floor(cell / 8) % 2 === 0) ? GEN_HINT : FX_HINT;  /* empty: add-pad hint */
-        }
+        let color = Black;                          /* empty pad = UNLIT */
+        if (g) color = g.on ? (CAT_ON[g.cat] || CAT_ON.fx) : OFF_COLOR;
         setLED(PAD_NOTES[cell], color);
     }
     /* 16 step buttons (notes 16..31) = global LFO toggles: lit when enabled. */
