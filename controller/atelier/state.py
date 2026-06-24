@@ -1345,6 +1345,34 @@ class StateManager:
         for rid in [r.id for r in self.mod.routes.values() if not r.id.startswith("lfo")]:
             self.mod.remove_route(rid)
 
+    def wire_in_module(self, mid: str) -> None:
+        """The 'growing maze' add: wire ONE newly-added module into the existing
+        patch at random (without re-touching anyone else). A pure generator feeds
+        a random downstream sink (or stays a terminal -> master); a processor taps
+        a random existing source and may also feed a random sink. Legality + cycle
+        safety via connection_legal."""
+        if mid not in self.patch.modules:
+            return
+        rng = self.rng
+        others = [o for o in self.patch.modules if o != mid]
+        if not self.patch.can_input(mid):                 # pure generator / source
+            sinks = [o for o in others if self.patch.can_input(o)
+                     and self.patch.connection_legal(mid, o)[0]]
+            if sinks and rng.random() < 0.85:
+                self.patch.add_connection(mid, rng.choice(sinks))
+            # else: leave it as a terminal — sums straight to master
+        else:                                             # processor (needs input)
+            srcs = [o for o in others if self.patch.can_output(o)
+                    and self.patch.connection_legal(o, mid)[0]]
+            if srcs:
+                self.patch.add_connection(rng.choice(srcs), mid)
+            sinks = [o for o in others if self.patch.can_input(o)
+                     and self.patch.connection_legal(mid, o)[0]]
+            if sinks and rng.random() < 0.5:
+                self.patch.add_connection(mid, rng.choice(sinks))
+        self._sync_graph()
+        self._notify({"type": "patch_replaced"})
+
     def _wire_random(self, ids: list[str]) -> None:
         """Wire a legal DAG: each input-capable module pulls from 1-2 upstreams."""
         outputs = [mid for mid in ids if self.patch.can_output(mid)]

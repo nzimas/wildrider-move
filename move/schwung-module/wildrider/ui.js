@@ -48,6 +48,10 @@ const CAT_ON = {
     midi: VividYellow
 };
 const OFF_COLOR = White;
+/* Faint hint on EMPTY pads: which row adds a generator (dim green) vs a
+ * processor (dim blue) when pressed — the 'grow the patch' affordance. */
+const GEN_HINT = ForestGreen;
+const FX_HINT = RoyalBlue;
 
 let phase = 0;
 let launched = false;
@@ -208,9 +212,11 @@ function readStatus() {
 function renderLEDs() {
     for (let cell = 0; cell < 32; cell++) {
         const g = cellMap[cell];
-        let color = Black;
+        let color;
         if (g) {
             color = g.on ? (CAT_ON[g.cat] || CAT_ON.fx) : OFF_COLOR;
+        } else {
+            color = (Math.floor(cell / 8) % 2 === 0) ? GEN_HINT : FX_HINT;  /* empty: add-pad hint */
         }
         setLED(PAD_NOTES[cell], color);
     }
@@ -362,7 +368,13 @@ globalThis.onMidiMessageInternal = function (data) {
     if (status === 0x90 && d2 > 0 && d1 >= 68 && d1 <= 99) {
         const cell = NOTE_TO_CELL[d1];
         const g = cellMap[cell];
-        if (g === undefined || g === null) return;   /* empty pad */
+        if (g === undefined || g === null) {         /* empty pad -> grow the patch */
+            if (!shiftHeld && !track3Held && !deleteHeld) {
+                sendCmd('addmod', cell);
+                showAction((Math.floor(cell / 8) % 2 === 0) ? 'ADD GEN' : 'ADD FX');
+            }
+            return;
+        }
         if (track3Held || deleteHeld) { sendCmd('delete', cell); showAction('DEL ' + g.type); return; }   /* X key (or Track3) + pad = delete */
         if (shiftHeld) { sendCmd('randmod', cell); showAction('RND ' + g.type); return; }  /* shift+pad = randomize module params */
         heldCell = cell; heldStart = Date.now(); heldNameShown = false; heldAdjusted = false;

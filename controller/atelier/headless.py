@@ -319,6 +319,22 @@ class HeadlessController:
         if mid:
             self.state.randomize_module_params(mid, self._style)
 
+    def add_module_at(self, cell: int) -> None:
+        """Press an EMPTY pad -> drop a random module of that row's class onto it
+        (GEN row -> a generator/hybrid, FX row -> a processor) and wire it into the
+        existing patch at random — the 'growing maze' build."""
+        from .catalog import CATALOG
+        if not (0 <= cell < 32) or cell in self._pad_map.values():
+            return                                      # occupied / out of range
+        gen_row = cell in self.GEN_CELLS
+        pool = [t for t, s in CATALOG.items()
+                if s.is_audio and self._is_gen(s) == gen_row]
+        if not pool:
+            return
+        m = self.state.add_module(self.state.rng.choice(pool), node_count=1)
+        self._pad_map[m.id] = cell                      # pin to the pressed pad
+        self.state.wire_in_module(m.id)
+
     def delete_pad(self, pad: int) -> None:
         """Track3 + pad: remove the module at that pad; its cell clears."""
         mid = self._pad_to_mid(pad)
@@ -337,10 +353,20 @@ class HeadlessController:
             return "gen"
         return "fx"
 
+    # Canvas contract: generators + hybrids live in the GEN rows (1 & 3),
+    # processors in the FX rows (2 & 4). Pads top->bottom are cells 0-7, 8-15,
+    # 16-23, 24-31. Layout only — it never affects wiring.
+    GEN_CELLS = [0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23]
+    FX_CELLS = [8, 9, 10, 11, 12, 13, 14, 15, 24, 25, 26, 27, 28, 29, 30, 31]
+
+    def _is_gen(self, spec) -> bool:
+        return self._category(spec) in ("gen", "both")   # generator OR hybrid (RINGS)
+
     def _ensure_pad_map(self) -> None:
-        """Assign each module a STABLE pad cell (0-31). New modules take the next
-        free cell in signal-flow order; removed modules free their cell — so
-        toggling/deleting never reflows the others."""
+        """Assign each module a STABLE pad cell. Generators/hybrids take a free GEN
+        cell (rows 1 & 3), processors a free FX cell (rows 2 & 4); a full row falls
+        back to any free cell. Existing assignments are kept, so toggling/deleting/
+        adding never reflows the others."""
         live = list(self.state.patch.modules.keys())
         for mid in [m for m in self._pad_map if m not in live]:
             del self._pad_map[mid]
@@ -348,7 +374,9 @@ class HeadlessController:
         for mid in self.state.patch.topo_order():
             if mid in self._pad_map:
                 continue
-            for cell in range(32):
+            m = self.state.patch.modules[mid]
+            pref = self.GEN_CELLS if self._is_gen(m.spec) else self.FX_CELLS
+            for cell in pref + [c for c in range(32) if c not in pref]:
                 if cell not in used:
                     self._pad_map[mid] = cell
                     used.add(cell)
@@ -451,6 +479,8 @@ class HeadlessController:
             self._safe(lambda: self.delete_pad(arg))
         elif cmd == "randmod":
             self._safe(lambda: self.randomize_module(arg))
+        elif cmd == "addmod":
+            self._safe(lambda: self.add_module_at(arg))
         elif cmd == "lfotoggle":
             self._safe(lambda: self.toggle_lfo(arg))
         elif cmd == "lforand":
