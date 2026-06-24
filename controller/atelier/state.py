@@ -1320,6 +1320,10 @@ class StateManager:
     # and randomize all params within musical ranges.
     # ------------------------------------------------------------------ #
     def _teardown_modules(self) -> None:
+        # Free EVERY engine module first (orphans included): ids are reused across
+        # patches, so a single dropped /module/free would leave a synth still
+        # sounding but absent from the model/grid. Then free the known ones too.
+        self.bridge.send("/atelier/free_modules")
         for mid in list(self.patch.modules):
             self.bridge.module_free(mid)
         self.patch.modules.clear()

@@ -87,6 +87,18 @@
 	~analysisSynth.notNil.if { ~analysisSynth.free };
 };
 
+// Free EVERY module synth/group (orphans included) but keep master + analysis.
+// The controller reuses module ids (molly1, molly2 ...) across patches, so a
+// single missed /module/free leaves an orphan synth still sounding but unknown
+// to the model/grid. Teardown calls this to clear all of them at the source.
+~freeModules = {
+	~modules.do { |info| info[\group].free; info[\outBus].free; info[\inBus].free };
+	~modules = IdentityDictionary.new;
+	~dx7mods = IdentityDictionary.new;
+	(~clears ? []).do(_.free); (~cords ? []).do(_.free);
+	~clears = []; ~cords = [];
+};
+
 ~boot = { |sr, block, channels|
 	~nchan = channels;
 	s.options.numOutputBusChannels = channels;
@@ -346,6 +358,9 @@
 		~modules.do { |info| info[\nodes].do { |syn| syn.set(\amp, 0) } };
 		"PANIC".postln;
 	}, '/atelier/panic'),
+	// Free every module synth (orphans included) on patch teardown — see
+	// ~freeModules. Guards against reused-id orphans that keep sounding.
+	OSCdef(\freemods, { |m| ~freeModules.value }, '/atelier/free_modules'),
 	// Master makeup gain (the Move's main volume knob when no pad is held).
 	OSCdef(\mastergain, { |m| ~masterSynth.notNil.if { ~masterSynth.set(\gain, m[1]) } }, '/atelier/mastergain'),
 	OSCdef(\spatial, { |m| /* channel changes require rebuild on next boot */ }, '/atelier/spatial'),
