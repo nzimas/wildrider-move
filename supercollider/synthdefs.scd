@@ -18,10 +18,15 @@
 // leak a transient past the master limiter as a digital "noise burst". Because
 // ~killbad wraps every module output AND the feedback LocalOuts, clipping here
 // caps the loops at the source so runaway can't explode.
+// + 1e-15 = an ANTI-DENORMAL floor. ~killbad wraps every module output AND every
+// feedback LocalOut; on aarch64 (no flush-to-zero) a feedback loop decaying toward
+// silence drifts into denormal floats, whose arithmetic is ~100x slower -> a
+// one-block CPU spike -> a JACK XRun (the "occasional click"). A tiny DC keeps the
+// loop floor normal; 1e-15 is ~10 orders below the 16-bit LSB, i.e. inaudible.
 ~killbad = { |sig|
 	var wasArray = sig.isArray;
 	var arr = sig.asArray;
-	arr = arr.collect { |ch| Select.ar(ch.abs < inf, [DC.ar(0), ch]).clip2(16) };
+	arr = arr.collect { |ch| Select.ar(ch.abs < inf, [DC.ar(0), ch]).clip2(16) + 1e-15 };
 	wasArray.if({ arr }, { arr[0] });
 };
 
