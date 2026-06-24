@@ -76,15 +76,16 @@ class StateManager:
             self.bridge.recorder(rec.id, rec.target, rec.tap,
                                  rec.rolling_buffer_seconds, rec.armed)
 
-    def _sync_graph(self, morph: float | None = None) -> None:
+    def _sync_graph(self, morph: float | None = None, grow_mid: str | None = None) -> None:
         """Send the current connection graph (order/edges/terminals) to the engine.
-        `morph` (seconds) crossfades to the new routing instead of a hard rebuild."""
+        `morph` (s) crossfades to the new routing; `grow_mid` fades in just that one
+        newly-added module's cords (no rebuild) — both avoid a hard-rebuild click."""
         audio = lambda mid: mid in self.patch.modules and self.patch.modules[mid].spec.is_audio
         order = [m for m in self.patch.topo_order() if audio(m)]
         edges = [(c["src"], c["dst"]) for c in self.patch.connections
                  if audio(c["src"]) and audio(c["dst"])]
         terminals = [t for t in self.patch.terminals() if audio(t)]
-        self.bridge.graph(order, edges, terminals, morph=morph)
+        self.bridge.graph(order, edges, terminals, morph=morph, grow_mid=grow_mid)
 
     def _push_module(self, m: ModuleInstance) -> None:
         """Push every effective value for a module (global + per-node vectors)."""
@@ -110,7 +111,7 @@ class StateManager:
 
     def add_module(self, module_type: str, node_count: int = 1,
                    mid: str | None = None, x: float = 0.0, y: float = 0.0,
-                   lane_id: str = "") -> ModuleInstance:
+                   lane_id: str = "", sync: bool = True) -> ModuleInstance:
         mid = mid or self._gen_id(module_type)
         m = ModuleInstance(mid, module_type, lane_id, node_count)
         m.x, m.y = x, y
@@ -121,7 +122,8 @@ class StateManager:
         if m.spec.is_audio:
             self.bridge.module_new(m.id, m.type, self.patch.channel_count, m.node_count, 0)
             self._push_module(m)
-            self._sync_graph()   # the new module becomes a terminal -> audible
+            if sync:                          # sync=False: the caller wires + grows
+                self._sync_graph()            # the new module becomes a terminal -> audible
         self._notify({"type": "module_added", "module": m.to_dict()})
         return m
 
@@ -1365,12 +1367,12 @@ class StateManager:
         for rid in [r.id for r in self.mod.routes.values() if not r.id.startswith("lfo")]:
             self.mod.remove_route(rid)
 
-    def wire_in_module(self, mid: str) -> None:
+    def wire_in_module(self, mid: str, sync: bool = True) -> None:
         """The 'growing maze' add: wire ONE newly-added module into the existing
         patch at random (without re-touching anyone else). A pure generator feeds
         a random downstream sink (or stays a terminal -> master); a processor taps
         a random existing source and may also feed a random sink. Legality + cycle
-        safety via connection_legal."""
+        safety via connection_legal. sync=False: caller does the (grow) sync."""
         if mid not in self.patch.modules:
             return
         rng = self.rng
@@ -1390,7 +1392,8 @@ class StateManager:
                      and self.patch.connection_legal(mid, o)[0]]
             if sinks and rng.random() < 0.5:
                 self.patch.add_connection(mid, rng.choice(sinks))
-        self._sync_graph()
+        if sync:
+            self._sync_graph()
         self._notify({"type": "patch_replaced"})
 
     def _wire_random(self, ids: list[str]) -> None:

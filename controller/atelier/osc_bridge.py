@@ -201,16 +201,20 @@ class OSCBridge:
         self.send("/atelier/ping")
 
     def graph(self, order: list[str], edges: list[tuple[str, str]],
-              terminals: list[str], morph: float | None = None) -> None:
-        """Push the full routing graph, then either commit it atomically (hard
-        rebuild) or MORPH to it — a gapless `morph`-second crossfade of the cords."""
+              terminals: list[str], morph: float | None = None,
+              grow_mid: str | None = None) -> None:
+        """Push the full routing graph, then apply it: a hard commit, a `morph`-s
+        gapless crossfade (rewire), or a `grow` — fade in ONLY the new module's
+        cords on top of the live graph (no rebuild, no onset pop)."""
         self.send("/atelier/graph/order", *order)
         flat: list[str] = []
         for s, d in edges:
             flat += [s, d]
         self.send("/atelier/graph/edges", *flat)
         self.send("/atelier/graph/terminals", *terminals)
-        if morph and morph > 0:
+        if grow_mid is not None:
+            self.send("/atelier/graph/grow", str(grow_mid), 0.2)
+        elif morph and morph > 0:
             self.send("/atelier/graph/morph", float(morph))
         else:
             self.send("/atelier/graph/commit")

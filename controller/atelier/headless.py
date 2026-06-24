@@ -339,9 +339,12 @@ class HeadlessController:
                 if s.is_audio and self._is_gen(s) == gen_row]
         if not pool:
             return
-        m = self.state.add_module(self.state.rng.choice(pool), node_count=1)
+        # Build the module + wiring WITHOUT a graph rebuild, then fade JUST its new
+        # cords in (grow) — no rebuild click, no onset pop.
+        m = self.state.add_module(self.state.rng.choice(pool), node_count=1, sync=False)
         self._pad_map[m.id] = cell                      # pin to the pressed pad
-        self.state.wire_in_module(m.id)
+        self.state.wire_in_module(m.id, sync=False)
+        self.state._sync_graph(grow_mid=m.id)
         self.state.retarget_lfos(self._style)           # give dead/empty LFOs a live target
 
     def delete_pad(self, pad: int) -> None:
