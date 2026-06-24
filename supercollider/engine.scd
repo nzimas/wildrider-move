@@ -116,7 +116,11 @@
 		// Move's main volume knob drives it). Captured output is glitch-free; the
 		// limiter is the loudness/safety stage.
 		SynthDef(("master_" ++ channels).asSymbol, { |in = 0, out = 0, gain = 6|
-			Out.ar(out, Limiter.ar(~killbad.(In.ar(in, channels)) * gain, 0.95, 0.01));
+			/* Ceiling 0.45, NOT ~1.0: our output feeds the schwung shadow mixer
+			 * whose slot-0 gain (~1.995) would push a near-full-scale signal to
+			 * ~1.9 and hard-clip the DAC (constant clicks). Stay ~0.45 so the
+			 * post-shadow peak lands near unity. Pair w/ the lower normalize target. */
+			Out.ar(out, Limiter.ar(~killbad.(In.ar(in, channels)) * gain, 0.45, 0.01));
 		}).add;
 		s.sync;
 		// DX7: allocate LFO wavetable buffers + load the bundled factory bank once.

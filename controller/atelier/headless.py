@@ -201,7 +201,11 @@ class HeadlessController:
                 m = self.bridge.meters or []
                 peak = max([peak] + [float(x) for x in m])
                 time.sleep(0.08)
-            gain = 6.0 if peak < 1e-3 else max(1.5, min(10.0, 0.6 / peak))
+            # Target peak ~0.3 (well under the 0.45 limiter) so the patch sits at
+            # ~0.6 AFTER the shadow mixer's ~2x slot gain, instead of clipping the
+            # DAC. Min 0.4 lets LOUD patches be attenuated below unity (not boosted
+            # into the limiter); max 6 lifts quiet ambient patches.
+            gain = 6.0 if peak < 1e-3 else max(0.4, min(6.0, 0.3 / peak))
             self.bridge.send("/atelier/mastergain", round(gain, 2))
         except Exception:
             pass
