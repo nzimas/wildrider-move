@@ -17,7 +17,7 @@
 import {
     Black, BrightGreen, ForestGreen, AzureBlue, RoyalBlue,
     ElectricViolet, Violet, VividYellow, Mustard, White,
-    MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveMasterTouch,
+    MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveMasterTouch, MoveDelete,
     MoveMainKnob, MoveMainButton, MoveRow1, MoveRow2, MoveRow3
 } from '/data/UserData/move-anything/shared/constants.mjs';
 import { setLED, decodeDelta } from '/data/UserData/move-anything/shared/input_filter.mjs';
@@ -60,6 +60,7 @@ let macroVal = new Array(8).fill(0);
 let macrosSynced = false;
 let seq = 0, lastCmd = '', lastArg = -1;
 let track3Held = false;
+let deleteHeld = false;        /* the X / Delete key, held = delete-a-pad modifier */
 let shiftHeld = false;
 let masterTouched = false;     /* volume-knob capacitive touch held */
 let row2Down = 0;              /* Track 2 press time, for short/long detect */
@@ -274,7 +275,7 @@ globalThis.init = function () {
     if (typeof host_set_refresh_rate === 'function') host_set_refresh_rate(30);
     phase = 0; launched = false; lastStatusAt = -100;
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
-    macroVal = new Array(8).fill(0); seq = 0; track3Held = false; shiftHeld = false;
+    macroVal = new Array(8).fill(0); seq = 0; track3Held = false; deleteHeld = false; shiftHeld = false;
     masterTouched = false; row2Down = 0;
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false);
@@ -362,7 +363,7 @@ globalThis.onMidiMessageInternal = function (data) {
         const cell = NOTE_TO_CELL[d1];
         const g = cellMap[cell];
         if (g === undefined || g === null) return;   /* empty pad */
-        if (track3Held) { sendCmd('delete', cell); return; }   /* delete: immediate */
+        if (track3Held || deleteHeld) { sendCmd('delete', cell); showAction('DEL ' + g.type); return; }   /* X key (or Track3) + pad = delete */
         if (shiftHeld) { sendCmd('randmod', cell); showAction('RND ' + g.type); return; }  /* shift+pad = randomize module params */
         heldCell = cell; heldStart = Date.now(); heldNameShown = false; heldAdjusted = false;
         return;
@@ -401,6 +402,7 @@ globalThis.onMidiMessageInternal = function (data) {
             return;
         }
         if (d1 === MoveRow3) { track3Held = d2 > 0; return; }
+        if (d1 === MoveDelete) { deleteHeld = d2 > 0; return; }   /* X key held = delete modifier */
         /* The master knob (CC 79) is the Move's NATIVE host master volume — the
          * host owns it, so we never touch it (intercepting would fight the host
          * volume). Per-module level lives on the JOG wheel instead. */
