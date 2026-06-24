@@ -363,6 +363,7 @@ globalThis.onMidiMessageInternal = function (data) {
         const g = cellMap[cell];
         if (g === undefined || g === null) return;   /* empty pad */
         if (track3Held) { sendCmd('delete', cell); return; }   /* delete: immediate */
+        if (shiftHeld) { sendCmd('randmod', cell); showAction('RND ' + g.type); return; }  /* shift+pad = randomize module params */
         heldCell = cell; heldStart = Date.now(); heldNameShown = false; heldAdjusted = false;
         return;
     }

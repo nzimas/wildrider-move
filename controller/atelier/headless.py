@@ -312,6 +312,13 @@ class HeadlessController:
             return
         self.state.bridge.set_param(mid, "amp", -1, max(0.0, min(2.0, float(level))))
 
+    def randomize_module(self, pad: int) -> None:
+        """Shift + module pad: re-roll that module's params in the current artist
+        aesthetic (no LFOs touched)."""
+        mid = self._pad_to_mid(pad)
+        if mid:
+            self.state.randomize_module_params(mid, self._style)
+
     def delete_pad(self, pad: int) -> None:
         """Track3 + pad: remove the module at that pad; its cell clears."""
         mid = self._pad_to_mid(pad)
@@ -442,6 +449,8 @@ class HeadlessController:
             self._safe(lambda: self.toggle_pad(arg))
         elif cmd == "delete":
             self._safe(lambda: self.delete_pad(arg))
+        elif cmd == "randmod":
+            self._safe(lambda: self.randomize_module(arg))
         elif cmd == "lfotoggle":
             self._safe(lambda: self.toggle_lfo(arg))
         elif cmd == "lforand":

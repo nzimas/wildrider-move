@@ -109,14 +109,10 @@ class ModuleInstance:
         self.node_slots: list[dict[str, ParamSlot]] = []
         for _ in range(self.node_count):
             self.node_slots.append(self._fresh_node())
-        # Per-module LFO bank: one LFO per modulatable parameter.
-        # Disabled by default; each entry holds the UI/DSP settings for that param.
+        # Per-module LFOs are retired — the 16 global LFOs cover all modulation.
+        # Kept as empty fields so snapshot/persistence stay schema-compatible.
         self.per_module_lfos_enabled: bool = False
-        self.per_module_lfos: dict[str, dict[str, Any]] = {
-            p.id: {"enabled": False, "shape": "sine", "rate": 0.5, "depth": 0.3}
-            for p in self.spec.node_params + self.spec.global_params
-            if p.modulatable
-        }
+        self.per_module_lfos: dict[str, dict[str, Any]] = {}
 
     def _fresh_node(self) -> dict[str, ParamSlot]:
         return {p.id: ParamSlot(meta=p) for p in self.spec.node_params}

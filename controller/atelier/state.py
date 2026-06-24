@@ -1087,6 +1087,20 @@ class StateManager:
         self._notify({"type": "randomized", "scope": scope, "module": mid, "changed": n})
         return n
 
+    def randomize_module_params(self, mid: str, style: str | None = None) -> None:
+        """Shift+pad: re-roll ONE module's parameters in the current artist
+        aesthetic and push them to the engine. Params + wet/dry only — no LFOs
+        (per-module LFOs are retired; the global LFOs are left untouched)."""
+        m = self.patch.modules.get(mid)
+        if m is None:
+            return
+        self._apply_style(mid, style or "free", self.patch.expert_override)
+        if m.spec.is_audio:
+            self.bridge.module_bypass(m.id, m.bypass)
+            self.bridge.module_wet(m.id, m.wet_dry)
+            self._push_module(m)
+        self._notify({"type": "randomized", "scope": "module", "module": mid})
+
     def _resync_all(self) -> None:
         for m in self.patch.modules.values():
             self.bridge.module_bypass(m.id, m.bypass)
