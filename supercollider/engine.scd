@@ -79,6 +79,40 @@
 	};
 };
 
+// Gapless rewire: crossfade the OLD cords out while the NEW cords fade in over
+// `dur` seconds. The modules (and their buses/clears) are untouched — only the
+// routing morphs — so the audio never drops out. Reorder groups to the new order
+// up front so the new cords are same-block correct; the old (fading) cords may run
+// a block late on changed edges, which is inaudible as they fade.
+~morphGraph = { |dur = 2.0|
+	var oldCords = ~cords;
+	oldCords.do { |c| c.set(\lagTime, dur, \xf, 0) };     // fade old routing out
+	~cords = [];
+	(~graphOrder ? []).do { |mid|
+		var info = ~modules[mid.asSymbol];
+		info.notNil.if { info[\group].moveToTail(~gModules) };
+	};
+	(~graphEdges ? []).clump(2).do { |pair|
+		var s = ~modules[pair[0].asSymbol], d = ~modules[pair[1].asSymbol];
+		(s.notNil and: { d.notNil }).if {
+			var c = Synth.before(d[\group], ("cord_" ++ ~nchan).asSymbol,
+				[\inb, s[\outBus].index, \outb, d[\inBus].index, \gain, 1, \xf, 0, \lagTime, dur]);
+			c.set(\xf, 1);                                // fade new routing in
+			~cords = ~cords.add(c);
+		};
+	};
+	(~graphTerminals ? []).do { |mid|
+		var info = ~modules[mid.asSymbol];
+		info.notNil.if {
+			var c = Synth.tail(~gMix, ("cord_" ++ ~nchan).asSymbol,
+				[\inb, info[\outBus].index, \outb, ~masterBus.index, \gain, (-12.dbamp), \xf, 0, \lagTime, dur]);
+			c.set(\xf, 1);
+			~cords = ~cords.add(c);
+		};
+	};
+	SystemClock.sched(dur + 0.15, { oldCords.do { |c| c.free }; nil });   // reap faded cords
+};
+
 ~freeAll = {
 	~modules.do { |info| info[\group].free; info[\outBus].free; info[\inBus].free };
 	~modules = IdentityDictionary.new;
@@ -115,8 +149,13 @@
 		~distChebyBuf.cheby([1, 0, 0.4, 0, 0.3, 0, 0.2, 0, 0.15, 0, 0.1]);
 		~buildDefs.(channels);
 		// patch cord: sum one bus into another (NaN-killed), used for all routing
-		SynthDef(("cord_" ++ channels).asSymbol, { |inb = 0, outb = 0, gain = 1|
-			Out.ar(outb, ~killbad.(In.ar(inb, channels)) * gain);
+		// `gain` is the static routing gain. `xf` (0..1) is the crossfade level,
+		// linearly slewed by Ramp.kr(.,lagTime) then taken through sqrt for an
+		// EQUAL-POWER fade — so a rewire crossfades old cords out / new cords in over
+		// ~2s with a constant level and no audio gap (the modules never stop). For a
+		// hard rebuild xf=1, lagTime=0 -> sqrt(1)=1, i.e. unchanged.
+		SynthDef(("cord_" ++ channels).asSymbol, { |inb = 0, outb = 0, gain = 1, xf = 1, lagTime = 0|
+			Out.ar(outb, ~killbad.(In.ar(inb, channels)) * gain * Ramp.kr(xf, lagTime).max(0).sqrt);
 		}).add;
 		// bus clear: private audio busses are not auto-zeroed; clear before summing
 		SynthDef(("busClear_" ++ channels).asSymbol, { |bus = 0|
@@ -347,6 +386,7 @@
 	OSCdef(\graphEdges, { |m| ~graphEdges = m[1..] }, '/atelier/graph/edges'),
 	OSCdef(\graphTerm, { |m| ~graphTerminals = m[1..] }, '/atelier/graph/terminals'),
 	OSCdef(\graphCommit, { |m| ~rebuildGraph.value }, '/atelier/graph/commit'),
+	OSCdef(\graphMorph, { |m| ~morphGraph.value(m[1] ? 2.0) }, '/atelier/graph/morph'),
 	OSCdef(\bypass, { |m| ~setParam.(m[1], "bypass", -1, m[2]) }, '/atelier/module/bypass'),
 	OSCdef(\wet, { |m| ~setParam.(m[1], "wet", -1, m[2]) }, '/atelier/module/wet'),
 	OSCdef(\set, { |m| ~setParam.(m[1], m[2], m[3], m[4]) }, '/atelier/set'),

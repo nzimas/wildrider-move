@@ -249,18 +249,22 @@ class HeadlessController:
             self._pad_map = {}
         self._swap_patch(build)
 
+    REWIRE_MORPH_S = 2.0                 # gapless crossfade time for a rewire
+
     def rewire(self) -> None:
-        """Track 2 short-press: rewire the connections (new signal-chain order),
-        keep params. Re-normalize since the order change shifts the level."""
-        self._swap_patch(lambda: self.state.rewire_patch())
+        """Track 2 short-press: rewire the connections (new signal flow), keep
+        params. A 2 s cord CROSSFADE — no master fade, no gap — so it's usable live."""
+        self._safe(lambda: self.state.rewire_patch(morph=self.REWIRE_MORPH_S))
 
     def rewire_randomize(self) -> None:
         """Track 2 long-press: rewire AND re-roll every module's parameters in the
-        current artist aesthetic (a much bigger change than rewire alone)."""
-        def build():
+        current artist aesthetic. Push the new params, then morph the wiring (the
+        routing crossfades gaplessly; params change in place)."""
+        def go():
             self.state._apply_style(None, self._style, self.state.patch.expert_override)
-            self.state.rewire_patch()       # also re-pushes the new params + graph
-        self._swap_patch(build)
+            self.state._resync_all()                       # push the new params
+            self.state.rewire_patch(morph=self.REWIRE_MORPH_S)
+        self._safe(go)
 
     def toggle_lfo(self, i: int) -> None:
         if 0 <= i < 16:

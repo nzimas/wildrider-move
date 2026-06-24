@@ -76,14 +76,15 @@ class StateManager:
             self.bridge.recorder(rec.id, rec.target, rec.tap,
                                  rec.rolling_buffer_seconds, rec.armed)
 
-    def _sync_graph(self) -> None:
-        """Send the current connection graph (order/edges/terminals) to the engine."""
+    def _sync_graph(self, morph: float | None = None) -> None:
+        """Send the current connection graph (order/edges/terminals) to the engine.
+        `morph` (seconds) crossfades to the new routing instead of a hard rebuild."""
         audio = lambda mid: mid in self.patch.modules and self.patch.modules[mid].spec.is_audio
         order = [m for m in self.patch.topo_order() if audio(m)]
         edges = [(c["src"], c["dst"]) for c in self.patch.connections
                  if audio(c["src"]) and audio(c["dst"])]
         terminals = [t for t in self.patch.terminals() if audio(t)]
-        self.bridge.graph(order, edges, terminals)
+        self.bridge.graph(order, edges, terminals, morph=morph)
 
     def _push_module(self, m: ModuleInstance) -> None:
         """Push every effective value for a module (global + per-node vectors)."""
@@ -1461,10 +1462,11 @@ class StateManager:
         self._sync_graph()
         self._notify({"type": "patch_replaced"})
 
-    def rewire_patch(self, style: str | None = None) -> None:
+    def rewire_patch(self, style: str | None = None, morph: float | None = None) -> None:
         """Regenerate ONLY the audio connection graph. Everything else — params,
         wet/dry, node counts, MIDI links, modulation — is left exactly as is; rewire
-        changes wiring, never sound-per-module. (`style` is accepted but ignored.)"""
+        changes wiring, never sound-per-module. `morph` (seconds) crossfades to the
+        new routing with NO audio gap (for live use)."""
         ids = list(self.patch.modules.keys())
         if not ids:
             return
@@ -1473,8 +1475,9 @@ class StateManager:
         # patch level; rewire then throws it into anything-goes territory (random
         # DAG, multiple parallel paths) — a big, audible change every time.
         self._wire_random(ids)
-        self._resync_all()
-        self._sync_graph()
+        if not morph:                        # params are untouched by a rewire, so a
+            self._resync_all()               # morph needs no re-push (avoids clicks)
+        self._sync_graph(morph=morph)
         self._notify({"type": "patch_replaced"})
 
     def chain_patch(self, types: list[str], style: str | None = None) -> None:
