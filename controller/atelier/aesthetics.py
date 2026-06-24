@@ -45,9 +45,6 @@ TIME, SPACE, RATE, BRIGHT, DIRT, PITCH, MOTION, LEVEL, DENSITY, GENERIC = (
 # a specific reading matters. invert flips the artist target (high value = "less").
 SPECIAL: dict[str, tuple[str, bool]] = {
     "distort.type": (DIRT, False),      # enum ordered ~tube→cheby = increasing harshness
-    "fbank.resonance": (DIRT, False),   # resonance/feedback = ringing character
-    "fbank.gain7": (BRIGHT, False), "fbank.gain8": (BRIGHT, False),
-    "fbank.gain9": (BRIGHT, False), "fbank.gain10": (BRIGHT, False),
     "distort.tone": (BRIGHT, False),
     "distort.bias": (DIRT, False),
     "dx7.algorithm": (DIRT, False),     # FM algorithm ≈ spectral complexity
@@ -200,11 +197,11 @@ OVERRIDES: dict[str, dict[str, tuple[float, float, bool]]] = {
 # Wet/dry of character / ambience effects (module type -> wet 0..1). Modules absent
 # from a table keep their existing wet. Pure sources are never touched.
 WET: dict[str, dict[str, float]] = {
-    "vidna_obmana": {"VERB": 0.55, "SDLY": 0.3, "CLOUDS": 0.55, "GRAINS": 0.5, "COMB": 0.4, "FBANK": 0.5, "PITCH": 0.35, "TIME": 0.35, "DISTORT": 0.15},
-    "lustmord": {"VERB": 0.92, "SDLY": 0.5, "CLOUDS": 0.6, "GRAINS": 0.55, "COMB": 0.6, "FBANK": 0.7, "PITCH": 0.3, "TIME": 0.45, "DISTORT": 0.4},
-    "bernard_parmegiani": {"VERB": 0.55, "SDLY": 0.55, "CLOUDS": 0.6, "GRAINS": 0.6, "COMB": 0.5, "FBANK": 0.6, "PITCH": 0.65, "TIME": 0.6, "DISTORT": 0.4},
-    "ben_frost": {"VERB": 0.35, "SDLY": 0.4, "CLOUDS": 0.45, "GRAINS": 0.5, "COMB": 0.55, "FBANK": 0.6, "PITCH": 0.4, "TIME": 0.45, "DISTORT": 0.8},
-    "autechre": {"VERB": 0.3, "SDLY": 0.5, "CLOUDS": 0.55, "GRAINS": 0.6, "COMB": 0.55, "FBANK": 0.6, "PITCH": 0.5, "TIME": 0.55, "DISTORT": 0.65},
+    "vidna_obmana": {"VERB": 0.55, "SDLY": 0.3, "CLOUDS": 0.55, "GRAINS": 0.5, "COMB": 0.4, "PITCH": 0.35, "TIME": 0.35, "DISTORT": 0.15},
+    "lustmord": {"VERB": 0.92, "SDLY": 0.5, "CLOUDS": 0.6, "GRAINS": 0.55, "COMB": 0.6, "PITCH": 0.3, "TIME": 0.45, "DISTORT": 0.4},
+    "bernard_parmegiani": {"VERB": 0.55, "SDLY": 0.55, "CLOUDS": 0.6, "GRAINS": 0.6, "COMB": 0.5, "PITCH": 0.65, "TIME": 0.6, "DISTORT": 0.4},
+    "ben_frost": {"VERB": 0.35, "SDLY": 0.4, "CLOUDS": 0.45, "GRAINS": 0.5, "COMB": 0.55, "PITCH": 0.4, "TIME": 0.45, "DISTORT": 0.8},
+    "autechre": {"VERB": 0.3, "SDLY": 0.5, "CLOUDS": 0.55, "GRAINS": 0.6, "COMB": 0.55, "PITCH": 0.5, "TIME": 0.55, "DISTORT": 0.65},
 }
 
 # Default wet for the ported pedal FX (applied to every artist that doesn't set
@@ -283,30 +280,35 @@ def guided_wet(rng, artist: str, module_type: str) -> float | None:
 # of cacophony is too many simultaneous voices, so a patch gets a SMALL number of
 # sources (`sources_count`, each type at most once) feeding a chain of effects up
 # to `count` total. `require` effects are guaranteed; DISTORT is capped at one.
+# Pure generators (self-sounding). RINGS is the only HYBRID source — it can sit
+# silent with no input/excitation, so it must never be a patch's ONLY source, or
+# the patch has no audible generator at all.
+PURE_GENERATORS = {"DX7", "PLAITS", "MOLLY", "BUCHLOID", "BEN"}
+
 MODULE_PALETTE: dict[str, dict] = {
     "vidna_obmana": {  # immersive ambient — one or two warm voices bathed in space
         "sources": {"DX7": 3, "PLAITS": 2, "RINGS": 1, "MOLLY": 1},
-        "effects": {"VERB": 3, "CLOUDS": 3, "GRAINS": 2, "SDLY": 2, "COMB": 1, "FBANK": 1, "PITCH": 1},
+        "effects": {"VERB": 3, "CLOUDS": 3, "GRAINS": 2, "SDLY": 2, "COMB": 1, "PITCH": 1},
         "sources_count": (1, 2), "count": (7, 12), "require": ["VERB", "CLOUDS"],
     },
     "lustmord": {  # dark ambient — a single deep drone in a cavern
         "sources": {"DX7": 3, "BUCHLOID": 1, "PLAITS": 1, "MOLLY": 1},
-        "effects": {"VERB": 4, "COMB": 2, "FBANK": 1, "SDLY": 1, "PITCH": 1},
+        "effects": {"VERB": 4, "COMB": 2, "SDLY": 1, "PITCH": 1},
         "sources_count": (1, 1), "count": (6, 10), "require": ["VERB"],
     },
     "bernard_parmegiani": {  # musique concrète — one voice, transformed in space
         "sources": {"PLAITS": 2, "RINGS": 2, "DX7": 2, "BUCHLOID": 1, "MOLLY": 1},
-        "effects": {"PITCH": 3, "TIME": 3, "COMB": 2, "VERB": 2, "CLOUDS": 2, "GRAINS": 2, "SDLY": 2, "FBANK": 1, "GATE": 1},
+        "effects": {"PITCH": 3, "TIME": 3, "COMB": 2, "VERB": 2, "CLOUDS": 2, "GRAINS": 2, "SDLY": 2, "GATE": 1},
         "sources_count": (1, 2), "count": (8, 14), "require": ["TIME", "PITCH"],
     },
     "ben_frost": {  # abrasive — a voice driven hard, rhythmic gating, little reverb
         "sources": {"DX7": 3, "PLAITS": 2, "BUCHLOID": 1, "MOLLY": 2},
-        "effects": {"DISTORT": 4, "GATE": 2, "COMB": 1, "FBANK": 1, "VERB": 1, "SDLY": 1},
+        "effects": {"DISTORT": 4, "GATE": 2, "COMB": 1, "VERB": 1, "SDLY": 1},
         "sources_count": (1, 2), "count": (7, 12), "require": ["DISTORT", "GATE"],
     },
     "autechre": {  # algorithmic — one or two voices, fragmented, digital artefacts
         "sources": {"PLAITS": 3, "RINGS": 2, "DX7": 2, "MOLLY": 2},
-        "effects": {"DISTORT": 2, "GATE": 3, "TIME": 2, "COMB": 2, "FBANK": 1, "SDLY": 2, "GRAINS": 2},
+        "effects": {"DISTORT": 2, "GATE": 3, "TIME": 2, "COMB": 2, "SDLY": 2, "GRAINS": 2},
         "sources_count": (1, 2), "count": (8, 14), "require": ["GATE"],
     },
 }
@@ -333,7 +335,7 @@ for _a, _fx in _PALETTE_FX.items():
 # real chain (tone -> dirt -> modulation -> pitch/texture -> time -> space)
 # instead of random parallel summing, which is the main cause of cacophony.
 CHAIN_ORDER: dict[str, int] = {
-    "FBANK": 10, "EQUALIZER": 12, "COMB": 14,
+    "EQUALIZER": 12, "COMB": 14,
     "GATE": 20,
     "DISTORT": 30, "OVERDRIVE": 31, "AMPSIM": 32,
     "WAVEFOLDER": 33, "BITCRUSHER": 34, "LOFI": 35, "RINGMOD": 36,
@@ -414,6 +416,16 @@ ARTIST_MOLLY_SCOPE: dict[str, str] = {
 }
 
 
+def pick_molly_scope(rng, artist: str) -> str:
+    """A MOLLY voice type. Was pinned to one scope per artist, so MOLLY always came
+    out the same (a detuned 'pad' drone for the ambient artists). Bias toward the
+    artist's preferred scope but roll the others in too, for real variety."""
+    pref = ARTIST_MOLLY_SCOPE.get(artist, "lead")
+    if rng.random() < 0.5:
+        return pref
+    return rng.choice(MOLLY_SCOPES)
+
+
 def molly_value(rng, meta: ParamMetadata, scope: str) -> float | None:
     """A scope-appropriate value for a MOLLY param (or None to defer to the generic
     guided shaping for params the scope recipe doesn't cover)."""
@@ -458,6 +470,11 @@ def pick_modules(rng, artist: str) -> list[str] | None:
         return False
 
     src_bag = _weighted_bag(pal["sources"])
+    # Guarantee the FIRST source is a PURE generator (self-sounding), so no patch
+    # ends up with RINGS as its only — and possibly silent — source.
+    pure = {s: w for s, w in pal["sources"].items() if s in PURE_GENERATORS}
+    if pure:
+        take(rng.choice(_weighted_bag(pure)), cap=1)
     guard = 0
     while sum(used.get(s, 0) for s in pal["sources"]) < n_sources and guard < 100:
         guard += 1

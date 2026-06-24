@@ -984,7 +984,7 @@ class StateManager:
         for m in mods:
             # bias a MOLLY toward the artist's sound type before generating
             if m.type == "MOLLY":
-                sc = aesthetics.ARTIST_MOLLY_SCOPE.get(style)
+                sc = aesthetics.pick_molly_scope(self.rng, style)
                 ss = m.global_slots.get("molly.scope")
                 if sc and ss is not None:
                     ss.base = float(aesthetics.MOLLY_SCOPES.index(sc))
@@ -1262,8 +1262,8 @@ class StateManager:
     # ------------------------------------------------------------------ #
     def init_default(self) -> None:
         """Build the default as a free-form graph: a serial chain
-        DX7 -> FBANK -> PITCH -> TIME -> COMB -> GAIN -> SDLY -> VERB."""
-        chain = ["DX7", "FBANK", "PITCH", "TIME", "COMB", "GAIN", "SDLY", "VERB"]
+        DX7 -> PITCH -> TIME -> COMB -> GAIN -> SDLY -> VERB."""
+        chain = ["DX7", "PITCH", "TIME", "COMB", "GAIN", "SDLY", "VERB"]
         prev = None
         for i, t in enumerate(chain):
             mod = self.add_module(t, node_count=1, x=40 + i * 210, y=60)
@@ -1288,12 +1288,6 @@ class StateManager:
             nd["dx7.pan"].base = spread[i]
             nd["dx7.amp"].base = 0.4
 
-        # FBANK: gently scoop a couple of bands + a touch of resonance for colour.
-        fb = m("FBANK")
-        fb.global_slots["fbank.gain7"].base = 1.3      # ~1.5 kHz presence
-        fb.global_slots["fbank.gain3"].base = 0.7      # ~115 Hz tame
-        fb.global_slots["fbank.resonance"].base = 0.2
-        fb.wet_dry = 0.6
         m("PITCH").wet_dry = 0.3
         m("TIME").wet_dry = 0.3
         m("COMB").node_slots[0]["comb.freqOrDelay"].base = 110.0
