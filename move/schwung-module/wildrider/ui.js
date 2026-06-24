@@ -65,6 +65,8 @@ let shiftHeld = false;
 let masterTouched = false;     /* volume-knob capacitive touch held */
 let row2Down = 0;              /* Track 2 press time, for short/long detect */
 let lfoStates = new Array(16).fill(false);   /* 16 step-button global LFOs on/off */
+let lfoPending = new Array(16).fill(0);      /* hold the optimistic toggle until ~here (ms) so a
+                                              * mid-round-trip status read can't snap the LED back */
 /* ---- CHAINS manual patch builder (Shift + Track 1) ---- */
 let chainsMode = false;
 let chainsModules = [];        /* selectable module types (from modules.json) */
@@ -196,7 +198,12 @@ function readStatus() {
         macrosSynced = true;
         screenDirty = true;
     }
-    if (Array.isArray(s.lfos)) { for (var li = 0; li < 16; li++) lfoStates[li] = !!s.lfos[li]; }
+    if (Array.isArray(s.lfos)) {
+        var nowMs = Date.now();
+        for (var li = 0; li < 16; li++) {
+            if (nowMs >= lfoPending[li]) lfoStates[li] = !!s.lfos[li];  /* skip while a toggle is in flight */
+        }
+    }
     /* Only mark dirty when the VISIBLE state changed (not cpu/meter jitter), so
      * an idle patch causes ZERO LED/SPI traffic — that traffic XRuns audio. */
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
@@ -276,7 +283,7 @@ globalThis.init = function () {
     macroVal = new Array(8).fill(0); seq = 0; track3Held = false; deleteHeld = false; shiftHeld = false;
     masterTouched = false; row2Down = 0;
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
-    lfoStates = new Array(16).fill(false);
+    lfoStates = new Array(16).fill(false); lfoPending = new Array(16).fill(0);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
     levels = {}; lastLevel = null; levelCell = -1; levelAt = 0;
     overlay = null; overlayUntil = -1; ledDirty = true; screenDirty = true;
@@ -346,6 +353,7 @@ globalThis.onMidiMessageInternal = function (data) {
             showLfo(i, 'RND');
         } else {
             lfoStates[i] = !lfoStates[i];        /* optimistic */
+            lfoPending[i] = Date.now() + 600;    /* hold it through the round-trip */
             ledDirty = true;
             sendCmd('lfotoggle', i);
             showLfo(i, lfoStates[i] ? 'ON' : 'OFF');
