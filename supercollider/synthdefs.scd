@@ -553,14 +553,14 @@
 	// ---- TIME: delay-time laboratory (tap / read head) -------------------
 	SynthDef(("time" ++ suf).asSymbol, { |out = 0, in = 0, tapTime = 0.25, tapGain = 0.7,
 		speed = 1, filterFreq = 8000, filterQ = 0.7, feedbackSend = 0.2, jitter = 0,
-		smear = 0, mute = 0, pan = 0, bypass = 0, wet = 1, enable = 1|
+		smear = 0, mute = 0, pan = 0, bypass = 0, wet = 1, enable = 1, amp = 1|
 		var dry = Mix(In.ar(in, nchan)) / nchan, sig;
 		var fb = LocalIn.ar(1);
 		var t = (tapTime * 0.001) + (LFNoise1.kr(3) * jitter * 0.001);
 		var d = DelayC.ar(dry + (fb * feedbackSend.clip(0, 0.95)), 8, t.clip(0, 8));
 		d = RLPF.ar(d, filterFreq, (1/filterQ).clip(0.05, 5));
 		LocalOut.ar(~killbad.(LeakDC.ar(d).clip2(0.98)));
-		sig = ~spread.(d * tapGain * (1 - mute) * enable, nchan, pan);
+		sig = ~spread.(d * tapGain * (1 - mute) * enable * amp, nchan, pan);
 		Out.ar(out, ~killbad.(XFade2.ar(In.ar(in, nchan), sig, (wet*2-1)) * (1-bypass) + (In.ar(in,nchan)*bypass)));
 	}).add;
 
@@ -588,14 +588,14 @@
 	// ---- GAIN: movement & presence ---------------------------------------
 	SynthDef(("gain" ++ suf).asSymbol, { |out = 0, in = 0, gain = 1, mute = 0,
 		distance = 1, dopplerDepth = 0, airAbsorb = 0, presence = 0,
-		tremoloRate = 4, tremoloDepth = 0, pan = 0, bypass = 0, wet = 1, enable = 1|
+		tremoloRate = 4, tremoloDepth = 0, pan = 0, bypass = 0, wet = 1, enable = 1, amp = 1|
 		var dry = In.ar(in, nchan);
 		var atten = (1 / distance.max(0.1));
 		var sig = dry * atten;
 		sig = LPF.ar(sig, airAbsorb.linexp(0, 1, 18000, 3000).clip(2000, 18000));
 		sig = sig * (1 - (tremoloDepth * SinOsc.kr(tremoloRate).range(0, 1)));
 		sig = BPeakEQ.ar(sig, 4000, 1, presence * 6);
-		sig = sig * gain * (1 - mute) * enable;
+		sig = sig * gain * (1 - mute) * enable * amp;
 		Out.ar(out, ~killbad.((XFade2.ar(dry, sig, (wet*2-1)) * (1-bypass) + (dry*bypass))));
 	}).add;
 
