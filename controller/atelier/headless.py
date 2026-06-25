@@ -329,21 +329,26 @@ class HeadlessController:
         if mid:
             self.state.randomize_module_params(mid, self.state.rng.choice(ARTISTS))
 
-    def add_module_at(self, cell: int) -> None:
-        """Press an EMPTY pad -> drop a random module of that row's class onto it
-        (GEN row -> a generator/hybrid, FX row -> a processor) and wire it into the
-        existing patch at random — the 'growing maze' build."""
+    def add_module_at(self, cell: int, mtype: str = "") -> None:
+        """Press an EMPTY pad -> drop a module onto it and wire it into the patch at
+        random (the 'growing maze' build). `mtype` forces a specific module (Play/Rec
+        gestures load RINGS/DX7/BEN); otherwise a random module of that row's class
+        (GEN row -> generator/hybrid, FX row -> processor)."""
         from .catalog import CATALOG
         if not (0 <= cell < 32) or cell in self._pad_map.values():
             return                                      # occupied / out of range
-        gen_row = cell in self.GEN_CELLS
-        pool = [t for t, s in CATALOG.items()
-                if s.is_audio and self._is_gen(s) == gen_row]
-        if not pool:
-            return
+        if mtype and mtype in CATALOG and CATALOG[mtype].is_audio:
+            t = mtype                                   # forced (Play/Rec + empty pad)
+        else:
+            gen_row = cell in self.GEN_CELLS
+            pool = [tt for tt, s in CATALOG.items()
+                    if s.is_audio and self._is_gen(s) == gen_row]
+            if not pool:
+                return
+            t = self.state.rng.choice(pool)
         # Build the module + wiring WITHOUT a graph rebuild, then fade JUST its new
         # cords in (grow) — no rebuild click, no onset pop.
-        m = self.state.add_module(self.state.rng.choice(pool), node_count=1, sync=False)
+        m = self.state.add_module(t, node_count=1, sync=False)
         self._pad_map[m.id] = cell                      # pin to the pressed pad
         # Start RANDOMIZED (fresh random artist), not at defaults — so a grown
         # module lands varied from the get-go instead of always the same sound.
@@ -480,6 +485,10 @@ class HeadlessController:
                 cmd = doc.get("cmd")
                 if cmd == "chainsgen":          # carries a variable-length selection
                     self._safe(lambda: self.chains_patch(doc.get("chains", [])))
+                elif cmd == "addmod":           # carries an optional forced module type
+                    a = doc.get("arg", -1)
+                    self._safe(lambda: self.add_module_at(
+                        int(a) if isinstance(a, (int, float)) else -1, str(doc.get("mtype", ""))))
                 else:
                     arg = doc.get("arg", -1)
                     self._dispatch_cmd(str(cmd), int(arg) if isinstance(arg, (int, float)) else -1)
@@ -497,8 +506,6 @@ class HeadlessController:
             self._safe(lambda: self.delete_pad(arg))
         elif cmd == "randmod":
             self._safe(lambda: self.randomize_module(arg))
-        elif cmd == "addmod":
-            self._safe(lambda: self.add_module_at(arg))
         elif cmd == "lfotoggle":
             self._safe(lambda: self.toggle_lfo(arg))
         elif cmd == "lforand":

@@ -18,7 +18,7 @@ import {
     Black, BrightGreen, ForestGreen, AzureBlue, RoyalBlue,
     ElectricViolet, Violet, VividYellow, Mustard, White,
     MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveMasterTouch, MoveDelete,
-    MoveMainKnob, MoveMainButton, MoveRow1, MoveRow2, MoveRow3
+    MovePlay, MoveRec, MoveMainKnob, MoveMainButton, MoveRow1, MoveRow2, MoveRow3
 } from '/data/UserData/move-anything/shared/constants.mjs';
 import { setLED, decodeDelta } from '/data/UserData/move-anything/shared/input_filter.mjs';
 
@@ -61,6 +61,7 @@ let macrosSynced = false;
 let seq = 0, lastCmd = '', lastArg = -1;
 let track3Held = false;
 let deleteHeld = false;        /* the X / Delete key, held = delete-a-pad modifier */
+let playHeld = false, recHeld = false;   /* Play/Rec = force a generator on empty-pad add */
 let shiftHeld = false;
 let masterTouched = false;     /* volume-knob capacitive touch held */
 let row2Down = 0;              /* Track 2 press time, for short/long detect */
@@ -100,6 +101,14 @@ function writeControl() {
     host_write_file(CONTROL_FILE, JSON.stringify(doc));
 }
 function sendCmd(cmd, arg) { seq++; lastCmd = cmd; lastArg = arg; writeControl(); }
+/* addmod carries an optional forced module type (Play/Rec gestures). */
+function sendAddmod(cell, mtype) {
+    seq++; lastCmd = 'addmod'; lastArg = cell;
+    if (typeof host_write_file === 'function') {
+        host_write_file(CONTROL_FILE, JSON.stringify(
+            { seq: seq, cmd: 'addmod', arg: cell, macros: macroVal, mtype: mtype || '' }));
+    }
+}
 
 /* ================= CHAINS manual patch builder ================= */
 function enterChains() {
@@ -281,6 +290,7 @@ globalThis.init = function () {
     phase = 0; launched = false; lastStatusAt = -100;
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
     macroVal = new Array(8).fill(0); seq = 0; track3Held = false; deleteHeld = false; shiftHeld = false;
+    playHeld = false; recHeld = false;
     masterTouched = false; row2Down = 0;
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false); lfoPending = new Array(16).fill(0);
@@ -370,8 +380,10 @@ globalThis.onMidiMessageInternal = function (data) {
         const g = cellMap[cell];
         if (g === undefined || g === null) {         /* empty pad -> grow the patch */
             if (!shiftHeld && !track3Held && !deleteHeld) {
-                sendCmd('addmod', cell);
-                showAction((Math.floor(cell / 8) % 2 === 0) ? 'ADD GEN' : 'ADD FX');
+                /* Play/Rec force a specific generator; else random by row. */
+                var mt = (playHeld && recHeld) ? 'BEN' : playHeld ? 'RINGS' : recHeld ? 'DX7' : '';
+                sendAddmod(cell, mt);
+                showAction(mt ? ('ADD ' + mt) : ((Math.floor(cell / 8) % 2 === 0) ? 'ADD GEN' : 'ADD FX'));
             }
             return;
         }
@@ -419,6 +431,8 @@ globalThis.onMidiMessageInternal = function (data) {
         }
         if (d1 === MoveRow3) { track3Held = d2 > 0; return; }
         if (d1 === MoveDelete) { deleteHeld = d2 > 0; return; }   /* X key held = delete modifier */
+        if (d1 === MovePlay) { playHeld = d2 > 0; return; }       /* Play+empty pad = add RINGS */
+        if (d1 === MoveRec) { recHeld = d2 > 0; return; }         /* Rec+empty pad = add DX7; Play+Rec = BEN */
         /* The master knob (CC 79) is the Move's NATIVE host master volume — the
          * host owns it, so we never touch it (intercepting would fight the host
          * volume). Per-module level lives on the JOG wheel instead. */

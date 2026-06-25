@@ -963,14 +963,14 @@ WAVEFOLDER = ModuleSpec(
 # desktop parity, but it is not registered, so it never appears in any patch/grid.
 CATALOG: dict[str, ModuleSpec] = {
     m.type: m for m in (DX7, PITCH, TIME, COMB, GAIN, SDLY, VERB,
-                        CLOUDS, GRAINS, RINGS, BEN, BUCHLOID, ENV, GATE, DISTORT,
+                        CLOUDS, GRAINS, RINGS, BEN, ENV, GATE, DISTORT,
                         OVERDRIVE, AMPSIM, EQUALIZER, FLANGER, PHASER, RINGMOD,
                         BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER)
-}   # FBANK + PLAITS + MOLLY retired from the stack (still defined above, just not registered)
+}   # FBANK + PLAITS + MOLLY + BUCHLOID retired (defined above, just not registered)
 
 # Ordered lanes (source -> processors -> spatial tail).
 DEFAULT_LANE_ORDER = ["DX7", "PITCH", "TIME", "COMB", "GAIN",
-                      "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "BEN", "BUCHLOID", "ENV", "GATE",
+                      "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "BEN", "ENV", "GATE",
                       "DISTORT", "OVERDRIVE", "AMPSIM", "EQUALIZER", "FLANGER", "PHASER", "RINGMOD",
                       "BITCRUSHER", "LOFI", "TREMOLO", "WAVEFOLDER"]
 
