@@ -28,4 +28,9 @@ ssh "root@$HOST" "chown -R ableton:users $DEST"
 # chown clears file capabilities — re-grant scsynth's RT caps AFTER it (this
 # script is typically run after deploy.sh, so it must have the last word).
 ssh "root@$HOST" "setcap cap_ipc_lock,cap_sys_nice,cap_sys_resource=eip $DEST/bin/scsynth 2>/dev/null; getcap $DEST/bin/scsynth"
+# The shadow jackd (RNBO's binary) must run realtime (`jackd -R`) or the whole
+# audio chain stays SCHED_OTHER and XRuns under load. The ableton user's rtprio
+# ulimit is 0, so jackd needs the caps to self-elevate. Not in our tree, so cap
+# it where it lives. (Benefits the RNBO runner too; harmless if already capped.)
+ssh "root@$HOST" "JK=/data/UserData/rnbo/bin/jackd; [ -f \$JK ] && { setcap cap_ipc_lock,cap_sys_nice=eip \$JK 2>/dev/null; echo -n 'jackd caps: '; getcap \$JK; }"
 echo "Done."

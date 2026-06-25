@@ -52,11 +52,13 @@ STATUS_FILE = SHARE / "status.json"
 # ui.js -> controller: the JS sandbox has file IO but no UDP socket, so the
 # overtake ui.js writes commands/macro values here and the controller polls it.
 CONTROL_FILE = SHARE / "control.json"
-SNAP_HZ = float(_env("WR_SNAPSHOT_HZ", "8"))           # status.json rate (cheap)
+SNAP_HZ = float(_env("WR_SNAPSHOT_HZ", "5"))           # status.json rate (cheap)
 CONTROL_HZ = float(_env("WR_CONTROL_HZ", "60"))
-# The full 180KB snapshot.json is unused by the ui.js today and writing it often
-# caused JACK XRuns; write it sparsely (or disable) to protect the audio thread.
-WRITE_FULL_SNAPSHOT = _env("WR_FULL_SNAPSHOT", "1") != "0"
+# The full 180KB snapshot.json is unused by the ui.js today and writing it (even
+# every 3s) spikes the Python process to ~20% CPU and starves scsynth's audio
+# thread -> JACK XRuns (clicks/pops). Nothing reads it, so it is OFF by default;
+# set WR_FULL_SNAPSHOT=1 only if a future UI consumer needs it.
+WRITE_FULL_SNAPSHOT = _env("WR_FULL_SNAPSHOT", "0") != "0"
 FULL_SNAPSHOT_EVERY_S = float(_env("WR_FULL_SNAPSHOT_EVERY_S", "3"))
 
 
