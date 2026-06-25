@@ -174,8 +174,14 @@ DX7 = ModuleSpec(
         P("dx7.mode", "Mode", curve=Curve.ENUM, enum=["factory", "manual"], default=0, randomize=RandomizePolicy.OFF, modulatable=False),
         P("dx7.preset", "Preset", rmin=0.0, rmax=16383.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE),
         P("dx7.transpose", "Transpose", unit="semitone", rmin=-24.0, rmax=24.0, default=0.0, rate=Rate.DISCRETE, formatter="semitone", randomize=RandomizePolicy.SAFE, musical=(-12.0, 12.0)),
-        # DX7 is a pure (drone) sound source: timing/dynamics come from downstream
-        # ENV / GATE modules and (future) MIDI generators, not an internal clock.
+        # UNSTABLE INTERNAL CLOCK — an irregular sequencer that re-gates the FM
+        # envelope (so the many decaying/percussive presets stay alive + audible).
+        # Plays with timing, note length and velocity; pitch is NOT sequenced.
+        P("dx7.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("dx7.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("dx7.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("dx7.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("dx7.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
         # Manual-mode timbre controls (inert in factory mode).
         P("dx7.algorithm", "Algorithm", rmin=0.0, rmax=31.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE, musical=(0.0, 31.0)),
         P("dx7.feedback", "Feedback", rmin=0.0, rmax=7.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE, musical=(0.0, 7.0)),

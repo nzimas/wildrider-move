@@ -90,14 +90,23 @@
 		dn31 = 0, dn32 = 0, dn33 = 0, dn34 = 0, dn35 = 0, dn36 = 1, dn37 = 0, dn38 = 1, dn39 = 0, dn40 = 0, dn41 = 0,
 		detun1 = 7, detun2 = 7, detun3 = 7, detun4 = 7, detun5 = 7, detun6 = 7,
 		modSens1 = 0, modSens2 = 0, modSens3 = 0, modSens4 = 0, modSens5 = 0, modSens6 = 0,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5,
 		outMult = 2, osc_sync = 0, amp = 1, pan = 0, bypass = 0, wet = 1, enable = 1|
 		var ctls, mods, chans, sig, gOn, pmod, amod,
 		envAmp1, envEnv1, envAmp2, envEnv2, envAmp3, envEnv3, envAmp4, envEnv4,
-		envAmp5, envEnv5, envAmp6, envEnv6, envAmpP, envEnvP;
-		// Pure drone source: the gate is held (default 1). Rhythm/dynamics are added
-		// downstream by ENV/GATE modules (and, in future, MIDI generators), so there
-		// is no internal clock or envelope here.
-		gOn = gate;
+		envAmp5, envEnv5, envAmp6, envEnv6, envAmpP, envEnvP,
+		clkR, clkBase, clkTrig, clkLenV, clkVelV;
+		// UNSTABLE INTERNAL CLOCK: instead of a held drone (which leaves the many
+		// percussive/decaying presets silent), an irregular clock RE-GATES the FM
+		// envelope — drifting rate, dropped/extra hits, and per-hit note length +
+		// velocity. Pitch is NOT sequenced (the carrier freqs are untouched). This
+		// keeps every preset audible and alive, like a wonky internal sequencer.
+		clkR = (clkRate * (2 ** (LFNoise2.kr(LFNoise1.kr(0.2).exprange(0.05, 0.6)) * clkDrift * 1.5))).clip(0.05, 30);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));  // syncopated drops
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7) + Impulse.kr(0);              // + chaos hits + 1 at start
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		gOn = Trig.kr(clkTrig, clkLenV);
 		pmod = Lag2.ar(In.ar(pmodbus, 1), 0.01);
 		amod = Lag2.ar(In.ar(amodbus, 1), 0.01);
 		envEnvP = Env.new([envPL0, envPL1, envPL2, envPL3, envPL4], [envPR0, envPR1, envPR2, envPR3], 0, 3);
@@ -130,7 +139,7 @@
 		chans = [0, 1, 2, 3, 4, 5];
 		sig = FM7.ar(ctls, mods).slice(chans) * -12.dbamp;
 		sig = Mix.new([sig[0] * dn36, sig[1] * dn37, sig[2] * dn38, sig[3] * dn39, sig[4] * dn40, sig[5] * dn41]);
-		sig = sig / outMult * amp * enable;
+		sig = sig / outMult * amp * enable * clkVelV;
 		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
 	}).add;
 
