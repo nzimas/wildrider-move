@@ -473,13 +473,14 @@ def pick_modules(rng, artist: str) -> list[str] | None:
         guard += 1
         t = rng.choice(src_bag)
         take(t, cap=pal["sources"][t])               # up to the palette weight per type
-    # ---- defining effects (required) + a BOUNDED handful of others ----
-    for t in pal.get("require", []):
+    # ---- effects: ALWAYS outnumber the generators (rule of thumb: fx > gens) ----
+    n_gens = len(chosen)
+    for t in pal.get("require", []):                 # defining effects (count as fx)
         take(t, cap=1)
-    fx_target = len(chosen) + rng.randint(*pal.get("fx_count", (1, 3)))
+    fx_target = (2 * n_gens) + rng.randint(1, 2)     # fx = n_gens + 1..2  ->  fx > gens
     fx_bag = _weighted_bag(pal["effects"])
     guard = 0
-    while len(chosen) < fx_target and guard < 300:
+    while len(chosen) < fx_target and guard < 400:
         guard += 1
         t = rng.choice(fx_bag)
         take(t, cap=1 if t == "DISTORT" else 2)      # never stack distortions
