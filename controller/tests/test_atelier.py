@@ -393,7 +393,7 @@ def test_aesthetics_plans_are_artist_shaped():
     from atelier import aesthetics
     import random
     rng = random.Random(7)
-    SOURCE_TYPES = {"DX7", "PLAITS", "RINGS", "BUCHLOID", "BEN", "MOLLY"}
+    SOURCE_TYPES = {"DX7", "PLAITS", "RINGS", "BUCHLOID", "WAVIARY", "MOLLY"}
     # palettes honour required modules, the count cap, the source cap (anti-cacophony)
     # and never stack distortions.
     for artist in aesthetics.ARTISTS:
@@ -424,7 +424,7 @@ def test_aesthetics_plans_are_artist_shaped():
 
 def test_guided_patch_limits_voices_and_is_congruent():
     from atelier import aesthetics
-    SOURCE_TYPES = {"DX7", "PLAITS", "RINGS", "BUCHLOID", "BEN", "MOLLY"}
+    SOURCE_TYPES = {"DX7", "PLAITS", "RINGS", "BUCHLOID", "WAVIARY", "MOLLY"}
     # Across seeds, a guided patch never piles up voices (the cacophony guard) and
     # stays small.
     for seed in range(12):

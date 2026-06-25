@@ -278,7 +278,7 @@ def guided_wet(rng, artist: str, module_type: str) -> float | None:
 # Pure generators (self-sounding). RINGS is the only HYBRID source — it can sit
 # silent with no input/excitation, so it must never be a patch's ONLY source, or
 # the patch has no audible generator at all.
-PURE_GENERATORS = {"DX7", "BEN"}
+PURE_GENERATORS = {"DX7", "WAVIARY"}
 
 MODULE_PALETTE: dict[str, dict] = {
     "vidna_obmana": {  # immersive ambient — one or two warm voices bathed in space

@@ -170,6 +170,26 @@
 		// SynthDef can bake its bufnum; content fills async, ready before audio runs.
 		~distChebyBuf = Buffer.alloc(s, 1024, 1);
 		~distChebyBuf.cheby([1, 0, 0.4, 0, 0.3, 0, 0.2, 0, 0.15, 0, 0.1]);
+		// WAVIARY: a bank of CONSECUTIVE wavetables (same size, wavetable format)
+		// for the VOsc morphing voice. The morph axis runs smooth -> rich -> abrasive
+		// (pure sine ... buzzing near-noise). Allocated before ~buildDefs so the
+		// synthdef bakes the base bufnum + bank size; content fills async.
+		~waviaryWaves = [
+			[1],                                                                          // 0 pure sine
+			Array.fill(16, { |i| var h = i + 1; (h % 2 == 1).if({ 1 / (h * h) }, { 0 }) }), // 1 triangle (soft)
+			Array.fill(12, { |i| 1 / (i + 1) }),                                          // 2 warm saw
+			Array.fill(40, { |i| 1 / (i + 1) }),                                          // 3 bright saw
+			Array.fill(31, { |i| var h = i + 1; (h % 2 == 1).if({ 1 / h }, { 0 }) }),      // 4 square (hollow)
+			Array.fill(24, { |i| var h = i + 1; (1 / h) * (1 + (sin(h * 0.9) * 0.85)).abs }), // 5 nasal/formant
+			Array.fill(44, { |i| var h = i + 1; ((h % 3 == 0) or: { h % 5 == 0 }).if({ 1 / (h.sqrt) }, { 0.04 / h }) }), // 6 metallic
+			Array.fill(64, { |i| 1 / ((i + 1) ** 0.5) })                                  // 7 harsh near-buzz
+		];
+		~waviaryBufN = ~waviaryWaves.size;
+		~waviaryBufs = Buffer.allocConsecutive(~waviaryBufN, s, 2048, 1);
+		~waviaryWaves.do { |amps, i|
+			~waviaryBufs[i].loadCollection(
+				Signal.sineFill(1024, amps, 0.dup(amps.size)).normalize.asWavetable);
+		};
 		~buildDefs.(channels);
 		// patch cord: sum one bus into another (NaN-killed), used for all routing
 		// `gain` is the static routing gain. The fade envelope is either:

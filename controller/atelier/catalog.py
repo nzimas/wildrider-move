@@ -529,34 +529,48 @@ RINGS = ModuleSpec(
 )
 
 # --------------------------------------------------------------------------- #
-# BEN — Benjolis-inspired chaotic oscillator (port of scazan/benjolis)
+# WAVIARY — sophisticated morphing-wavetable voice (abrasive & rich)
 # --------------------------------------------------------------------------- #
-BEN = ModuleSpec(
-    type="BEN",
-    role="Chaotic twin-oscillator / rungler voice inspired by Rob Hordijk's Benjolin.",
-    node_meaning="Benjolis voice.",
-    synthdef="ben",
+# A detuned-unison VOsc sweeps a bank of consecutive wavetables (smooth -> rich
+# -> abrasive) with freq-domain FM, a crossfaded hard-sync scream, wavefolding,
+# tanh drive and an env-swept resonant MoogFF. An unstable internal clock (shared
+# with DX7) re-gates the envelopes, so the voice is alive and rhythmic, not static.
+WAVIARY = ModuleSpec(
+    type="WAVIARY",
+    role="Morphing-wavetable voice: detuned unison swept across smooth->abrasive tables, FM, hard-sync, wavefold, resonant filter.",
+    node_meaning="Wavetable voice.",
+    synthdef="waviary",
     insert_capable=False,
     generative_capable=True,
-    max_nodes=4,
-    cpu_per_node=1.6,
-    gestures=["rungler-chaos", "pwm-scream", "filter-sweep", "self-patching"],
+    max_nodes=3,
+    cpu_per_node=2.2,
+    gestures=["wavetable-morph", "hard-sync-scream", "fold-drive", "resonant-sweep"],
     node_params=[
-        P("ben.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
-        P("ben.freq1", "Osc 1 Freq", unit="Hz", rmin=20.0, rmax=2000.0, default=40.0, curve=Curve.EXP, musical=(30.0, 300.0), formatter="Hz"),
-        P("ben.freq2", "Osc 2 Freq", unit="Hz", rmin=0.1, rmax=200.0, default=4.0, curve=Curve.EXP, musical=(0.5, 30.0), formatter="Hz"),
-        P("ben.scale", "Rungler Scale", default=1.0, musical=(0.2, 1.0)),
-        P("ben.rungler1", "Rungler 1", default=0.16, musical=(0.0, 0.5)),
-        P("ben.rungler2", "Rungler 2", default=0.0, musical=(0.0, 0.5)),
-        P("ben.runglerFilt", "Filter Rungler", default=9.0, musical=(0.0, 24.0)),
-        P("ben.loop", "Loop", default=0.0, musical=(0.0, 1.0)),
-        P("ben.filtFreq", "Filter Freq", unit="Hz", rmin=20.0, rmax=12000.0, default=40.0, curve=Curve.EXP, musical=(40.0, 4000.0), formatter="Hz"),
-        P("ben.q", "Resonance", default=0.82, musical=(0.1, 0.98)),
-        P("ben.gain", "Filter Gain", rmin=0.0, rmax=4.0, default=1.0, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS),
-        P("ben.filterType", "Filter Type", curve=Curve.ENUM, enum=["lowpass", "highpass", "stateVar", "dfm1"], default=0, modulatable=False),
-        P("ben.outSignal", "Output", curve=Curve.ENUM, enum=["tri1", "pulse1", "tri2", "pulse2", "pwm", "rungler", "filter"], default=6, modulatable=False),
-        P("ben.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.5, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.3, 0.9)),
-        P("ben.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+        P("waviary.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("waviary.pitch", "Pitch", unit="Hz", rmin=20.0, rmax=2000.0, default=110.0, curve=Curve.EXP, musical=(45.0, 440.0), formatter="Hz"),
+        P("waviary.position", "Wave Pos", default=0.3, musical=(0.0, 1.0)),
+        P("waviary.posMod", "Pos Env", default=0.4, musical=(0.0, 0.8)),
+        P("waviary.posDrift", "Pos Drift", default=0.15, musical=(0.0, 0.5)),
+        P("waviary.detune", "Detune", default=0.12, musical=(0.0, 0.6)),
+        P("waviary.sub", "Sub", default=0.25, musical=(0.0, 0.7)),
+        P("waviary.noise", "Noise", default=0.0, musical=(0.0, 0.4)),
+        P("waviary.fold", "Wavefold", default=0.0, musical=(0.0, 0.95), danger=DangerClass.LOUDNESS),
+        P("waviary.drive", "Drive", default=1.0, musical=(0.5, 4.0), danger=DangerClass.LOUDNESS),
+        P("waviary.fmRatio", "FM Ratio", rmin=0.25, rmax=12.0, default=2.0, curve=Curve.EXP, musical=(0.5, 7.0)),
+        P("waviary.fmAmount", "FM Amount", default=0.0, musical=(0.0, 0.6)),
+        P("waviary.sync", "Hard Sync", default=0.0, musical=(0.0, 0.9)),
+        P("waviary.syncRatio", "Sync Ratio", rmin=1.0, rmax=8.0, default=1.5, curve=Curve.EXP, musical=(1.0, 5.0)),
+        P("waviary.cutoff", "Cutoff", unit="Hz", rmin=40.0, rmax=14000.0, default=2200.0, curve=Curve.EXP, musical=(180.0, 8000.0), formatter="Hz"),
+        P("waviary.res", "Resonance", default=0.4, musical=(0.1, 0.92), danger=DangerClass.FEEDBACK),
+        P("waviary.envDepth", "Filter Env", default=0.5, musical=(0.0, 1.0)),
+        P("waviary.attack", "Attack", unit="s", rmin=0.001, rmax=2.0, default=0.01, curve=Curve.EXP, musical=(0.002, 0.4), formatter="float2"),
+        P("waviary.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, musical=(0.4, 6.0), formatter="Hz"),
+        P("waviary.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("waviary.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("waviary.clkLen", "Note Length", default=0.35, musical=(0.05, 1.5)),
+        P("waviary.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+        P("waviary.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.5, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.3, 0.9)),
+        P("waviary.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
     ],
     global_params=[],
 )
@@ -969,14 +983,14 @@ WAVEFOLDER = ModuleSpec(
 # desktop parity, but it is not registered, so it never appears in any patch/grid.
 CATALOG: dict[str, ModuleSpec] = {
     m.type: m for m in (DX7, PITCH, TIME, COMB, GAIN, SDLY, VERB,
-                        CLOUDS, GRAINS, RINGS, BEN, ENV, GATE, DISTORT,
+                        CLOUDS, GRAINS, RINGS, WAVIARY, ENV, GATE, DISTORT,
                         OVERDRIVE, AMPSIM, EQUALIZER, FLANGER, PHASER, RINGMOD,
                         BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER)
-}   # FBANK + PLAITS + MOLLY + BUCHLOID retired (defined above, just not registered)
+}   # FBANK + PLAITS + MOLLY + BUCHLOID retired above; BEN replaced by WAVIARY
 
 # Ordered lanes (source -> processors -> spatial tail).
 DEFAULT_LANE_ORDER = ["DX7", "PITCH", "TIME", "COMB", "GAIN",
-                      "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "BEN", "ENV", "GATE",
+                      "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "WAVIARY", "ENV", "GATE",
                       "DISTORT", "OVERDRIVE", "AMPSIM", "EQUALIZER", "FLANGER", "PHASER", "RINGMOD",
                       "BITCRUSHER", "LOFI", "TREMOLO", "WAVEFOLDER"]
 

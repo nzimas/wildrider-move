@@ -332,7 +332,7 @@ class HeadlessController:
     def add_module_at(self, cell: int, mtype: str = "") -> None:
         """Press an EMPTY pad -> drop a module onto it and wire it into the patch at
         random (the 'growing maze' build). `mtype` forces a specific module (Play/Rec
-        gestures load RINGS/DX7/BEN); otherwise a random module of that row's class
+        gestures load RINGS/DX7/WAVIARY); otherwise a random module of that row's class
         (GEN row -> generator/hybrid, FX row -> processor)."""
         from .catalog import CATALOG
         if not (0 <= cell < 32) or cell in self._pad_map.values():

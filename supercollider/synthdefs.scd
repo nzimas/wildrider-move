@@ -297,54 +297,52 @@
 		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
 	}).add;
 
-	// ---- BEN: Benjolis-inspired chaotic twin-oscillator / rungler voice ----
-	// Port of scazan/benjolis' Engine_Benjolis.sc. Requires sc3-plugins
-	// (PulseDPW, SVF, DFM1). The rungler is an 8-bit shift register fed by
-	// osc1 and clocked by osc2; its output modulates both oscillators and the
-	// filter cutoff, producing chaotic, self-modulating timbres.
-	SynthDef(("ben" ++ suf).asSymbol, { |out = 0, in = 0,
-		freq1 = 40, freq2 = 4, scale = 1, rungler1 = 0.16, rungler2 = 0.0,
-		runglerFilt = 9, loop = 0, filtFreq = 40, q = 0.82, gain = 1,
-		filterType = 0, outSignal = 6, amp = 0.5, pan = 0,
-		bypass = 0, wet = 1, enable = 1|
-		var bufR = LocalIn.ar(2, 0);
-		var rungler = bufR[0], buf = bufR[1];
-		var sr = SampleDur.ir;
-		var tri1 = LFTri.ar((rungler * rungler1) + freq1);
-		var tri2 = LFTri.ar((rungler * rungler2) + freq2);
-		var osc1 = PulseDPW.ar((rungler * rungler1) + freq1);
-		var osc2 = PulseDPW.ar((rungler * rungler2) + freq2);
-		var pwm = BinaryOpUGen('>', (tri1 + tri2), 0);
-		var sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7, sh8 = 1;
-		var filt, output, sig;
-		osc1 = ((buf * loop) + (osc1 * (loop * -1 + 1)));
-		sh0 = BinaryOpUGen('>', osc1, 0.5);
-		sh0 = BinaryOpUGen('==', (sh8 > sh0), (sh8 < sh0));
-		sh0 = (sh0 * -1) + 1;
-		sh1 = DelayN.ar(Latch.ar(sh0, osc2), 0.01, sr);
-		sh2 = DelayN.ar(Latch.ar(sh1, osc2), 0.01, sr * 2);
-		sh3 = DelayN.ar(Latch.ar(sh2, osc2), 0.01, sr * 3);
-		sh4 = DelayN.ar(Latch.ar(sh3, osc2), 0.01, sr * 4);
-		sh5 = DelayN.ar(Latch.ar(sh4, osc2), 0.01, sr * 5);
-		sh6 = DelayN.ar(Latch.ar(sh5, osc2), 0.01, sr * 6);
-		sh7 = DelayN.ar(Latch.ar(sh6, osc2), 0.01, sr * 7);
-		sh8 = DelayN.ar(Latch.ar(sh7, osc2), 0.01, sr * 8);
-		rungler = ((sh1 / 2.pow(8)) + (sh2 / 2.pow(7)) + (sh3 / 2.pow(6)) +
-			(sh4 / 2.pow(5)) + (sh5 / 2.pow(4)) + (sh6 / 2.pow(3)) +
-			(sh7 / 2.pow(2)) + (sh8 / 2.pow(1)));
-		buf = rungler;
-		rungler = (rungler * scale.linlin(0, 1, 0, 127)).midicps;
-		LocalOut.ar([rungler, buf]);
-		filt = Select.ar(filterType.clip(0, 3), [
-			RLPF.ar(pwm, (rungler * runglerFilt) + filtFreq, q * -1 + 1, gain),
-			RHPF.ar(pwm, (rungler * runglerFilt) + filtFreq, q * -1 + 1, gain),
-			SVF.ar(pwm, (rungler * runglerFilt) + filtFreq, q, 1, 0, 0, 0, 0, gain),
-			DFM1.ar(pwm, (rungler * runglerFilt) + filtFreq, q, gain, 1)
-		]);
-		output = Select.ar(outSignal.clip(0, 6), [tri1, osc1, tri2, osc2, pwm, sh0, filt]);
-		// BEN's raw outputs are full-scale square/pulse waves -> ~2x hotter than the
-		// other generators (DX7 sits ~-12dB). Halve it so it sits in the mix.
-		sig = ~spread.(LeakDC.ar((output * amp * enable).tanh * 0.5), nchan, pan);
+	// ---- WAVIARY: sophisticated morphing-wavetable voice (abrasive & rich) ----
+	// A 3-voice detuned-unison VOsc sweeps through a bank of consecutive
+	// wavetables (smooth -> rich -> abrasive, see ~waviaryWaves) under `position`.
+	// Abrasion stages: freq-domain FM sidebands, a crossfaded hard-sync (SyncSaw)
+	// scream layer, wavefolding, tanh drive, and an env-swept resonant MoogFF that
+	// self-oscillates near max resonance. An unstable internal clock (shared idiom
+	// with DX7) re-gates the amp + filter envelopes so the voice stays alive and
+	// rhythmic instead of a static drone; pitch is NOT sequenced.
+	SynthDef(("waviary" ++ suf).asSymbol, { |out = 0, in = 0,
+		pitch = 110, position = 0.3, posMod = 0.4, posDrift = 0.15,
+		detune = 0.12, sub = 0.25, noise = 0.0, fold = 0.0, drive = 1.0,
+		fmRatio = 2.0, fmAmount = 0.0, sync = 0.0, syncRatio = 1.5,
+		cutoff = 2200, res = 0.4, envDepth = 0.5, attack = 0.01,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.35, clkVel = 0.5,
+		amp = 0.5, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var wtBase = ~waviaryBufs[0].bufnum, wtN = ~waviaryBufN;
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, gOn;
+		var env, fenv, pos, freqs, mod, voices, sig, fcut;
+		// unstable internal clock: drifting rate, dropped/extra hits, per-hit length+vel
+		clkR = (clkRate * (2 ** (LFNoise2.kr(LFNoise1.kr(0.2).exprange(0.05, 0.6)) * clkDrift * 1.5))).clip(0.05, 30);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7) + Impulse.kr(0);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.02, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		gOn = Trig.kr(clkTrig, clkLenV);
+		env  = EnvGen.kr(Env.perc(attack.clip(0.001, 2), clkLenV.max(0.05), 1, [-2, -4]), gOn) * clkVelV;
+		fenv = EnvGen.kr(Env.perc((attack * 0.5).clip(0.001, 1), (clkLenV * 0.8).max(0.04), 1, -4), gOn);
+		// morphing wavetable position: static + envelope sweep + slow drift -> evolving spectra
+		pos = (position + (posMod * env) + (LFNoise2.kr(0.07) * posDrift)).clip(0, 0.999);
+		pos = wtBase + (pos * (wtN - 1));
+		// 3-voice detuned unison (beating richness) + freq-domain FM (inharmonic abrasion)
+		freqs = pitch * [1, (detune * 0.6).midiratio, (detune * 0.6).neg.midiratio];
+		mod = SinOsc.ar((pitch * fmRatio.max(0.01)).clip(1, 18000)) * fmAmount * pitch;
+		voices = VOsc.ar(pos, (freqs + mod).clip(1, 18000));
+		sig = Mix(voices * [1, 0.7, 0.7]) / 2.4;
+		// hard-sync scream layer, crossfaded in by `sync`
+		sig = XFade2.ar(sig, SyncSaw.ar(pitch.clip(1, 9000), (pitch * syncRatio.max(1)).clip(1, 18000)) * 0.6, (sync.clip(0, 1) * 2 - 1));
+		sig = sig + (SinOsc.ar((pitch * 0.5).max(1)) * sub) + (LPF.ar(WhiteNoise.ar, (cutoff * 1.5).clip(40, 18000)) * noise);
+		// abrasion: crossfaded wavefold, then tanh drive
+		sig = SelectX.ar(fold.clip(0, 1), [sig, sin((sig * (1 + (fold * 6))).fold2(1) * (pi * 0.5))]);
+		sig = (sig * (1 + (drive * 4))).tanh;
+		// screaming resonant filter: env-swept + velocity-opened, self-oscillates near max res
+		fcut = (cutoff * (2 ** ((fenv * envDepth * 4) + (clkVelV * 1.2)))).clip(30, 18000);
+		sig  = MoogFF.ar(sig, fcut, (res.clip(0, 1) * 4).clip(0, 3.97));
+		// output: env-gated, leveled to sit ~-12 dB with the other generators
+		sig = ~spread.(LeakDC.ar(sig) * env * amp * enable * 0.4, nchan, pan);
 		Out.ar(out, ~killbad.(sig * (1 - bypass) * wet));
 	}).add;
 
