@@ -284,27 +284,27 @@ MODULE_PALETTE: dict[str, dict] = {
     "vidna_obmana": {  # immersive ambient — one or two warm voices bathed in space
         "sources": {"DX7": 3, "RINGS": 1},
         "effects": {"VERB": 3, "CLOUDS": 3, "GRAINS": 2, "SDLY": 2, "COMB": 1, "PITCH": 1},
-        "sources_count": (1, 2), "count": (7, 12), "require": ["VERB", "CLOUDS"],
+        "sources_count": (3, 5), "count": (7, 12), "require": ["VERB", "CLOUDS"],
     },
     "lustmord": {  # dark ambient — a single deep drone in a cavern
-        "sources": {"DX7": 3},
+        "sources": {"DX7": 3, "RINGS": 1},
         "effects": {"VERB": 4, "COMB": 2, "SDLY": 1, "PITCH": 1},
-        "sources_count": (1, 1), "count": (6, 10), "require": ["VERB"],
+        "sources_count": (2, 4), "count": (6, 10), "require": ["VERB"],
     },
     "bernard_parmegiani": {  # musique concrète — one voice, transformed in space
         "sources": {"RINGS": 2, "DX7": 2},
         "effects": {"PITCH": 3, "TIME": 3, "COMB": 2, "VERB": 2, "CLOUDS": 2, "GRAINS": 2, "SDLY": 2, "GATE": 1},
-        "sources_count": (1, 2), "count": (8, 14), "require": ["TIME", "PITCH"],
+        "sources_count": (3, 5), "count": (8, 14), "require": ["TIME", "PITCH"],
     },
     "ben_frost": {  # abrasive — a voice driven hard, rhythmic gating, little reverb
-        "sources": {"DX7": 3},
+        "sources": {"DX7": 3, "RINGS": 1},
         "effects": {"DISTORT": 4, "GATE": 2, "COMB": 1, "VERB": 1, "SDLY": 1},
-        "sources_count": (1, 2), "count": (7, 12), "require": ["DISTORT", "GATE"],
+        "sources_count": (3, 5), "count": (7, 12), "require": ["DISTORT", "GATE"],
     },
     "autechre": {  # algorithmic — one or two voices, fragmented, digital artefacts
         "sources": {"RINGS": 2, "DX7": 2},
         "effects": {"DISTORT": 2, "GATE": 3, "TIME": 2, "COMB": 2, "SDLY": 2, "GRAINS": 2},
-        "sources_count": (1, 2), "count": (8, 14), "require": ["GATE"],
+        "sources_count": (3, 5), "count": (8, 14), "require": ["GATE"],
     },
 }
 
@@ -445,43 +445,44 @@ def _weighted_bag(weights: dict[str, int]) -> list[str]:
 
 
 def pick_modules(rng, artist: str) -> list[str] | None:
-    """An artist-congruent module set: a small number of voices + a chain of
-    effects (no graph wiring — the caller wires). Few sources is the primary guard
-    against cacophony, so sources are capped hard and each source type used once."""
+    """An artist-congruent module set: GENERATORS are the backbone (several of
+    them, repeats allowed up to each type's palette weight), then a BOUNDED handful
+    of effects — so the mix stays generator-forward instead of drowning in fx."""
     pal = MODULE_PALETTE.get(artist)
     if not pal:
         return None
-    total = rng.randint(*pal["count"])
-    ns_lo, ns_hi = pal.get("sources_count", (1, 2))
-    n_sources = max(1, rng.randint(ns_lo, ns_hi))
     chosen: list[str] = []
     used: dict[str, int] = {}
 
     def take(t: str, cap: int) -> bool:
-        if used.get(t, 0) < cap and len(chosen) < total:
+        if used.get(t, 0) < cap and len(chosen) < 16:
             chosen.append(t)
             used[t] = used.get(t, 0) + 1
             return True
         return False
 
-    src_bag = _weighted_bag(pal["sources"])
-    # Guarantee the FIRST source is a PURE generator (self-sounding), so no patch
-    # ends up with RINGS as its only — and possibly silent — source.
+    # ---- generators first (the patch backbone) ----
+    ns_lo, ns_hi = pal.get("sources_count", (3, 5))
+    n_sources = max(2, rng.randint(ns_lo, ns_hi))
     pure = {s: w for s, w in pal["sources"].items() if s in PURE_GENERATORS}
-    if pure:
-        take(rng.choice(_weighted_bag(pure)), cap=1)
+    if pure:                                          # guarantee >=1 pure generator
+        take(rng.choice(_weighted_bag(pure)), cap=99)
+    src_bag = _weighted_bag(pal["sources"])
     guard = 0
-    while sum(used.get(s, 0) for s in pal["sources"]) < n_sources and guard < 100:
+    while sum(used.get(s, 0) for s in pal["sources"]) < n_sources and guard < 200:
         guard += 1
-        take(rng.choice(src_bag), cap=1)        # each source type at most once
-    for t in pal.get("require", []):            # defining effects guaranteed
+        t = rng.choice(src_bag)
+        take(t, cap=pal["sources"][t])               # up to the palette weight per type
+    # ---- defining effects (required) + a BOUNDED handful of others ----
+    for t in pal.get("require", []):
         take(t, cap=1)
+    fx_target = len(chosen) + rng.randint(*pal.get("fx_count", (1, 3)))
     fx_bag = _weighted_bag(pal["effects"])
     guard = 0
-    while len(chosen) < total and guard < 300:
+    while len(chosen) < fx_target and guard < 300:
         guard += 1
         t = rng.choice(fx_bag)
-        take(t, cap=1 if t == "DISTORT" else 2)  # never stack distortions
+        take(t, cap=1 if t == "DISTORT" else 2)      # never stack distortions
     return chosen
 
 
