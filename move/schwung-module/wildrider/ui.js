@@ -7,7 +7,10 @@
 //   Pads (short press)   toggle module on/off (off = dim), show its name
 //   Track 1              new guided random patch
 //   Track 2              rewire current patch
-//   Track 3 (hold)+pad   delete the module at that pad
+//   Track 3              toggle SCENES view (32 pads = 32 scene slots)
+//   (in SCENES) pad      load a stored scene with a 10s morph
+//   (in SCENES) shift+pad  save the current performance into that slot
+//   X (Delete) + pad     delete the module at that pad
 //   Encoders E1..E8      macros M1..M8 (slider shown while turning)
 //   Back                 exit the runner
 //
@@ -59,7 +62,6 @@ let cpu = 0, nodes = 0;
 let macroVal = new Array(8).fill(0);
 let macrosSynced = false;
 let seq = 0, lastCmd = '', lastArg = -1;
-let track3Held = false;
 let deleteHeld = false;        /* the X / Delete key, held = delete-a-pad modifier */
 let playHeld = false, recHeld = false;   /* Play/Rec = force a generator on empty-pad add */
 let shiftHeld = false;
@@ -76,6 +78,17 @@ let chainsSel = {};            /* picked: { type: instanceCount } */
 let chainsActive = null;       /* a just-selected type awaiting an instance count */
 const STEP_BASE = 16;          /* step buttons = MIDI notes 16..31 */
 const LFO_ON_COLOR = VividYellow;
+/* ---- SCENES view (Track 3 toggles it) — the 32 pads are 32 scene slots ----
+ * Pad press recalls a stored scene with a 10s morph; Shift+pad stores the
+ * current performance (patch + LFOs + macros) into that slot. */
+let scenesMode = false;
+let sceneFilled = new Array(32).fill(false);   /* which slots hold a scene */
+let sceneActive = -1;          /* currently loaded scene pad (or -1) */
+let sceneMorphTo = -1;         /* morph destination pad while morphing (or -1) */
+let lastSceneActive = -1, lastMorphTo = -1;    /* edge-detect for macro re-sync */
+const SCENE_FILLED_COLOR = RoyalBlue;
+const SCENE_ACTIVE_COLOR = White;
+const SCENE_MORPH_COLOR = ElectricViolet;
 let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
 let levels = {};               /* cell -> module audio level (amp), default 1.0 */
@@ -213,10 +226,28 @@ function readStatus() {
             if (nowMs >= lfoPending[li]) lfoStates[li] = !!s.lfos[li];  /* skip while a toggle is in flight */
         }
     }
+    /* Scene bank: filled slots + active + morph destination. */
+    if (s.scenes) {
+        if (Array.isArray(s.scenes.filled)) {
+            for (var pi = 0; pi < 32; pi++) sceneFilled[pi] = !!s.scenes.filled[pi];
+        }
+        sceneActive = (s.scenes.active != null) ? s.scenes.active : -1;
+        sceneMorphTo = (s.scenes.morphTo != null) ? s.scenes.morphTo : -1;
+        /* Re-sync the 8 knob accumulators to the recalled scene's macros once a
+         * morph FINISHES (or an instant load lands) — the controller restores the
+         * scene's macro values at that point, so re-read them from status. */
+        if ((lastMorphTo >= 0 && sceneMorphTo < 0) ||
+            (sceneMorphTo < 0 && sceneActive !== lastSceneActive)) {
+            macrosSynced = false;
+        }
+        lastMorphTo = sceneMorphTo; lastSceneActive = sceneActive;
+    }
     /* Only mark dirty when the VISIBLE state changed (not cpu/meter jitter), so
      * an idle patch causes ZERO LED/SPI traffic — that traffic XRuns audio. */
+    var sceneSig = scenesMode ? ('S' + sceneActive + '/' + sceneMorphTo + '/' +
+        sceneFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
-        return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('');
+        return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig;
     if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
 }
 
@@ -233,6 +264,32 @@ function renderLEDs() {
         setLED(STEP_BASE + i, lfoStates[i] ? LFO_ON_COLOR : Black);
     }
     ledDirty = false;
+}
+
+/* ---- SCENES view LEDs: filled=blue, loaded=white, morph target=violet ---- */
+function renderScenesLEDs() {
+    for (var c = 0; c < 32; c++) {
+        var color = Black;                              /* empty slot = UNLIT */
+        if (c === sceneMorphTo) color = SCENE_MORPH_COLOR;       /* morphing toward */
+        else if (c === sceneActive) color = SCENE_ACTIVE_COLOR;  /* currently loaded */
+        else if (sceneFilled[c]) color = SCENE_FILLED_COLOR;     /* stored scene */
+        setLED(PAD_NOTES[c], color);
+    }
+    for (var i = 0; i < 16; i++) setLED(STEP_BASE + i, Black);   /* step row off here */
+    ledDirty = false;
+}
+function drawScenes() {
+    if (typeof clear_screen !== 'function' || typeof print !== 'function') return;
+    clear_screen();
+    print(0, 6, 'SCENES', 2);
+    var n = 0; for (var i = 0; i < 32; i++) if (sceneFilled[i]) n++;
+    if (sceneMorphTo >= 0) {
+        print(0, 34, 'morphing -> ' + (sceneMorphTo + 1), 1);
+        print(0, 48, n + ' stored  shift+pad=save', 1);
+    } else {
+        print(0, 34, n + ' stored' + (sceneActive >= 0 ? '  on ' + (sceneActive + 1) : ''), 1);
+        print(0, 48, 'pad=load  shift+pad=save', 1);
+    }
 }
 
 /* ---- screen ----
@@ -289,9 +346,11 @@ globalThis.init = function () {
     if (typeof host_set_refresh_rate === 'function') host_set_refresh_rate(30);
     phase = 0; launched = false; lastStatusAt = -100;
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
-    macroVal = new Array(8).fill(0); seq = 0; track3Held = false; deleteHeld = false; shiftHeld = false;
+    macroVal = new Array(8).fill(0); seq = 0; deleteHeld = false; shiftHeld = false;
     playHeld = false; recHeld = false;
     masterTouched = false; row2Down = 0;
+    scenesMode = false; sceneFilled = new Array(32).fill(false);
+    sceneActive = -1; sceneMorphTo = -1; lastSceneActive = -1; lastMorphTo = -1;
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false); lfoPending = new Array(16).fill(0);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
@@ -322,6 +381,11 @@ globalThis.tick = function () {
         return;
     }
     if (phase - lastStatusAt >= 6) { readStatus(); lastStatusAt = phase; }   /* ~5Hz at 30Hz refresh */
+    if (scenesMode) {                       /* SCENES view owns the grid + screen */
+        if (ledDirty) renderScenesLEDs();
+        if (screenDirty) { drawScenes(); screenDirty = false; }
+        return;
+    }
     /* Long-press crossed the threshold: reveal the module name (no toggle).
      * Skip if the level was already being shown (master knob turned while held). */
     if (heldCell >= 0 && !heldNameShown && !heldAdjusted && (Date.now() - heldStart) >= LONG_PRESS_MS) {
@@ -354,6 +418,7 @@ globalThis.onMidiMessageInternal = function (data) {
     /* Step buttons (notes 16..31) = the 16 global LFOs. Press toggles on/off;
      * Shift+press re-randomizes that one LFO (keeping its on/off state). */
     if (status === 0x90 && d2 > 0 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {
+        if (scenesMode) return;                        /* step row inert in scenes view */
         const i = d1 - STEP_BASE;
         if (shiftHeld && masterTouched && i === 0) {   /* shift + vol-touch + step1 = randomize ALL */
             sendCmd('lforandall', -1);
@@ -377,9 +442,15 @@ globalThis.onMidiMessageInternal = function (data) {
      * (revealed in tick() once it crosses the threshold) and does NOT toggle. */
     if (status === 0x90 && d2 > 0 && d1 >= 68 && d1 <= 99) {
         const cell = NOTE_TO_CELL[d1];
+        if (scenesMode) {                            /* SCENES: pad=load, shift+pad=store */
+            if (shiftHeld) { sceneFilled[cell] = true; sendCmd('storescene', cell); }
+            else if (sceneFilled[cell]) { sendCmd('loadscene', cell); }
+            ledDirty = true; screenDirty = true;
+            return;
+        }
         const g = cellMap[cell];
         if (g === undefined || g === null) {         /* empty pad -> grow the patch */
-            if (!shiftHeld && !track3Held && !deleteHeld) {
+            if (!shiftHeld && !deleteHeld) {
                 /* Play/Rec force a specific generator; else random by row. */
                 var mt = (playHeld && recHeld) ? 'WAVIARY' : playHeld ? 'RINGS' : recHeld ? 'DX7' : '';
                 sendAddmod(cell, mt);
@@ -387,7 +458,7 @@ globalThis.onMidiMessageInternal = function (data) {
             }
             return;
         }
-        if (track3Held || deleteHeld) { sendCmd('delete', cell); showAction('DEL ' + g.type); return; }   /* X key (or Track3) + pad = delete */
+        if (deleteHeld) { sendCmd('delete', cell); showAction('DEL ' + g.type); return; }   /* X key + pad = delete */
         if (shiftHeld) { sendCmd('randmod', cell); showAction('RND ' + g.type); return; }  /* shift+pad = randomize module params */
         heldCell = cell; heldStart = Date.now(); heldNameShown = false; heldAdjusted = false;
         return;
@@ -429,7 +500,10 @@ globalThis.onMidiMessageInternal = function (data) {
             else { sendCmd('rewire', -1); showAction('REWIRE'); }
             return;
         }
-        if (d1 === MoveRow3) { track3Held = d2 > 0; return; }
+        if (d1 === MoveRow3) {                                  /* Track 3 = toggle SCENES view */
+            if (d2 > 0) { scenesMode = !scenesMode; ledDirty = true; screenDirty = true; showAction(scenesMode ? 'SCENES' : 'PATCH'); }
+            return;
+        }
         if (d1 === MoveDelete) { deleteHeld = d2 > 0; return; }   /* X key held = delete modifier */
         if (d1 === MovePlay) { playHeld = d2 > 0; return; }       /* Play+empty pad = add RINGS */
         if (d1 === MoveRec) { recHeld = d2 > 0; return; }         /* Rec+empty pad = add DX7; Play+Rec = WAVIARY */

@@ -750,12 +750,31 @@ class StateManager:
     # -- full-state snapshot helpers --------------------------------------- #
     def _capture_snapshot(self) -> dict[str, Any]:
         """A complete patch snapshot (the persistence shape minus the scene bank /
-        control maps, which must not be nested inside a scene)."""
+        device controller maps, which must not be nested inside a scene). The 8
+        MACROS (values + targets), however, ARE performance state, so they are
+        captured explicitly: a scene must recall the macro layout it was saved with."""
         from .persistence import patch_to_dict
         d = patch_to_dict(self)
         d.pop("scenes", None)
         d.pop("control", None)
+        d["macros"] = [m.to_dict() for m in self.control.macros.values()]
         return d
+
+    def _restore_macros(self, macro_list) -> None:
+        """Rebuild the 8 macros (values + targets) from a scene snapshot. Does NOT
+        re-apply them: Macro.apply() writes into slot.base, and those bases are what
+        the snapshot already captured and the morph interpolates — so re-applying
+        would double-count. Restoring only realigns the knob->param layout so the
+        encoders keep driving the scene's intended targets after recall."""
+        if not isinstance(macro_list, list):
+            return
+        from .control import Macro
+        self.control.macros.clear()
+        for md in macro_list:
+            try:
+                self.control.add_macro(Macro.from_dict(md))
+            except Exception:
+                pass
 
     def _full_snapshot(self) -> dict[str, Any]:
         from .snapshot import full_snapshot
@@ -842,6 +861,7 @@ class StateManager:
         self.seq.load_dict(snap.get("seq", {}))
         for sid in list(self.seq.seqs):
             self._rebuild_seq_targets(sid)
+        self._restore_macros(snap.get("macros"))
         self.build_graph()
 
     def _advance_scene_morph(self, dt: float) -> None:
@@ -878,6 +898,7 @@ class StateManager:
             sm["committed"] = True
         interp_params(self.patch, sm["src"], sm["dst"], 1.0,
                       exclusions=sm["exclusions"], policy=sm["policy"])
+        self._restore_macros(sm["dst"].get("macros"))   # realign knob->param layout
         self._resync_all()
         self._scene_morph = None
         self._notify({"type": "reload", "snapshot": self._full_snapshot()})
@@ -959,6 +980,7 @@ class StateManager:
         self.seq.load_dict(dst.get("seq", {}))
         for sid in list(self.seq.seqs):
             self._rebuild_seq_targets(sid)
+        self._restore_macros(dst.get("macros"))
         self._sync_graph()
 
     def mutate(self, amount: float, expert: bool = False,

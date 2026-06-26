@@ -285,6 +285,57 @@ class HeadlessController:
     def randomize_all_lfos(self) -> None:
         self.state.randomize_all_lfos(self._style)
 
+    # -- scenes (track-3 view: 32 pads = 32 scene slots) ------------------- #
+    SCENE_MORPH_S = 10.0                 # default morph between scenes (seconds)
+    SCENE_PREFIX = "padscene_"           # pad index -> scene id (no collision with add_scene)
+
+    def _scene_id(self, pad: int) -> str:
+        return f"{self.SCENE_PREFIX}{int(pad)}"
+
+    def _scene_pad(self, sid) -> int:
+        """Scene id -> pad index (or -1 if it is not a pad-bank scene)."""
+        if isinstance(sid, str) and sid.startswith(self.SCENE_PREFIX):
+            try:
+                p = int(sid[len(self.SCENE_PREFIX):])
+                return p if 0 <= p < 32 else -1
+            except ValueError:
+                return -1
+        return -1
+
+    def store_scene_pad(self, pad: int) -> None:
+        """Shift + pad in the scenes view: capture the WHOLE performance (patch +
+        LFOs + macros) into this slot."""
+        if not (0 <= pad < 32):
+            return
+        sid = self._scene_id(pad)
+        if sid not in self.state.scenes.scenes:
+            self.state.scenes.add_empty(sid)
+        self.state.capture_scene(sid)
+
+    def load_scene_pad(self, pad: int) -> None:
+        """Pad in the scenes view: recall a stored scene with a gradual 10 s morph
+        of every module param, LFO and macro. Empty slots are ignored."""
+        if not (0 <= pad < 32):
+            return
+        sc = self.state.scenes.scenes.get(self._scene_id(pad))
+        if not sc or not sc.filled:
+            return
+        self.state.load_scene(self._scene_id(pad), morph=self.SCENE_MORPH_S)
+
+    def _scenes_status(self) -> dict:
+        """Scene-bank state for the ui.js scenes view: which of the 32 pads hold a
+        filled scene, the active one, and the morph destination (while morphing)."""
+        sc = self.state.scenes
+        filled = [False] * 32
+        for i in range(32):
+            s = sc.scenes.get(self._scene_id(i))
+            if s and s.filled:
+                filled[i] = True
+        sm = self.state._scene_morph
+        return {"filled": filled,
+                "active": self._scene_pad(sc.active),
+                "morphTo": self._scene_pad(sm.get("dst_id")) if sm else -1}
+
     def _lfos_status(self) -> list:
         out = []
         for i in range(16):
@@ -514,6 +565,10 @@ class HeadlessController:
             self._safe(lambda: self.rerandomize_lfo(arg))
         elif cmd == "lforandall":
             self._safe(self.randomize_all_lfos)
+        elif cmd == "storescene":
+            self._safe(lambda: self.store_scene_pad(arg))
+        elif cmd == "loadscene":
+            self._safe(lambda: self.load_scene_pad(arg))
         elif cmd == "panic":
             self._safe(getattr(self.state, "panic", None) or self.bridge.panic)
 
@@ -547,6 +602,7 @@ class HeadlessController:
                 "grid": self._grid(),       # pad cell -> {type, cat, on}
                 "macros": self._macros_status(),
                 "lfos": self._lfos_status(),   # 16 bools: step-button LFO on/off
+                "scenes": self._scenes_status(),  # {filled[32], active, morphTo}
             }
             tmp = STATUS_FILE.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(status, separators=(",", ":")))
