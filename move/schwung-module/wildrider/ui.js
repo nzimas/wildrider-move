@@ -300,6 +300,7 @@ function drawScenes() {
 
 /* ---- Scene morph-time editor (Shift + Track 3): jog scans, jog-click confirms ---- */
 function handleMorphEdit(status, d1, d2) {
+    if (status === 0xB0 && d1 === MoveShift) { shiftHeld = d2 > 0; return; }  /* keep Shift tracked so its release isn't swallowed */
     if (status === 0xB0 && d1 === MoveMainKnob) {              /* jog rotate = scan 1..99 */
         var dn = decodeDelta(d2);
         if (dn !== 0) { morphTime = Math.max(1, Math.min(99, morphTime + dn)); screenDirty = true; }
