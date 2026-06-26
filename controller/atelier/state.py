@@ -804,7 +804,7 @@ class StateManager:
         dst = sc.snapshot
         self._scene_morph = {
             "dst_id": scene_id, "src": src, "dst": dst,
-            "elapsed": 0.0, "duration": float(morph), "since_frame": 0.0,
+            "start": time.monotonic(), "duration": float(morph), "since_frame": 0.0,
             "committed": False, "structural": self._morph_is_structural(src, dst),
             "exclusions": sc.exclusions, "policy": sc.discrete_policy,
         }
@@ -869,8 +869,11 @@ class StateManager:
         if not sm:
             return
         from .scenes import interp_params
-        sm["elapsed"] += dt
-        t = min(1.0, sm["elapsed"] / max(1e-4, sm["duration"]))
+        # Progress is driven by the WALL CLOCK, not accumulated tick dt: a heavy
+        # morph slows the controller's ticks, and dt is clamped (0.1s), so a
+        # dt-summed elapsed would lag and stretch a "10s" morph to ~13s. Wall-clock
+        # makes the morph land in exactly `duration` seconds regardless of tick rate.
+        t = min(1.0, (time.monotonic() - sm["start"]) / max(1e-4, sm["duration"]))
         # glide every comparable param/wet/position toward the destination
         interp_params(self.patch, sm["src"], sm["dst"], t,
                       exclusions=sm["exclusions"], policy=sm["policy"])
