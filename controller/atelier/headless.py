@@ -366,12 +366,27 @@ class HeadlessController:
 
     def set_pad_level(self, pad: int, level: float) -> None:
         """Set the audio level (the module synth's `amp` arg) of the module at a
-        pad. Every module synthdef has an `amp` arg; the engine .set's it on all
-        the module's nodes (node -1)."""
+        pad. Goes through the param SLOT (state.set_param) — not a direct engine
+        poke — so the level becomes part of the patch state and is CAPTURED by
+        scenes. Every module has an `.amp` param; it is per-node, so set all nodes."""
         mid = self._pad_to_mid(pad)
         if not mid:
             return
-        self.state.bridge.set_param(mid, "amp", -1, max(0.0, min(2.0, float(level))))
+        level = max(0.0, min(2.0, float(level)))
+        m = self.state.patch.modules.get(mid)
+        if not m:
+            return
+        spec = m.spec
+        amp_pid = next((p.id for p in spec.node_params + spec.global_params
+                        if p.id.endswith(".amp")), None)
+        if amp_pid is None:                       # no amp param -> fall back to direct poke
+            self.state.bridge.set_param(mid, "amp", -1, level)
+            return
+        if any(p.id == amp_pid for p in spec.node_params):
+            for n in range(m.node_count):
+                self.state.set_param(mid, amp_pid, n, level)
+        else:
+            self.state.set_param(mid, amp_pid, None, level)
 
     def randomize_module(self, pad: int) -> None:
         """Shift + module pad: re-roll that module's params (no LFOs touched). Uses

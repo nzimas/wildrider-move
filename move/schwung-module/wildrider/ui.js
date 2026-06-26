@@ -275,7 +275,10 @@ function renderScenesLEDs() {
         else if (sceneFilled[c]) color = SCENE_FILLED_COLOR;     /* stored scene */
         setLED(PAD_NOTES[c], color);
     }
-    for (var i = 0; i < 16; i++) setLED(STEP_BASE + i, Black);   /* step row off here */
+    /* Keep the LFO row lit in the scenes view too: scenes capture the LFO on/off
+     * states, so showing them here makes that visible — they update live as a
+     * recalled scene's pattern lands. */
+    for (var i = 0; i < 16; i++) setLED(STEP_BASE + i, lfoStates[i] ? LFO_ON_COLOR : Black);
     ledDirty = false;
 }
 function drawScenes() {
@@ -418,7 +421,6 @@ globalThis.onMidiMessageInternal = function (data) {
     /* Step buttons (notes 16..31) = the 16 global LFOs. Press toggles on/off;
      * Shift+press re-randomizes that one LFO (keeping its on/off state). */
     if (status === 0x90 && d2 > 0 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {
-        if (scenesMode) return;                        /* step row inert in scenes view */
         const i = d1 - STEP_BASE;
         if (shiftHeld && masterTouched && i === 0) {   /* shift + vol-touch + step1 = randomize ALL */
             sendCmd('lforandall', -1);
