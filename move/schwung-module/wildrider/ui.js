@@ -89,6 +89,9 @@ let lastSceneActive = -1, lastMorphTo = -1;    /* edge-detect for macro re-sync 
 const SCENE_FILLED_COLOR = RoyalBlue;
 const SCENE_ACTIVE_COLOR = White;
 const SCENE_MORPH_COLOR = ElectricViolet;
+/* Scene morph-time editor (Shift + Track 3): jog scans 1..99s, jog-click confirms. */
+let morphEdit = false;
+let morphTime = 10;            /* seconds, 1..99, default 10 */
 let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
 let levels = {};               /* cell -> module audio level (amp), default 1.0 */
@@ -295,6 +298,31 @@ function drawScenes() {
     }
 }
 
+/* ---- Scene morph-time editor (Shift + Track 3): jog scans, jog-click confirms ---- */
+function handleMorphEdit(status, d1, d2) {
+    if (status === 0xB0 && d1 === MoveMainKnob) {              /* jog rotate = scan 1..99 */
+        var dn = decodeDelta(d2);
+        if (dn !== 0) { morphTime = Math.max(1, Math.min(99, morphTime + dn)); screenDirty = true; }
+        return;
+    }
+    if (status === 0xB0 && d1 === MoveMainButton && d2 > 0) {  /* jog click = confirm */
+        sendCmd('morphtime', morphTime);
+        morphEdit = false; screenDirty = true; ledDirty = true; showAction('MORPH ' + morphTime + 's');
+        return;
+    }
+    if (status === 0xB0 && d1 === MoveBack && d2 > 0) {        /* Back = cancel */
+        morphEdit = false; screenDirty = true; ledDirty = true; return;
+    }
+    /* swallow everything else while editing */
+}
+function drawMorphEdit() {
+    if (typeof clear_screen !== 'function' || typeof print !== 'function') return;
+    clear_screen();
+    print(0, 6, 'MORPH TIME', 2);
+    print(0, 34, morphTime + ' sec', 2);
+    print(0, 56, 'jog scan   click = ok', 1);
+}
+
 /* ---- screen ----
  * Name overlay is HELD: shown from pad-down until pad-up (overlayUntil = +inf,
  * cleared on release). Macro overlay is timed. */
@@ -354,6 +382,7 @@ globalThis.init = function () {
     masterTouched = false; row2Down = 0;
     scenesMode = false; sceneFilled = new Array(32).fill(false);
     sceneActive = -1; sceneMorphTo = -1; lastSceneActive = -1; lastMorphTo = -1;
+    morphEdit = false; morphTime = 10;
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false); lfoPending = new Array(16).fill(0);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
@@ -384,6 +413,10 @@ globalThis.tick = function () {
         return;
     }
     if (phase - lastStatusAt >= 6) { readStatus(); lastStatusAt = phase; }   /* ~5Hz at 30Hz refresh */
+    if (morphEdit) {                        /* morph-time editor owns the screen */
+        if (screenDirty) { drawMorphEdit(); screenDirty = false; }
+        return;
+    }
     if (scenesMode) {                       /* SCENES view owns the grid + screen */
         if (ledDirty) renderScenesLEDs();
         if (screenDirty) { drawScenes(); screenDirty = false; }
@@ -411,6 +444,7 @@ globalThis.onMidiMessageInternal = function (data) {
     const d2 = data[2];
 
     if (chainsMode) { handleChains(status, d1, d2); return; }   /* modal: CHAINS builder */
+    if (morphEdit) { handleMorphEdit(status, d1, d2); return; }  /* modal: morph-time editor */
 
     /* Volume-knob capacitive touch (note 8, on=127 / off<=63) -> modifier. */
     if (d1 === MoveMasterTouch && (status === 0x90 || status === 0x80)) {
@@ -502,8 +536,11 @@ globalThis.onMidiMessageInternal = function (data) {
             else { sendCmd('rewire', -1); showAction('REWIRE'); }
             return;
         }
-        if (d1 === MoveRow3) {                                  /* Track 3 = toggle SCENES view */
-            if (d2 > 0) { scenesMode = !scenesMode; ledDirty = true; screenDirty = true; showAction(scenesMode ? 'SCENES' : 'PATCH'); }
+        if (d1 === MoveRow3) {                                  /* Track 3 = SCENES view; Shift+Track 3 = morph-time editor */
+            if (d2 > 0) {
+                if (shiftHeld) { morphEdit = true; screenDirty = true; }
+                else { scenesMode = !scenesMode; ledDirty = true; screenDirty = true; showAction(scenesMode ? 'SCENES' : 'PATCH'); }
+            }
             return;
         }
         if (d1 === MoveDelete) { deleteHeld = d2 > 0; return; }   /* X key held = delete modifier */

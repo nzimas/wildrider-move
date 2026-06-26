@@ -320,7 +320,8 @@ class HeadlessController:
         sc = self.state.scenes.scenes.get(self._scene_id(pad))
         if not sc or not sc.filled:
             return
-        self.state.load_scene(self._scene_id(pad), morph=self.SCENE_MORPH_S)
+        self.state.load_scene(self._scene_id(pad),
+                              morph=getattr(self, "_morph_s", self.SCENE_MORPH_S))
 
     def _scenes_status(self) -> dict:
         """Scene-bank state for the ui.js scenes view: which of the 32 pads hold a
@@ -584,6 +585,8 @@ class HeadlessController:
             self._safe(lambda: self.store_scene_pad(arg))
         elif cmd == "loadscene":
             self._safe(lambda: self.load_scene_pad(arg))
+        elif cmd == "morphtime":            # Shift+Track3 editor: set scene morph seconds
+            self._morph_s = max(1.0, min(99.0, float(arg)))
         elif cmd == "panic":
             self._safe(getattr(self.state, "panic", None) or self.bridge.panic)
 
