@@ -194,7 +194,17 @@ class ControlLayer:
         m = self.macros.get(macro_id)
         if not m:
             return []
-        m.value = max(0.0, min(1.0, value))
+        v = max(0.0, min(1.0, value))
+        # apply() is DESTRUCTIVE — it overwrites every target's slot.base with the
+        # macro-curve position. So a write whose value is unchanged from the macro's
+        # current position MUST be a no-op; otherwise re-asserting a macro at its
+        # existing value (the ui.js re-syncing its knobs after a patch/scene load,
+        # or the initial sync after generation) would snap the freshly generated /
+        # recalled param values onto the macro curve and destroy them. Only an
+        # actual knob MOVE should drive the targets.
+        if abs(v - m.value) < 1e-3:
+            return []
+        m.value = v
         return m.apply(patch)
 
     # -- learn ------------------------------------------------------------- #

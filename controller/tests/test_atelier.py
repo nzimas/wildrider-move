@@ -491,13 +491,16 @@ def test_scene_timed_morph_commits_structure():
     st.add_scene(); b = st.scenes.active
     st.capture_scene(b, "B")
     assert set(st.patch.modules) != a_ids
-    # morph back to A; drive the control-rate stepper to completion
+    # morph back to A; progress is wall-clock driven, so simulate time elapsing
+    # by rewinding the morph's start mark (the control loop just calls _advance).
+    import time
     st.load_scene(a, morph=1.0)
     assert st._scene_morph is not None and st._scene_morph["structural"]
-    for _ in range(200):
-        st._advance_scene_morph(0.02)
-        if st._scene_morph is None:
-            break
+    st._scene_morph["start"] = time.monotonic() - 0.6     # past the midpoint
+    st._advance_scene_morph(0.0)
+    assert st._scene_morph is not None and st._scene_morph["committed"]   # structure committed at mid
+    st._scene_morph["start"] = time.monotonic() - 1.1     # past the end
+    st._advance_scene_morph(0.0)
     assert st._scene_morph is None
     assert set(st.patch.modules) == a_ids       # structure reconciled to A
     assert sorted((c["src"], c["dst"]) for c in st.patch.connections) == a_conns
