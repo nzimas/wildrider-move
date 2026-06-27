@@ -10,6 +10,9 @@
 //   Track 3              toggle SCENES view (32 pads = 32 scene slots)
 //   (in SCENES) pad      load a stored scene with a 10s morph
 //   (in SCENES) shift+pad  save the current performance into that slot
+//   Track 4              toggle SAMPLER view (32 pads = 32 sample slots)
+//   (in SAMPLER) pad     tap empty=rec the master mix, tap again=stop; tap take=play/stop
+//   (in SAMPLER) X+pad   delete that take
 //   X (Delete) + pad     delete the module at that pad
 //   Encoders E1..E8      macros M1..M8 (slider shown while turning)
 //   Back                 exit the runner
@@ -19,9 +22,9 @@
 
 import {
     Black, BrightGreen, ForestGreen, AzureBlue, RoyalBlue,
-    ElectricViolet, Violet, VividYellow, Mustard, White,
+    ElectricViolet, Violet, VividYellow, Mustard, White, Red, Purple,
     MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveMasterTouch, MoveDelete,
-    MovePlay, MoveRec, MoveMainKnob, MoveMainButton, MoveRow1, MoveRow2, MoveRow3
+    MovePlay, MoveRec, MoveMainKnob, MoveMainButton, MoveRow1, MoveRow2, MoveRow3, MoveRow4
 } from '/data/UserData/move-anything/shared/constants.mjs';
 import { setLED, decodeDelta } from '/data/UserData/move-anything/shared/input_filter.mjs';
 
@@ -92,6 +95,13 @@ const SCENE_MORPH_COLOR = ElectricViolet;
 /* Scene morph-time editor (Shift + Track 3): jog scans 1..99s, jog-click confirms. */
 let morphEdit = false;
 let morphTime = 10;            /* seconds, 1..99, default 10 */
+/* ---- SAMPLER view (Track 4 toggles it) — 32 pads = 32 sample slots ----
+ * Short-press empty = record the master mix; press again = stop -> playable.
+ * Short-press a filled slot = loop playback; press again = stop. X+pad deletes.
+ * LEDs: empty=unlit, recording=red(flashing), filled idle=white, playing=purple. */
+let samplerMode = false;
+let sampStates = new Array(32).fill('empty');   /* per slot from status.json */
+let sampFlashOn = false;       /* red-flash phase for recording slots */
 let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
 let levels = {};               /* cell -> module audio level (amp), default 1.0 */
@@ -245,12 +255,17 @@ function readStatus() {
         }
         lastMorphTo = sceneMorphTo; lastSceneActive = sceneActive;
     }
+    /* Sampler slot states. */
+    if (s.sampler && Array.isArray(s.sampler.states)) {
+        for (var qi = 0; qi < 32; qi++) sampStates[qi] = s.sampler.states[qi] || 'empty';
+    }
     /* Only mark dirty when the VISIBLE state changed (not cpu/meter jitter), so
      * an idle patch causes ZERO LED/SPI traffic — that traffic XRuns audio. */
     var sceneSig = scenesMode ? ('S' + sceneActive + '/' + sceneMorphTo + '/' +
         sceneFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
+    var sampSig = samplerMode ? ('Z' + sampStates.join(',')) : '';
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
-        return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig;
+        return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig + '|' + sampSig;
     if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
 }
 
@@ -324,6 +339,32 @@ function drawMorphEdit() {
     print(0, 56, 'jog scan   click = ok', 1);
 }
 
+/* ---- SAMPLER view LEDs: empty=off, recording=red(flash), filled=white, playing=purple ---- */
+function renderSamplerLEDs(flashOn) {
+    for (var c = 0; c < 32; c++) {
+        var st = sampStates[c], color = Black;
+        if (st === 'recording') color = flashOn ? Red : Black;
+        else if (st === 'playing') color = Purple;
+        else if (st === 'filled') color = White;
+        setLED(PAD_NOTES[c], color);
+    }
+    for (var i = 0; i < 16; i++) setLED(STEP_BASE + i, Black);   /* step row off here */
+    ledDirty = false;
+}
+function drawSampler() {
+    if (typeof clear_screen !== 'function' || typeof print !== 'function') return;
+    clear_screen();
+    print(0, 6, 'SAMPLER', 2);
+    var rec = 0, fill = 0, play = 0;
+    for (var i = 0; i < 32; i++) {
+        var s = sampStates[i];
+        if (s === 'recording') rec++; else if (s === 'playing') play++; else if (s === 'filled') fill++;
+    }
+    if (rec > 0) print(0, 34, 'RECORDING...', 1);
+    else print(0, 34, (fill + play) + ' takes   ' + play + ' playing', 1);
+    print(0, 48, 'tap=rec/play  X+pad=del', 1);
+}
+
 /* ---- screen ----
  * Name overlay is HELD: shown from pad-down until pad-up (overlayUntil = +inf,
  * cleared on release). Macro overlay is timed. */
@@ -384,6 +425,7 @@ globalThis.init = function () {
     scenesMode = false; sceneFilled = new Array(32).fill(false);
     sceneActive = -1; sceneMorphTo = -1; lastSceneActive = -1; lastMorphTo = -1;
     morphEdit = false; morphTime = 10;
+    samplerMode = false; sampStates = new Array(32).fill('empty'); sampFlashOn = false;
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false); lfoPending = new Array(16).fill(0);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
@@ -416,6 +458,13 @@ globalThis.tick = function () {
     if (phase - lastStatusAt >= 6) { readStatus(); lastStatusAt = phase; }   /* ~5Hz at 30Hz refresh */
     if (morphEdit) {                        /* morph-time editor owns the screen */
         if (screenDirty) { drawMorphEdit(); screenDirty = false; }
+        return;
+    }
+    if (samplerMode) {                      /* SAMPLER view owns the grid + screen */
+        var fOn = (Math.floor(phase / 5) % 2) === 0;   /* blink ~3Hz for recording slots */
+        if (sampStates.indexOf('recording') >= 0 && fOn !== sampFlashOn) { sampFlashOn = fOn; ledDirty = true; }
+        if (ledDirty) renderSamplerLEDs(sampFlashOn);
+        if (screenDirty) { drawSampler(); screenDirty = false; }
         return;
     }
     if (scenesMode) {                       /* SCENES view owns the grid + screen */
@@ -479,6 +528,12 @@ globalThis.onMidiMessageInternal = function (data) {
      * (revealed in tick() once it crosses the threshold) and does NOT toggle. */
     if (status === 0x90 && d2 > 0 && d1 >= 68 && d1 <= 99) {
         const cell = NOTE_TO_CELL[d1];
+        if (samplerMode) {                           /* SAMPLER: tap = rec/play/stop, X+pad = delete */
+            if (deleteHeld) { sampStates[cell] = 'empty'; sendCmd('sampdel', cell); }
+            else { sendCmd('samppad', cell); }       /* controller resolves rec/play/stop by state */
+            ledDirty = true; screenDirty = true;
+            return;
+        }
         if (scenesMode) {                            /* SCENES: pad=load, shift+pad=store */
             if (shiftHeld) { sceneFilled[cell] = true; sendCmd('storescene', cell); }
             else if (sceneFilled[cell]) { sendCmd('loadscene', cell); }
@@ -540,8 +595,12 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveRow3) {                                  /* Track 3 = SCENES view; Shift+Track 3 = morph-time editor */
             if (d2 > 0) {
                 if (shiftHeld) { morphEdit = true; screenDirty = true; }
-                else { scenesMode = !scenesMode; ledDirty = true; screenDirty = true; showAction(scenesMode ? 'SCENES' : 'PATCH'); }
+                else { scenesMode = !scenesMode; if (scenesMode) samplerMode = false; ledDirty = true; screenDirty = true; showAction(scenesMode ? 'SCENES' : 'PATCH'); }
             }
+            return;
+        }
+        if (d1 === MoveRow4) {                                  /* Track 4 = toggle SAMPLER view */
+            if (d2 > 0) { samplerMode = !samplerMode; if (samplerMode) scenesMode = false; ledDirty = true; screenDirty = true; showAction(samplerMode ? 'SAMPLER' : 'PATCH'); }
             return;
         }
         if (d1 === MoveDelete) { deleteHeld = d2 > 0; return; }   /* X key held = delete modifier */

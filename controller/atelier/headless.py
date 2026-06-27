@@ -73,6 +73,8 @@ class HeadlessController:
         self._pad_map: dict = {}        # module id -> stable pad cell (0-31)
         self._style = ARTISTS[0]        # current patch's artist (for LFO re-rand)
         self._swap_lock = threading.Lock()   # serialize click-free patch swaps
+        # Sampler: 32 slots, each empty | recording | filled | playing.
+        self._samp = [{"state": "empty", "t0": 0.0, "frames": 0} for _ in range(32)]
 
     # -- lifecycle --------------------------------------------------------- #
     def start(self) -> None:
@@ -337,6 +339,43 @@ class HeadlessController:
                 "active": self._scene_pad(sc.active),
                 "morphTo": self._scene_pad(sm.get("dst_id")) if sm else -1}
 
+    # -- sampler (track-4 view: 32 pads = 32 sample slots) ----------------- #
+    SAMP_SR = 44100.0                    # Move shadow rate (fixed)
+    SAMP_MAX_S = 30.0                    # must match the engine's ~sampMaxFrames
+
+    def sampler_pad(self, pad: int) -> None:
+        """Short-press a sample slot. empty -> start recording the master mix;
+        recording -> stop (slot becomes playable); filled -> start looping playback;
+        playing -> stop."""
+        if not (0 <= pad < 32):
+            return
+        sl = self._samp[pad]
+        st = sl["state"]
+        if st == "empty":
+            self.bridge.send("/atelier/sampler/rec", pad)
+            sl["state"] = "recording"; sl["t0"] = time.monotonic()
+        elif st == "recording":
+            dur = min(time.monotonic() - sl["t0"], self.SAMP_MAX_S)
+            frames = max(1, int(dur * self.SAMP_SR))
+            self.bridge.send("/atelier/sampler/recstop", pad, frames)
+            sl["state"] = "filled"; sl["frames"] = frames
+        elif st == "filled":
+            self.bridge.send("/atelier/sampler/play", pad)
+            sl["state"] = "playing"
+        elif st == "playing":
+            self.bridge.send("/atelier/sampler/stop", pad)
+            sl["state"] = "filled"
+
+    def sampler_del(self, pad: int) -> None:
+        """X + pad in the sampler view: free the slot's buffer + synths."""
+        if not (0 <= pad < 32):
+            return
+        self.bridge.send("/atelier/sampler/free", pad)
+        self._samp[pad] = {"state": "empty", "t0": 0.0, "frames": 0}
+
+    def _sampler_status(self) -> dict:
+        return {"states": [s["state"] for s in self._samp]}
+
     def _lfos_status(self) -> list:
         out = []
         for i in range(16):
@@ -587,6 +626,10 @@ class HeadlessController:
             self._safe(lambda: self.load_scene_pad(arg))
         elif cmd == "morphtime":            # Shift+Track3 editor: set scene morph seconds
             self._morph_s = max(1.0, min(99.0, float(arg)))
+        elif cmd == "samppad":              # sampler view: record/play/stop toggle on a slot
+            self._safe(lambda: self.sampler_pad(arg))
+        elif cmd == "sampdel":              # sampler view: X + slot = delete
+            self._safe(lambda: self.sampler_del(arg))
         elif cmd == "panic":
             self._safe(getattr(self.state, "panic", None) or self.bridge.panic)
 
@@ -621,6 +664,7 @@ class HeadlessController:
                 "macros": self._macros_status(),
                 "lfos": self._lfos_status(),   # 16 bools: step-button LFO on/off
                 "scenes": self._scenes_status(),  # {filled[32], active, morphTo}
+                "sampler": self._sampler_status(),  # {states[32]}
             }
             tmp = STATUS_FILE.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(status, separators=(",", ":")))

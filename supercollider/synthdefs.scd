@@ -834,4 +834,18 @@
 		SendReply.kr(Impulse.kr(12), '/atelier/meters', Amplitude.kr(sig));
 		SendReply.kr(Impulse.kr(8), '/atelier/analysisRaw', [rms, 0, 0]);
 	}).add;
+
+	// ---- SAMPLER: capture the global master mix; loop-play a recorded slot ----
+	// Record reads ~masterBus (the full patch + sample-playback mix) into a buffer;
+	// it self-frees when the buffer fills (doneAction:2) or when the controller
+	// frees it on stop. Playback loops the recorded region [0, frames) into the
+	// master bus via a Phasor so a short take loops seamlessly (not the whole buffer).
+	SynthDef(("samplerRec" ++ suf).asSymbol, { |buf = 0, in = 0|
+		RecordBuf.ar(In.ar(in, nchan), buf, recLevel: 1, loop: 0, doneAction: 2);
+	}).add;
+	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 0.85, fade = 0.01|
+		var pos = Phasor.ar(0, BufRateScale.kr(buf), 0, frames.max(1));
+		var sig = BufRd.ar(nchan, buf, pos, loop: 1, interpolation: 2);
+		Out.ar(out, ~killbad.(sig * amp * EnvGen.kr(Env.asr(fade, 1, fade), 1)));
+	}).add;
 };

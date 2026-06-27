@@ -31,11 +31,15 @@
 	// insert, so all modules live in one ordered group and run in creation
 	// (lane) order. Topology: input -> modules -> mix -> analysis.
 	// input -> modules -> mix(lane sums) -> master(limiter) -> analysis
-	~gIn      = Group.new(s, \addToHead);
-	~gModules = Group.after(~gIn);
-	~gMix     = Group.after(~gModules);
-	~gMaster  = Group.after(~gMix);
-	~gRec     = Group.after(~gMaster);
+	~gIn       = Group.new(s, \addToHead);
+	~gModules  = Group.after(~gIn);
+	~gMix      = Group.after(~gModules);
+	// Sampler playback sits AFTER the patch mix and BEFORE the master: played
+	// samples sum into ~masterBus so they are heard through the master limiter AND
+	// re-captured by a new recording (the future sample-manipulation playground).
+	~gSampPlay = Group.after(~gMix);
+	~gMaster   = Group.after(~gSampPlay);
+	~gRec      = Group.after(~gMaster);
 };
 
 // Rebuild the entire routing from the free-form connection graph. The controller
@@ -240,6 +244,12 @@
 		 * a new patch's level for normalization while the output is faded to silence
 		 * during a click-free swap. */
 		~analysisSynth = Synth.tail(~gRec, ("analysis_" ++ channels).asSymbol, [\in, ~masterBus.index]);
+		// SAMPLER slot state (32 pads): a buffer + a rec synth + a play synth + the
+		// recorded frame count per slot. Buffers are allocated ON DEMAND when a slot
+		// is recorded (so empty slots cost no RAM) and freed on delete.
+		~sampBufs = Array.newClear(32); ~sampRecSyn = Array.newClear(32);
+		~sampPlaySyn = Array.newClear(32); ~sampFrames = Array.newClear(32);
+		~sampMaxFrames = (30 * sr).asInteger;     // 30s max take per slot
 		~built = true;
 		s.startAliveThread(0.0, 0.5);   // poll /status so avgCPU / numSynths stay live
 		~ctrl.value.sendMsg('/atelier/ready');
@@ -422,8 +432,56 @@
 };
 
 // ---- OSC responders -----------------------------------------------------
+// ---- SAMPLER manager: per-slot record/playback of the master mix ----
+~sampRecStart = { |slot|
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+		~sampPlaySyn[slot].notNil.if { ~sampPlaySyn[slot].free; ~sampPlaySyn[slot] = nil };
+		~sampRecSyn[slot].notNil.if { ~sampRecSyn[slot].free; ~sampRecSyn[slot] = nil };
+		~sampBufs[slot].notNil.if { ~sampBufs[slot].free };
+		~sampBufs[slot] = Buffer.alloc(s, ~sampMaxFrames, ~nchan, { |b|
+			~sampRecSyn[slot] = Synth.tail(~gRec, ("samplerRec_" ++ ~nchan).asSymbol,
+				[\buf, b.bufnum, \in, ~masterBus.index]);
+		});
+	};
+};
+~sampRecStop = { |slot, frames|
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+		~sampRecSyn[slot].notNil.if { ~sampRecSyn[slot].free; ~sampRecSyn[slot] = nil };
+		~sampFrames[slot] = frames.asInteger.clip(0, ~sampMaxFrames);
+	};
+};
+~sampPlayStart = { |slot|
+	var buf, fr;
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+		buf = ~sampBufs[slot]; fr = ~sampFrames[slot] ? 0;
+		(buf.notNil and: { fr > 0 }).if {
+			~sampPlaySyn[slot].notNil.if { ~sampPlaySyn[slot].free };
+			~sampPlaySyn[slot] = Synth.head(~gSampPlay, ("samplerPlay_" ++ ~nchan).asSymbol,
+				[\buf, buf.bufnum, \frames, fr, \out, ~masterBus.index]);
+		};
+	};
+};
+~sampPlayStop = { |slot|
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+		~sampPlaySyn[slot].notNil.if { ~sampPlaySyn[slot].free; ~sampPlaySyn[slot] = nil };
+	};
+};
+~sampFree = { |slot|
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+		~sampPlaySyn[slot].notNil.if { ~sampPlaySyn[slot].free; ~sampPlaySyn[slot] = nil };
+		~sampRecSyn[slot].notNil.if { ~sampRecSyn[slot].free; ~sampRecSyn[slot] = nil };
+		~sampBufs[slot].notNil.if { ~sampBufs[slot].free; ~sampBufs[slot] = nil };
+		~sampFrames[slot] = nil;
+	};
+};
+
 ~defs = [
 	OSCdef(\boot, { |m| ~boot.(m[1], m[2], m[3]) }, '/atelier/boot'),
+	OSCdef(\sampRec, { |m| ~sampRecStart.(m[1].asInteger) }, '/atelier/sampler/rec'),
+	OSCdef(\sampRecStop, { |m| ~sampRecStop.(m[1].asInteger, m[2].asInteger) }, '/atelier/sampler/recstop'),
+	OSCdef(\sampPlay, { |m| ~sampPlayStart.(m[1].asInteger) }, '/atelier/sampler/play'),
+	OSCdef(\sampStop, { |m| ~sampPlayStop.(m[1].asInteger) }, '/atelier/sampler/stop'),
+	OSCdef(\sampFree, { |m| ~sampFree.(m[1].asInteger) }, '/atelier/sampler/free'),
 	OSCdef(\modnew, { |m| ~moduleNew.(m[1], m[2], m[3], m[4], m[5]) }, '/atelier/module/new'),
 	OSCdef(\modfree, { |m| ~moduleFree.(m[1]) }, '/atelier/module/free'),
 	OSCdef(\modnodes, { |m| ~moduleNodes.(m[1], m[2]) }, '/atelier/module/nodes'),
