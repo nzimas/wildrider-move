@@ -843,9 +843,25 @@
 	SynthDef(("samplerRec" ++ suf).asSymbol, { |buf = 0, in = 0|
 		RecordBuf.ar(In.ar(in, nchan), buf, recLevel: 1, loop: 0, doneAction: 2);
 	}).add;
-	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 0.85, fade = 0.01|
-		var pos = Phasor.ar(0, BufRateScale.kr(buf), 0, frames.max(1));
-		var sig = BufRd.ar(nchan, buf, pos, loop: 1, interpolation: 2);
-		Out.ar(out, ~killbad.(sig * amp * EnvGen.kr(Env.asr(fade, 1, fade), 1)));
+	// SEAMLESS LOOP via an equal-power CROSSFADE at the seam. A plain wrap clicks
+	// because buf[end] -> buf[0] is a discontinuity. Zero-crossing search only
+	// half-fixes it (no derivative continuity; stereo channels cross at different
+	// points). Instead, the take's TAIL is crossfaded into its HEAD so the join is
+	// windowed away — content-independent and truly seamless. The loop period is
+	// (frames - fade): the body plays straight; only the last `xfade` is blended.
+	//   phase 0..period: head read = buf[phase] (fades IN over the first `fade`),
+	//   tail read = buf[phase+period] = buf[frames-fade .. frames] (fades OUT).
+	//   At the wrap the playhead is continuous (end gHead=1 at buf[period-] -> start
+	//   gTail=1 at buf[period]), and out-of-take tail reads land on `fade`=0 -> x0.
+	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 0.85, fadein = 0.02, xfade = 0.03|
+		var sr = BufSampleRate.kr(buf);
+		var fade = (xfade * sr).clip(64, (frames * 0.25).max(64));
+		var period = (frames - fade).max(1);
+		var phase = Phasor.ar(0, BufRateScale.kr(buf), 0, period);
+		var xpos = (phase / fade).min(1);
+		var sig = (BufRd.ar(nchan, buf, phase, loop: 1, interpolation: 2) * xpos.sqrt)
+		        + (BufRd.ar(nchan, buf, phase + period, loop: 1, interpolation: 2) * (1 - xpos).sqrt);
+		sig = sig * EnvGen.kr(Env.asr(fadein, 1, fadein), 1);   // declick on play start/stop
+		Out.ar(out, ~killbad.(sig * amp));
 	}).add;
 };
