@@ -76,7 +76,8 @@ class HeadlessController:
         # Sampler: 32 slots. Each has playback state + per-slot params (loop region,
         # volume, pan). loop ls/le default full take; vol unity; pan centre.
         self._samp = [{"state": "empty", "t0": 0.0, "frames": 0,
-                       "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0} for _ in range(32)]
+                       "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
+                       "cut": 1.0, "res": 0.0} for _ in range(32)]  # cut/res normalised 0..1
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 
@@ -380,7 +381,8 @@ class HeadlessController:
             return
         self.bridge.send("/atelier/sampler/free", pad)
         self._samp[pad] = {"state": "empty", "t0": 0.0, "frames": 0,
-                           "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0}
+                           "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
+                           "cut": 1.0, "res": 0.0}
 
     def set_loop_range(self, start: float, end: float) -> None:
         """CTRL-ALL loop region (knob 1 = start, knob 2 = end) for ALL takes,
@@ -395,9 +397,18 @@ class HeadlessController:
             sl["ls"], sl["le"] = s, e
         self.bridge.send("/atelier/sampler/looprange", s, e)
 
-    def set_slot_params(self, slot: int, vol: float, pan: float,
-                        ls: float, le: float) -> None:
-        """Slot-selection mode: per-slot volume / pan / loop region for ONE slot."""
+    # Filter mapping: normalised knob 0..1 -> cutoff Hz (exp 20..18k) / resonance 0..4.
+    @staticmethod
+    def _cut_hz(n: float) -> float:
+        return 20.0 * (900.0 ** max(0.0, min(1.0, n)))     # 20 Hz .. 18 kHz, exponential
+
+    @staticmethod
+    def _res_amt(n: float) -> float:
+        return max(0.0, min(1.0, n)) * 4.0                 # 0 .. 4 (MoogFF self-oscillation)
+
+    def set_slot_params(self, slot: int, vol: float, pan: float, ls: float, le: float,
+                        cut: float, res: float) -> None:
+        """Slot-selection mode: per-slot vol / pan / loop / filter for ONE slot."""
         if not (0 <= slot < 32):
             return
         v = max(0.0, min(1.3, float(vol)))
@@ -406,16 +417,29 @@ class HeadlessController:
         e = max(0.0, min(1.0, float(le)))
         if e < s + 0.01:
             e = min(1.0, s + 0.01)
+        cn = max(0.0, min(1.0, float(cut)))
+        rn = max(0.0, min(1.0, float(res)))
         sl = self._samp[slot]
-        sl["vol"], sl["pan"], sl["ls"], sl["le"] = v, p, s, e
-        self.bridge.send("/atelier/sampler/slot", slot, v, p, s, e)
+        sl["vol"], sl["pan"], sl["ls"], sl["le"], sl["cut"], sl["res"] = v, p, s, e, cn, rn
+        self.bridge.send("/atelier/sampler/slot", slot, v, p, s, e,
+                         self._cut_hz(cn), self._res_amt(rn))
+
+    def set_filter_all(self, cut: float, res: float) -> None:
+        """CTRL-ALL filter (knob 3 = cutoff, knob 4 = resonance) for ALL takes."""
+        cn = max(0.0, min(1.0, float(cut)))
+        rn = max(0.0, min(1.0, float(res)))
+        for sl in self._samp:
+            sl["cut"], sl["res"] = cn, rn
+        self.bridge.send("/atelier/sampler/filterall", self._cut_hz(cn), self._res_amt(rn))
 
     def _sampler_status(self) -> dict:
         return {"states": [s["state"] for s in self._samp],
                 "vol": [round(s["vol"], 3) for s in self._samp],
                 "pan": [round(s["pan"], 3) for s in self._samp],
                 "ls": [round(s["ls"], 4) for s in self._samp],
-                "le": [round(s["le"], 4) for s in self._samp]}
+                "le": [round(s["le"], 4) for s in self._samp],
+                "cut": [round(s["cut"], 4) for s in self._samp],
+                "res": [round(s["res"], 4) for s in self._samp]}
 
     def _lfos_status(self) -> list:
         out = []
@@ -593,6 +617,7 @@ class HeadlessController:
         last_gain = None
         last_looprange = None
         last_slot = None
+        last_filter = None
         while not self._stop.is_set():
             time.sleep(period)
             try:
@@ -640,19 +665,31 @@ class HeadlessController:
                 if key is not None and key != last_looprange:
                     last_looprange = key
                     self._safe(lambda a=key: self.set_loop_range(a[0], a[1]))
-            # Per-slot params (sampler slot-selection mode): {sel, vol, pan, ls, le}.
+            # Per-slot params (sampler slot-selection mode): {sel, vol, pan, ls, le, cut, res}.
             sd = doc.get("slot")
             if isinstance(sd, dict) and isinstance(sd.get("sel"), (int, float)):
                 try:
                     sk = (int(sd["sel"]), round(float(sd.get("vol", 1.0)), 3),
                           round(float(sd.get("pan", 0.0)), 3),
                           round(float(sd.get("ls", 0.0)), 4),
-                          round(float(sd.get("le", 1.0)), 4))
+                          round(float(sd.get("le", 1.0)), 4),
+                          round(float(sd.get("cut", 1.0)), 4),
+                          round(float(sd.get("res", 0.0)), 4))
                 except (TypeError, ValueError):
                     sk = None
                 if sk is not None and sk != last_slot:
                     last_slot = sk
-                    self._safe(lambda a=sk: self.set_slot_params(a[0], a[1], a[2], a[3], a[4]))
+                    self._safe(lambda a=sk: self.set_slot_params(*a))
+            # CTRL-ALL filter (knob 3/4 in the sampler view, no slot selected).
+            fa = doc.get("filterall")
+            if isinstance(fa, list) and len(fa) == 2:
+                try:
+                    fk = (round(float(fa[0]), 4), round(float(fa[1]), 4))
+                except (TypeError, ValueError):
+                    fk = None
+                if fk is not None and fk != last_filter:
+                    last_filter = fk
+                    self._safe(lambda a=fk: self.set_filter_all(a[0], a[1]))
             seq = doc.get("seq")
             if isinstance(seq, int) and seq != last_seq:
                 last_seq = seq

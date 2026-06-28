@@ -250,9 +250,11 @@
 		~sampBufs = Array.newClear(32); ~sampRecSyn = Array.newClear(32);
 		~sampPlaySyn = Array.newClear(32); ~sampFrames = Array.newClear(32);
 		~sampMaxFrames = (30 * sr).asInteger;     // 30s max take per slot
-		// per-slot params: loop region (0..1), volume (0..~1.3), pan (-1..1)
+		// per-slot params: loop region (0..1), volume (0..~1.3), pan (-1..1),
+		// filter cutoff (Hz) + resonance (0..4 MoogFF gain)
 		~sampLs = Array.fill(32, 0.0); ~sampLe = Array.fill(32, 1.0);
 		~sampVol = Array.fill(32, 1.0); ~sampPan = Array.fill(32, 0.0);
+		~sampCut = Array.fill(32, 18000.0); ~sampRes = Array.fill(32, 0.0);
 		~built = true;
 		s.startAliveThread(0.0, 0.5);   // poll /status so avgCPU / numSynths stay live
 		~ctrl.value.sendMsg('/atelier/ready');
@@ -462,8 +464,16 @@
 			~sampPlaySyn[slot] = Synth.head(~gSampPlay, ("samplerPlay_" ++ ~nchan).asSymbol,
 				[\buf, buf.bufnum, \frames, fr, \out, ~masterBus.index,
 				 \loopStart, ~sampLs[slot], \loopEnd, ~sampLe[slot],
-				 \amp, ~sampVol[slot], \pan, ~sampPan[slot]]);
+				 \amp, ~sampVol[slot], \pan, ~sampPan[slot],
+				 \cutoff, ~sampCut[slot], \res, ~sampRes[slot]]);
 		};
+	};
+};
+// CTRL-ALL: set the resonant filter (cutoff Hz, res 0..4) on EVERY slot + playing.
+~sampSetFilter = { |cutoff, res|
+	(~sampBufs.notNil).if {
+		32.do { |i| ~sampCut[i] = cutoff; ~sampRes[i] = res };
+		~sampPlaySyn.do { |syn| syn.notNil.if { syn.set(\cutoff, cutoff, \res, res) } };
 	};
 };
 // CTRL-ALL: set the loop region (0..1) on EVERY slot + push to all playing.
@@ -473,14 +483,16 @@
 		~sampPlaySyn.do { |syn| syn.notNil.if { syn.set(\loopStart, start.clip(0, 1), \loopEnd, end.clip(0, 1)) } };
 	};
 };
-// Per-slot params (slot-selection mode): volume, pan, loop start/end for ONE slot.
-~sampSetSlot = { |slot, vol, pan, ls, le|
+// Per-slot params (slot-selection mode): vol, pan, loop start/end, filter cut/res.
+~sampSetSlot = { |slot, vol, pan, ls, le, cutoff, res|
 	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
 		~sampVol[slot] = vol.max(0); ~sampPan[slot] = pan.clip(-1, 1);
 		~sampLs[slot] = ls.clip(0, 1); ~sampLe[slot] = le.clip(0, 1);
+		~sampCut[slot] = cutoff; ~sampRes[slot] = res;
 		~sampPlaySyn[slot].notNil.if {
 			~sampPlaySyn[slot].set(\amp, ~sampVol[slot], \pan, ~sampPan[slot],
-				\loopStart, ~sampLs[slot], \loopEnd, ~sampLe[slot]);
+				\loopStart, ~sampLs[slot], \loopEnd, ~sampLe[slot],
+				\cutoff, ~sampCut[slot], \res, ~sampRes[slot]);
 		};
 	};
 };
@@ -506,7 +518,8 @@
 	OSCdef(\sampStop, { |m| ~sampPlayStop.(m[1].asInteger) }, '/atelier/sampler/stop'),
 	OSCdef(\sampFree, { |m| ~sampFree.(m[1].asInteger) }, '/atelier/sampler/free'),
 	OSCdef(\sampLoop, { |m| ~sampSetLoop.(m[1], m[2]) }, '/atelier/sampler/looprange'),
-	OSCdef(\sampSlot, { |m| ~sampSetSlot.(m[1].asInteger, m[2], m[3], m[4], m[5]) }, '/atelier/sampler/slot'),
+	OSCdef(\sampSlot, { |m| ~sampSetSlot.(m[1].asInteger, m[2], m[3], m[4], m[5], m[6], m[7]) }, '/atelier/sampler/slot'),
+	OSCdef(\sampFilt, { |m| ~sampSetFilter.(m[1], m[2]) }, '/atelier/sampler/filterall'),
 	OSCdef(\modnew, { |m| ~moduleNew.(m[1], m[2], m[3], m[4], m[5]) }, '/atelier/module/new'),
 	OSCdef(\modfree, { |m| ~moduleFree.(m[1]) }, '/atelier/module/free'),
 	OSCdef(\modnodes, { |m| ~moduleNodes.(m[1], m[2]) }, '/atelier/module/nodes'),

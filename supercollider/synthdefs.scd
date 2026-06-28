@@ -857,7 +857,7 @@
 	// CTRL-ALL knob scrub glides the loop region smoothly instead of clicking. The
 	// crossfade follows the chosen region [s, e): tail buf[e-fade..e] fades out, head
 	// buf[s..s+fade] fades in.
-	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 1.0, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1, pan = 0|
+	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 1.0, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1, pan = 0, cutoff = 18000, res = 0|
 		var sr = BufSampleRate.kr(buf);
 		var rate = BufRateScale.kr(buf);
 		var startF = (loopStart * frames).max(0);
@@ -874,6 +874,9 @@
 		var tail = BufRd.ar(nchan, buf, pos, loop: 1, interpolation: 2);
 		var head = BufRd.ar(nchan, buf, startF + (pos - (endF - fade)), loop: 1, interpolation: 2);
 		var sig = (tail * (1 - u).sqrt) + (head * u.sqrt);
+		// resonant filter: MoogFF 4-pole ladder (self-oscillates near res 4). Lagged
+		// for smooth sweeps; the 18k/0 default is ~transparent (filter "off").
+		sig = MoogFF.ar(sig, cutoff.lag(0.02).clip(20, 18000), res.lag(0.02).clip(0, 3.97));
 		sig = ~panOut.(sig, pan, nchan);                         // per-slot pan (stereo balance)
 		sig = sig * EnvGen.kr(Env.asr(fadein, 1, fadein), 1) * amp.lag(0.03);  // per-slot volume
 		Out.ar(out, ~killbad.(sig));
