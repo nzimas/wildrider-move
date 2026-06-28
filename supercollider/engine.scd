@@ -498,7 +498,9 @@
 };
 ~sampPlayStop = { |slot|
 	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
-		~sampPlaySyn[slot].notNil.if { ~sampPlaySyn[slot].free; ~sampPlaySyn[slot] = nil };
+		// gate -> 0: the play synth fades out over `release` (0.5s) then frees itself
+		// (doneAction:2). Drop the reference so a re-play starts a fresh synth.
+		~sampPlaySyn[slot].notNil.if { ~sampPlaySyn[slot].set(\gate, 0); ~sampPlaySyn[slot] = nil };
 	};
 };
 ~sampFree = { |slot|

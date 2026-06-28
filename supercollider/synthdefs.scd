@@ -857,7 +857,7 @@
 	// CTRL-ALL knob scrub glides the loop region smoothly instead of clicking. The
 	// crossfade follows the chosen region [s, e): tail buf[e-fade..e] fades out, head
 	// buf[s..s+fade] fades in.
-	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 1.0, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1, pan = 0, cutoff = 18000, res = 0|
+	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 1.0, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1, pan = 0, cutoff = 18000, res = 0, gate = 1, release = 0.5|
 		var sr = BufSampleRate.kr(buf);
 		var rate = BufRateScale.kr(buf);
 		var startF = (loopStart * frames).max(0);
@@ -874,16 +874,19 @@
 		var tail = BufRd.ar(nchan, buf, pos, loop: 1, interpolation: 2);
 		var head = BufRd.ar(nchan, buf, startF + (pos - (endF - fade)), loop: 1, interpolation: 2);
 		var sig = (tail * (1 - u).sqrt) + (head * u.sqrt);
-		// resonant filter that KEEPS the passband volume at high resonance (unlike a
-		// Moog ladder, whose feedback steals body/floor). RLPF holds unity gain at DC
-		// regardless of Q, so the resonance only ADDS a peak. A 2x cascade gives a
-		// 4-pole slope with the resonance on the 2nd stage. res 0..1 -> rq 1..0.08
-		// (Q 1..~12). 18k/0 default is ~transparent.
+		// resonant filter (RLPF cascade — keeps passband volume at high res, see
+		// below). It is BYPASSED when fully open so playback is BIT-EXACT to the take:
+		// an always-on LP even at 18k rolls off the top octave -> the lost crispiness.
+		// `wet` blends the filtered path in (50ms) only once cutoff drops / res rises.
 		var fc = cutoff.lag(0.02).clip(20, 18000);
 		var rq = (0.08 ** res.lag(0.02).clip(0, 1)).clip(0.08, 1);
-		sig = RLPF.ar(RLPF.ar(sig, fc, 1.0), fc, rq);
-		sig = ~panOut.(sig, pan, nchan);                         // per-slot pan (stereo balance)
-		sig = sig * EnvGen.kr(Env.asr(fadein, 1, fadein), 1) * amp.lag(0.03);  // per-slot volume
+		var filtered = RLPF.ar(RLPF.ar(sig, fc, 1.0), fc, rq);
+		var wet = ((cutoff < 17000) + (res > 0.02)).clip(0, 1).lag(0.05);
+		sig = (sig * (1 - wet)) + (filtered * wet);
+		// transparent stereo balance: pan 0 leaves L/R untouched (no centre gain change).
+		sig = (nchan == 2).if({ [sig[0] * (1 - pan).clip(0, 1), sig[1] * (1 + pan).clip(0, 1)] }, { sig });
+		// amp env: fast fade-IN on start; 0.5s fade-OUT on stop (gate->0) then self-free.
+		sig = sig * EnvGen.kr(Env.asr(fadein, 1, release), gate, doneAction: 2) * amp.lag(0.03);
 		Out.ar(out, ~killbad.(sig));
 	}).add;
 };
