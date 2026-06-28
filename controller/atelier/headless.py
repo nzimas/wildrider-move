@@ -506,20 +506,27 @@ class HeadlessController:
         # /fxset <slot> <which> <on> name val ... — engine builds/teardowns the module
         self.bridge.send("/atelier/sampler/fxset", slot, which, on, *flat)
 
-    def sampler_fx(self, fx: str, sels: list, on: int, rand: int) -> None:
-        """Step-button FX on the targeted slots. on -> bypass toggle; rand (with on)
-        -> (re)randomize the module's full param set. fx is 'gate' or 'dist'."""
-        if fx not in _SAMP_FX_WHICH:
-            return
-        for s in sels:
+    def sampler_fx_sync(self, slots: list, armed: list, rerand: list) -> None:
+        """Stamp the armed FX set onto the given slots: engage each armed FX (with
+        fresh random params when newly engaged, or when its rerand flag is set),
+        and disengage the rest. Slots not listed are left untouched (FX persist)."""
+        for s in slots:
             s = int(s)
             if not (0 <= s < 32):
                 continue
             sl = self._samp[s]
-            sl[fx + "_on"] = 1 if on else 0
-            if on and rand:
-                sl[fx + "_params"] = self._rand_fx(fx)
-            self._push_slotfx(s, fx)
+            for fxi, fx in enumerate(_SAMP_FX_ORDER):
+                want = 1 if (fxi < len(armed) and armed[fxi]) else 0
+                rer = 1 if (rerand and fxi < len(rerand) and rerand[fxi]) else 0
+                cur = sl[fx + "_on"]
+                if want and (not cur or rer):
+                    sl[fx + "_on"] = 1
+                    sl[fx + "_params"] = self._rand_fx(fx)
+                    self._push_slotfx(s, fx)
+                elif cur and not want:
+                    sl[fx + "_on"] = 0
+                    self._push_slotfx(s, fx)
+                # want and cur and not rer -> already engaged, leave as-is
 
     def set_pitch_all(self, semis: float) -> None:
         """CTRL-ALL pitch (knob 5, no selection): semitone shift for ALL takes."""
@@ -728,7 +735,7 @@ class HeadlessController:
         last_slot = None
         last_filter = None
         last_pitch = None
-        last_fx = None
+        last_sync_n = None
         while not self._stop.is_set():
             time.sleep(period)
             try:
@@ -806,15 +813,16 @@ class HeadlessController:
                 if pk is not None and pk != last_pitch:
                     last_pitch = pk
                     self._safe(lambda v=pk: self.set_pitch_all(v))
-            # Sampler step-button FX: {fx, sels, on, rand, n} (n = monotonic so a
-            # re-randomize with identical on-state still triggers).
-            fx = doc.get("sampfx")
-            if isinstance(fx, dict) and isinstance(fx.get("sels"), list):
-                fxk = (str(fx.get("fx")), tuple(int(x) for x in fx["sels"]),
-                       int(bool(fx.get("on"))), int(bool(fx.get("rand"))), int(fx.get("n", 0)))
-                if fxk != last_fx:
-                    last_fx = fxk
-                    self._safe(lambda a=fxk: self.sampler_fx(a[0], list(a[1]), a[2], a[3]))
+            # Sampler step-button FX: stamp the armed FX set onto the selected slots.
+            # {slots, armed[4], rerand[4], n}. n monotonic so a re-stamp/re-randomize
+            # with an identical mask still triggers.
+            sync = doc.get("sampfxsync")
+            if isinstance(sync, dict) and isinstance(sync.get("slots"), list):
+                sn = int(sync.get("n", 0))
+                if sn != last_sync_n:
+                    last_sync_n = sn
+                    self._safe(lambda d=sync: self.sampler_fx_sync(
+                        d["slots"], d.get("armed", []), d.get("rerand", [])))
             seq = doc.get("seq")
             if isinstance(seq, int) and seq != last_seq:
                 last_seq = seq

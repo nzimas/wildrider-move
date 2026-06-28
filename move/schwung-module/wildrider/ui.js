@@ -116,16 +116,21 @@ let lastSamParam = null, lastSamValue = 0;     /* last per-slot edit (sent as `s
 let sampVol = new Array(32).fill(1.0), sampPan = new Array(32).fill(0.0);
 let sampLs = new Array(32).fill(0.0), sampLe = new Array(32).fill(1.0);
 let sampCut = new Array(32).fill(1.0), sampRes = new Array(32).fill(0.0), sampPit = new Array(32).fill(0.0);
-/* Per-slot step-button FX. Step button index = FX_STEPS position. */
-const FX_STEPS = ['gate', 'dist', 'comb', 'clouds'];   /* step 1..4 */
+/* Step-button FX. WORKFLOW: a step button toggles that FX in the ARMED set
+ * (no selection needed); the armed FX are then stamped onto slots as you select
+ * them (shift+pad). So: toggle the FX first, then pick the slots it applies to. */
+const FX_STEPS = ['gate', 'dist', 'comb', 'clouds'];   /* step 1..4 = FX position */
+let fxArmed = [0, 0, 0, 0];                    /* which FX are armed (shown on the step LEDs) */
 let sampGateOn = new Array(32).fill(0), sampDistOn = new Array(32).fill(0);
 let sampCombOn = new Array(32).fill(0), sampCloudsOn = new Array(32).fill(0);
-let pendingSampFx = null, fxN = 0;            /* sampfx event sent in writeControl */
+let pendingFxSync = null, fxN = 0;            /* {slots, armed, rerand, n} sent in writeControl */
 const FX_ON_COLOR = Mustard;
-/* map an FX name to its per-slot on-state array */
-function fxArr(name) {
-    return (name === 'gate') ? sampGateOn : (name === 'dist') ? sampDistOn
-         : (name === 'comb') ? sampCombOn : (name === 'clouds') ? sampCloudsOn : null;
+/* Queue an FX sync: stamp `fxArmed` onto `slots` (controller engages armed FX with
+ * fresh random params, disengages the rest). rerand[i]=1 re-randomizes FX i even if
+ * already on. Re-sent every writeControl; the controller de-dups on the n counter. */
+function queueFxSync(slots, rerand) {
+    pendingFxSync = { slots: slots.slice(), armed: fxArmed.slice(),
+                      rerand: rerand || [0, 0, 0, 0], n: ++fxN };
 }
 let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
@@ -153,7 +158,7 @@ function writeControl() {
     doc.filterall = [filtCut, filtRes];     /* CTRL-ALL filter cutoff/res */
     doc.pitchall = filtPit;                 /* CTRL-ALL pitch (semitones) */
     if (selSlots.length > 0 && lastSamParam) doc.samedit = { sels: selSlots, p: lastSamParam, v: lastSamValue };
-    if (pendingSampFx) doc.sampfx = pendingSampFx;
+    if (pendingFxSync) doc.sampfxsync = pendingFxSync;
     host_write_file(CONTROL_FILE, JSON.stringify(doc));
 }
 function sendCmd(cmd, arg) { seq++; lastCmd = cmd; lastArg = arg; writeControl(); }
@@ -306,7 +311,7 @@ function readStatus() {
      * an idle patch causes ZERO LED/SPI traffic — that traffic XRuns audio. */
     var sceneSig = scenesMode ? ('S' + sceneActive + '/' + sceneMorphTo + '/' +
         sceneFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
-    var sampSig = samplerMode ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',') + '|' + sampGateOn.join('') + sampDistOn.join('') + sampCombOn.join('') + sampCloudsOn.join('')) : '';
+    var sampSig = samplerMode ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',') + '|' + fxArmed.join('') + sampGateOn.join('') + sampDistOn.join('') + sampCombOn.join('') + sampCloudsOn.join('')) : '';
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
         return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig + '|' + sampSig;
     if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
@@ -392,12 +397,10 @@ function renderSamplerLEDs(flashOn) {
         else if (st === 'filled') color = White;
         setLED(PAD_NOTES[c], color);
     }
-    /* step buttons = per-slot FX (step N = FX_STEPS[N-1]). FX target only the
-     * selection, so light them from the primary selected slot; off when nothing is
-     * selected (the buttons are inert without a target). */
+    /* step buttons (1..4) show the ARMED FX set; armed FX are stamped onto slots as
+     * they are selected. Steps 5-16 are unused here. */
     for (var i = 0; i < 16; i++) {
-        var on = false;
-        if (selPrimary >= 0 && i < FX_STEPS.length) { var a = fxArr(FX_STEPS[i]); on = a && !!a[selPrimary]; }
+        var on = (i < FX_STEPS.length) && !!fxArmed[i];
         setLED(STEP_BASE + i, on ? FX_ON_COLOR : Black);
     }
     ledDirty = false;
@@ -512,7 +515,8 @@ globalThis.init = function () {
     sampLs = new Array(32).fill(0.0); sampLe = new Array(32).fill(1.0);
     sampCut = new Array(32).fill(1.0); sampRes = new Array(32).fill(0.0); sampPit = new Array(32).fill(0.0);
     sampGateOn = new Array(32).fill(0); sampDistOn = new Array(32).fill(0);
-    sampCombOn = new Array(32).fill(0); sampCloudsOn = new Array(32).fill(0); pendingSampFx = null; fxN = 0;
+    sampCombOn = new Array(32).fill(0); sampCloudsOn = new Array(32).fill(0);
+    fxArmed = [0, 0, 0, 0]; pendingFxSync = null; fxN = 0;
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false); lfoPending = new Array(16).fill(0);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
@@ -607,25 +611,22 @@ globalThis.onMidiMessageInternal = function (data) {
      * Shift+press re-randomizes that one LFO (keeping its on/off state). */
     if (status === 0x90 && d2 > 0 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {
         const i = d1 - STEP_BASE;
-        if (samplerMode) {                       /* SAMPLER: step buttons toggle per-slot FX on the SELECTED slots only */
-            var fxName = (i < FX_STEPS.length) ? FX_STEPS[i] : null;
-            var arr = fxName ? fxArr(fxName) : null;
-            if (fxName && selSlots.length > 0) {  /* FX target ONLY selected slots; no selection = no-op */
-                var curOn = arr[selPrimary];
-                var newOn, doRand;
-                if (curOn) { if (shiftHeld) { newOn = 1; doRand = 1; } else { newOn = 0; doRand = 0; } }
-                else { newOn = 1; doRand = 1; }   /* toggling ON randomizes the params */
-                for (var k = 0; k < selSlots.length; k++) arr[selSlots[k]] = newOn;   /* optimistic */
-                fxN++;
-                pendingSampFx = { fx: fxName, sels: selSlots.slice(), on: newOn, rand: doRand, n: fxN };
-                writeControl();
-                showAction(fxName.toUpperCase() + (newOn ? (doRand && curOn ? ' RND' : ' ON') : ' OFF'));
-                ledDirty = true; screenDirty = true;
-            } else if (fxName) {
-                showAction('SELECT A SLOT');      /* tell the user the FX need a target */
+        if (samplerMode && i < FX_STEPS.length) {  /* SAMPLER: step buttons ARM an FX (applied to selected slots) */
+            if (shiftHeld && fxArmed[i]) {       /* shift + step (armed) = re-randomize it on the selected slots */
+                var rr = [0, 0, 0, 0]; rr[i] = 1;
+                queueFxSync(selSlots, rr);
+                showAction(FX_STEPS[i].toUpperCase() + ' RND');
+            } else {                             /* toggle the FX in the armed set; stamp onto selected slots */
+                fxArmed[i] = fxArmed[i] ? 0 : 1;
+                queueFxSync(selSlots, null);
+                showAction(FX_STEPS[i].toUpperCase() + (fxArmed[i] ? ' ARMED' : ' OFF') +
+                    (selSlots.length ? '' : ' — select slots'));
             }
+            writeControl();
+            ledDirty = true; screenDirty = true;
             return;                              /* step row is FX in the sampler view (no LFO) */
         }
+        if (samplerMode) return;                 /* steps 5-16 unused in the sampler view */
         if (shiftHeld && masterTouched && i === 0) {   /* shift + vol-touch + step1 = randomize ALL */
             sendCmd('lforandall', -1);
             showAction('RND ALL LFOS');
@@ -656,6 +657,8 @@ globalThis.onMidiMessageInternal = function (data) {
                 selPrimary = (selSlots.length > 0) ? selSlots[selSlots.length - 1] : -1;
                 if (selPrimary >= 0) { selVol = sampVol[selPrimary]; selPan = sampPan[selPrimary]; selLs = sampLs[selPrimary]; selLe = sampLe[selPrimary]; selCut = sampCut[selPrimary]; selRes = sampRes[selPrimary]; selPit = sampPit[selPrimary]; }
                 lastSamParam = null;                          /* no stale edit applied to a new selection */
+                queueFxSync(selSlots, null);                  /* stamp the armed FX onto the selection */
+                writeControl();
                 sampKnobShow = null; ledDirty = true; screenDirty = true;
                 return;
             }
