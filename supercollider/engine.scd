@@ -256,12 +256,18 @@
 		~sampVol = Array.fill(32, 1.0); ~sampPan = Array.fill(32, 0.0);
 		~sampCut = Array.fill(32, 18000.0); ~sampRes = Array.fill(32, 0.0);
 		~sampPit = Array.fill(32, 0.0);   // pitch in semitones, -24..24
-		// per-slot insert FX (sampler step buttons): real GATE + DISTORT module synths
-		// inserted in a per-slot chain. ~sampGateP/~sampDistP hold the last param args
-		// (flat [\name, val, ...], incl. \bypass) so a re-play rebuilds with the same FX.
-		~sampGateP = Array.fill(32, { [] }); ~sampDistP = Array.fill(32, { [] });
-		~sampGateSyn = Array.newClear(32); ~sampDistSyn = Array.newClear(32);
-		~sampSlotGrp = Array.newClear(32); ~sampBusA = Array.newClear(32); ~sampBusB = Array.newClear(32);
+		// per-slot step-button FX: an ordered insert chain of real modules. Step button
+		// index = position in ~sampFxChain (= the `which` index used by /fxset). Only the
+		// ENABLED modules are built (heavy ones like CLOUDS cost nothing when off).
+		~sampFxChain = [\gate, \distort, \comb, \clouds];
+		~sampNfx = ~sampFxChain.size;
+		~sampFxOn = Array.fill(32, { Array.fill(~sampNfx, 0) });        // on/off per slot per fx
+		~sampFxP  = Array.fill(32, { Array.fill(~sampNfx, { [] }) });   // last param args per slot per fx
+		~sampFxActiveSyn = Array.fill(32, { Array.newClear(~sampNfx) });// which -> live synth (when built)
+		~sampFxNodes = Array.fill(32, { [] });  // routing synths to free on rebuild (fx + clears + cord)
+		~sampFxBus   = Array.fill(32, { [] });  // intermediate busses to free on rebuild
+		~sampPlayBus = Array.newClear(32);      // stable per-slot bus the play synth writes to
+		~sampSlotGrp = Array.newClear(32);
 		~sampRelease = 0.5;               // fade-out tail (must match samplerPlay release)
 		~built = true;
 		s.startAliveThread(0.0, 0.5);   // poll /status so avgCPU / numSynths stay live
@@ -463,54 +469,83 @@
 		~sampFrames[slot] = frames.asInteger.clip(0, ~sampMaxFrames);
 	};
 };
-// Tear down a slot's FX chain (group + private busses) immediately.
+// Tear down a slot's whole chain (group frees play + FX + clears + cord; busses
+// freed explicitly). Leaves the per-slot FX on/param state intact for a re-play.
 ~sampFreeChain = { |slot|
 	~sampSlotGrp[slot].notNil.if { ~sampSlotGrp[slot].free; ~sampSlotGrp[slot] = nil };
-	~sampBusA[slot].notNil.if { ~sampBusA[slot].free; ~sampBusA[slot] = nil };
-	~sampBusB[slot].notNil.if { ~sampBusB[slot].free; ~sampBusB[slot] = nil };
-	~sampGateSyn[slot] = nil; ~sampDistSyn[slot] = nil; ~sampPlaySyn[slot] = nil;
+	~sampPlayBus[slot].notNil.if { ~sampPlayBus[slot].free; ~sampPlayBus[slot] = nil };
+	(~sampFxBus[slot] ? []).do { |b| b.free };
+	~sampFxBus[slot] = []; ~sampFxNodes[slot] = [];
+	~sampFxActiveSyn[slot] = Array.newClear(~sampNfx); ~sampPlaySyn[slot] = nil;
+};
+// (Re)build ONLY the enabled FX after the play synth, gapless. samplerPlay keeps
+// running into ~sampPlayBus; this rewires play -> [active FX in chain order] ->
+// master (or a straight cord when no FX are on). Heavy modules (CLOUDS) only exist
+// while engaged, so disabled FX cost nothing.
+~sampRebuildFx = { |slot|
+	var grp = ~sampSlotGrp[slot], playBus = ~sampPlayBus[slot], oldNodes, oldBuses, active, nodes, buses, src;
+	(grp.notNil and: { playBus.notNil }).if {
+		oldNodes = ~sampFxNodes[slot] ? []; oldBuses = ~sampFxBus[slot] ? [];
+		active = (0 .. (~sampNfx - 1)).select { |k| ~sampFxOn[slot][k] == 1 };
+		nodes = []; buses = []; src = playBus;
+		~sampFxActiveSyn[slot] = Array.newClear(~sampNfx);
+		s.makeBundle(nil, {                         // free old + build new atomically (no gap)
+			oldNodes.do { |n| n.free };
+			active.do { |k, idx|
+				var last = (idx == (active.size - 1)), outBus, syn;
+				outBus = last.if({ ~masterBus }, {
+					var b = Bus.audio(s, ~nchan); buses = buses.add(b);
+					nodes = nodes.add(Synth.head(grp, ("busClear_" ++ ~nchan).asSymbol, [\bus, b.index]));
+					b;
+				});
+				syn = Synth.tail(grp, (~sampFxChain[k].asString ++ "_" ++ ~nchan).asSymbol,
+					[\in, src.index, \out, outBus.index, \enable, 1, \wet, 1, \bypass, 0] ++ ~sampFxP[slot][k]);
+				nodes = nodes.add(syn); ~sampFxActiveSyn[slot][k] = syn; src = outBus;
+			};
+			active.isEmpty.if {
+				nodes = nodes.add(Synth.tail(grp, ("cord_" ++ ~nchan).asSymbol,
+					[\inb, playBus.index, \outb, ~masterBus.index]));
+			};
+		});
+		~sampFxNodes[slot] = nodes; ~sampFxBus[slot] = buses;
+		oldBuses.do { |b| b.free };                // release old bus indices after new allocated
+	};
 };
 ~sampPlayStart = { |slot|
-	var buf, fr, grp, busA, busB, gn, dn;
+	var buf, fr, grp, playBus;
 	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
 		buf = ~sampBufs[slot]; fr = ~sampFrames[slot] ? 0;
 		(buf.notNil and: { fr > 0 }).if {
-			// re-play while still sounding: drop the old chain immediately, no fade
-			~sampFreeChain.(slot);
-			// per-slot insert chain: [clearA, clearB] -> samplerPlay(busA)
-			//   -> GATE(busA->busB) -> DISTORT(busB->master). FX default to bypass=1
-			//   (off); the stored ~sampGateP/~sampDistP override when the user engages.
+			~sampFreeChain.(slot);                  // re-play: drop old chain immediately, no fade
 			grp = Group.head(~gSampPlay);
-			busA = Bus.audio(s, ~nchan); busB = Bus.audio(s, ~nchan);
-			Synth.tail(grp, ("busClear_" ++ ~nchan).asSymbol, [\bus, busA.index]);
-			Synth.tail(grp, ("busClear_" ++ ~nchan).asSymbol, [\bus, busB.index]);
+			playBus = Bus.audio(s, ~nchan);
+			~sampSlotGrp[slot] = grp; ~sampPlayBus[slot] = playBus;
+			~sampFxNodes[slot] = []; ~sampFxBus[slot] = [];
+			Synth.head(grp, ("busClear_" ++ ~nchan).asSymbol, [\bus, playBus.index]);
 			~sampPlaySyn[slot] = Synth.tail(grp, ("samplerPlay_" ++ ~nchan).asSymbol,
-				[\buf, buf.bufnum, \frames, fr, \out, busA.index,
+				[\buf, buf.bufnum, \frames, fr, \out, playBus.index,
 				 \loopStart, ~sampLs[slot], \loopEnd, ~sampLe[slot],
 				 \amp, ~sampVol[slot], \pan, ~sampPan[slot],
 				 \cutoff, ~sampCut[slot], \res, ~sampRes[slot], \pitch, ~sampPit[slot]]);
-			gn = Synth.tail(grp, ("gate_" ++ ~nchan).asSymbol,
-				[\in, busA.index, \out, busB.index, \enable, 1, \wet, 1, \bypass, 1] ++ ~sampGateP[slot]);
-			dn = Synth.tail(grp, ("distort_" ++ ~nchan).asSymbol,
-				[\in, busB.index, \out, ~masterBus.index, \enable, 1, \wet, 1, \bypass, 1] ++ ~sampDistP[slot]);
-			~sampGateSyn[slot] = gn; ~sampDistSyn[slot] = dn;
-			~sampSlotGrp[slot] = grp; ~sampBusA[slot] = busA; ~sampBusB[slot] = busB;
+			~sampRebuildFx.(slot);                  // wire up whatever FX are enabled
 		};
 	};
 };
-// Per-slot insert FX: set params (flat [\name, val, ...], incl. \bypass) on one
-// module of one slot, and remember them so a re-play rebuilds the same effect.
-// which: 0 = GATE, 1 = DISTORT.
-~sampSetFxParams = { |slot, which, pairs|
-	var args = [];
-	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+// Per-slot insert FX: which = index into ~sampFxChain, on = 0/1, pairs = flat
+// [name, val, ...]. Store; if the on-state changed, rebuild the chain composition,
+// else (re-randomize while engaged) set the live module's params.
+~sampSetFx = { |slot, which, on, pairs|
+	var args = [], wasOn;
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } and: { which >= 0 and: { which < ~sampNfx } } }).if {
 		pairs.pairsDo { |k, v| args = args ++ [k.asSymbol, v] };
-		(which == 0).if {
-			~sampGateP[slot] = args;
-			~sampGateSyn[slot].notNil.if { ~sampGateSyn[slot].set(*args) };
-		} {
-			~sampDistP[slot] = args;
-			~sampDistSyn[slot].notNil.if { ~sampDistSyn[slot].set(*args) };
+		wasOn = ~sampFxOn[slot][which];
+		~sampFxOn[slot][which] = on; ~sampFxP[slot][which] = args;
+		~sampPlaySyn[slot].notNil.if {
+			(wasOn != on).if {
+				~sampRebuildFx.(slot);
+			} {
+				~sampFxActiveSyn[slot][which].notNil.if { ~sampFxActiveSyn[slot][which].set(*args) };
+			};
 		};
 	};
 };
@@ -549,17 +584,18 @@
 	};
 };
 ~sampPlayStop = { |slot|
-	var grp, busA, busB;
+	var grp, playBus, fxBuses;
 	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
 		~sampPlaySyn[slot].notNil.if {
 			// gate -> 0: the play synth fades out over `release`; capture THIS chain and
 			// reap it (group + busses) after the tail so the FX hear the fade-out too.
 			~sampPlaySyn[slot].set(\gate, 0);
-			grp = ~sampSlotGrp[slot]; busA = ~sampBusA[slot]; busB = ~sampBusB[slot];
-			~sampPlaySyn[slot] = nil; ~sampGateSyn[slot] = nil; ~sampDistSyn[slot] = nil;
-			~sampSlotGrp[slot] = nil; ~sampBusA[slot] = nil; ~sampBusB[slot] = nil;
+			grp = ~sampSlotGrp[slot]; playBus = ~sampPlayBus[slot]; fxBuses = ~sampFxBus[slot] ? [];
+			~sampPlaySyn[slot] = nil; ~sampSlotGrp[slot] = nil; ~sampPlayBus[slot] = nil;
+			~sampFxBus[slot] = []; ~sampFxNodes[slot] = []; ~sampFxActiveSyn[slot] = Array.newClear(~sampNfx);
 			SystemClock.sched(~sampRelease + 0.2, {
-				grp.notNil.if { grp.free }; busA.notNil.if { busA.free }; busB.notNil.if { busB.free }; nil
+				grp.notNil.if { grp.free }; playBus.notNil.if { playBus.free };
+				fxBuses.do { |b| b.free }; nil
 			});
 		};
 	};
@@ -567,7 +603,8 @@
 ~sampFree = { |slot|
 	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
 		~sampFreeChain.(slot);                                  // group + busses + synth refs
-		~sampGateP[slot] = []; ~sampDistP[slot] = [];          // clear stored FX
+		~sampFxOn[slot] = Array.fill(~sampNfx, 0);              // clear stored FX state
+		~sampFxP[slot] = Array.fill(~sampNfx, { [] });
 		~sampRecSyn[slot].notNil.if { ~sampRecSyn[slot].free; ~sampRecSyn[slot] = nil };
 		~sampBufs[slot].notNil.if { ~sampBufs[slot].free; ~sampBufs[slot] = nil };
 		~sampFrames[slot] = nil;
@@ -585,7 +622,7 @@
 	OSCdef(\sampSlot, { |m| ~sampSetSlot.(m[1].asInteger, m[2], m[3], m[4], m[5], m[6], m[7], m[8]) }, '/atelier/sampler/slot'),
 	OSCdef(\sampFilt, { |m| ~sampSetFilter.(m[1], m[2]) }, '/atelier/sampler/filterall'),
 	OSCdef(\sampPitch, { |m| ~sampSetPitchAll.(m[1]) }, '/atelier/sampler/pitchall'),
-	OSCdef(\sampFxSet, { |m| ~sampSetFxParams.(m[1].asInteger, m[2].asInteger, m[3..]) }, '/atelier/sampler/fxset'),
+	OSCdef(\sampFxSet, { |m| ~sampSetFx.(m[1].asInteger, m[2].asInteger, m[3].asInteger, m[4..]) }, '/atelier/sampler/fxset'),
 	OSCdef(\modnew, { |m| ~moduleNew.(m[1], m[2], m[3], m[4], m[5]) }, '/atelier/module/new'),
 	OSCdef(\modfree, { |m| ~moduleFree.(m[1]) }, '/atelier/module/free'),
 	OSCdef(\modnodes, { |m| ~moduleNodes.(m[1], m[2]) }, '/atelier/module/nodes'),

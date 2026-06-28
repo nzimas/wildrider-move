@@ -28,19 +28,28 @@ import time
 from pathlib import Path
 
 from . import aesthetics
-from .catalog import GATE as _GATE_SPEC, DISTORT as _DISTORT_SPEC
+from .catalog import (GATE as _GATE_SPEC, DISTORT as _DISTORT_SPEC,
+                      COMB as _COMB_SPEC, CLOUDS as _CLOUDS_SPEC)
 from .osc_bridge import OSCBridge
 from .params import Curve as _Curve, RandomizePolicy as _RandPol
 from .snapshot import full_snapshot
 from .state import StateManager
 
-# Sampler step-button FX reuse the real GATE / DISTORT module specs (full param
-# sets, musical randomization ranges). which: 0 = GATE, 1 = DISTORT in the engine.
-_SAMP_FX_SPEC = {"gate": _GATE_SPEC, "dist": _DISTORT_SPEC}
-_SAMP_FX_WHICH = {"gate": 0, "dist": 1}
-# args the chain manages (not randomized): enable/wet/bypass set per-toggle, amp
-# kept at the module default, nodeEnable has no synthdef arg.
+# Sampler step-button FX reuse the real module specs (full param sets, musical
+# randomization ranges). `which` is the position in the engine's ~sampFxChain.
+_SAMP_FX_SPEC = {"gate": _GATE_SPEC, "dist": _DISTORT_SPEC,
+                 "comb": _COMB_SPEC, "clouds": _CLOUDS_SPEC}
+_SAMP_FX_WHICH = {"gate": 0, "dist": 1, "comb": 2, "clouds": 3}
+_SAMP_FX_ORDER = ["gate", "dist", "comb", "clouds"]
+# args the chain manages (not randomized): enable/wet/bypass set by the engine, amp
+# kept at the module default, nodeEnable has no synthdef arg. Spatial pinned neutral.
 _SAMP_FX_SKIP = {"nodeEnable", "enable", "wet", "bypass", "amp"}
+_SAMP_FX_PIN0 = {"pan", "spatialPos"}
+# Context bias: as a foreground sampler FX, CLOUDS must be reliably audible — its
+# catalog ranges go sparse/quiet, and a random freeze freezes an empty buffer
+# (silence). Pin freeze off and bias grain density/size/gain up.
+_SAMP_FX_FIX = {"clouds": {"freeze": 0}}
+_SAMP_FX_RANGE = {"clouds": {"dens": (0.8, 0.98), "size": (0.5, 0.85), "inGain": (1.3, 1.6)}}
 
 # Guided "artist-inspired" styles a new patch is generated in (Track 1).
 ARTISTS = list(aesthetics.MODULE_PALETTE.keys()) or ["vidna_obmana"]
@@ -88,8 +97,9 @@ class HeadlessController:
         self._samp = [{"state": "empty", "t0": 0.0, "frames": 0,
                        "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
                        "cut": 1.0, "res": 0.0, "pit": 0.0,         # cut/res 0..1, pit semis
-                       # per-slot insert FX (step buttons): real GATE + DISTORT modules
-                       "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {}}
+                       # per-slot insert FX (step buttons): real modules, on + params each
+                       "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {},
+                       "comb_on": 0, "comb_params": {}, "clouds_on": 0, "clouds_params": {}}
                       for _ in range(32)]
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
@@ -396,7 +406,8 @@ class HeadlessController:
         self._samp[pad] = {"state": "empty", "t0": 0.0, "frames": 0,
                            "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
                            "cut": 1.0, "res": 0.0, "pit": 0.0,
-                           "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {}}
+                           "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {},
+                           "comb_on": 0, "comb_params": {}, "clouds_on": 0, "clouds_params": {}}
 
     def set_loop_range(self, start: float, end: float) -> None:
         """CTRL-ALL loop region (knob 1 = start, knob 2 = end) for ALL takes,
@@ -456,13 +467,22 @@ class HeadlessController:
         pan/level stay authoritative."""
         spec = _SAMP_FX_SPEC[fx]
         rng = self.state.rng
+        fixed = _SAMP_FX_FIX.get(fx, {})
+        ranges = _SAMP_FX_RANGE.get(fx, {})
         params: dict[str, float] = {}
         for p in spec.node_params:
             arg = p.id.split(".")[-1]
             if arg in _SAMP_FX_SKIP:
                 continue
-            if arg == "pan":
+            if arg in fixed:
+                params[arg] = fixed[arg]
+                continue
+            if arg in _SAMP_FX_PIN0:
                 params[arg] = 0.0
+                continue
+            if arg in ranges:
+                lo, hi = ranges[arg]
+                params[arg] = round(rng.uniform(lo, hi), 5)
                 continue
             if p.curve is _Curve.ENUM:
                 # enum range is [0, n-1], not the [0,1] musical band the scalar
@@ -479,10 +499,12 @@ class HeadlessController:
     def _push_slotfx(self, slot: int, fx: str) -> None:
         sl = self._samp[slot]
         which = _SAMP_FX_WHICH[fx]
-        flat: list = ["bypass", 0 if sl[fx + "_on"] else 1]
+        on = 1 if sl[fx + "_on"] else 0
+        flat: list = []
         for k, v in sl[fx + "_params"].items():
             flat += [k, v]
-        self.bridge.send("/atelier/sampler/fxset", slot, which, *flat)
+        # /fxset <slot> <which> <on> name val ... — engine builds/teardowns the module
+        self.bridge.send("/atelier/sampler/fxset", slot, which, on, *flat)
 
     def sampler_fx(self, fx: str, sels: list, on: int, rand: int) -> None:
         """Step-button FX on the targeted slots. on -> bypass toggle; rand (with on)
@@ -524,7 +546,9 @@ class HeadlessController:
                 "res": [round(s["res"], 4) for s in self._samp],
                 "pit": [round(s["pit"], 2) for s in self._samp],
                 "gate": [s["gate_on"] for s in self._samp],
-                "dist": [s["dist_on"] for s in self._samp]}
+                "dist": [s["dist_on"] for s in self._samp],
+                "comb": [s["comb_on"] for s in self._samp],
+                "clouds": [s["clouds_on"] for s in self._samp]}
 
     def _lfos_status(self) -> list:
         out = []

@@ -116,10 +116,17 @@ let lastSamParam = null, lastSamValue = 0;     /* last per-slot edit (sent as `s
 let sampVol = new Array(32).fill(1.0), sampPan = new Array(32).fill(0.0);
 let sampLs = new Array(32).fill(0.0), sampLe = new Array(32).fill(1.0);
 let sampCut = new Array(32).fill(1.0), sampRes = new Array(32).fill(0.0), sampPit = new Array(32).fill(0.0);
-/* Per-slot step-button FX (step 1 = GATE, step 2 = DISTORT). */
+/* Per-slot step-button FX. Step button index = FX_STEPS position. */
+const FX_STEPS = ['gate', 'dist', 'comb', 'clouds'];   /* step 1..4 */
 let sampGateOn = new Array(32).fill(0), sampDistOn = new Array(32).fill(0);
+let sampCombOn = new Array(32).fill(0), sampCloudsOn = new Array(32).fill(0);
 let pendingSampFx = null, fxN = 0;            /* sampfx event sent in writeControl */
 const FX_ON_COLOR = Mustard;
+/* map an FX name to its per-slot on-state array */
+function fxArr(name) {
+    return (name === 'gate') ? sampGateOn : (name === 'dist') ? sampDistOn
+         : (name === 'comb') ? sampCombOn : (name === 'clouds') ? sampCloudsOn : null;
+}
 let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
 let levels = {};               /* cell -> module audio level (amp), default 1.0 */
@@ -291,13 +298,15 @@ function readStatus() {
             if (s.sampler.pit) sampPit[qi] = s.sampler.pit[qi];
             if (s.sampler.gate) sampGateOn[qi] = s.sampler.gate[qi];
             if (s.sampler.dist) sampDistOn[qi] = s.sampler.dist[qi];
+            if (s.sampler.comb) sampCombOn[qi] = s.sampler.comb[qi];
+            if (s.sampler.clouds) sampCloudsOn[qi] = s.sampler.clouds[qi];
         }
     }
     /* Only mark dirty when the VISIBLE state changed (not cpu/meter jitter), so
      * an idle patch causes ZERO LED/SPI traffic — that traffic XRuns audio. */
     var sceneSig = scenesMode ? ('S' + sceneActive + '/' + sceneMorphTo + '/' +
         sceneFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
-    var sampSig = samplerMode ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',') + '|' + sampGateOn.join('') + sampDistOn.join('')) : '';
+    var sampSig = samplerMode ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',') + '|' + sampGateOn.join('') + sampDistOn.join('') + sampCombOn.join('') + sampCloudsOn.join('')) : '';
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
         return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig + '|' + sampSig;
     if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
@@ -383,12 +392,12 @@ function renderSamplerLEDs(flashOn) {
         else if (st === 'filled') color = White;
         setLED(PAD_NOTES[c], color);
     }
-    /* step buttons = per-slot FX (step1 GATE, step2 DISTORT). FX target only the
+    /* step buttons = per-slot FX (step N = FX_STEPS[N-1]). FX target only the
      * selection, so light them from the primary selected slot; off when nothing is
      * selected (the buttons are inert without a target). */
     for (var i = 0; i < 16; i++) {
         var on = false;
-        if (selPrimary >= 0) on = (i === 0) ? !!sampGateOn[selPrimary] : (i === 1) ? !!sampDistOn[selPrimary] : false;
+        if (selPrimary >= 0 && i < FX_STEPS.length) { var a = fxArr(FX_STEPS[i]); on = a && !!a[selPrimary]; }
         setLED(STEP_BASE + i, on ? FX_ON_COLOR : Black);
     }
     ledDirty = false;
@@ -502,7 +511,8 @@ globalThis.init = function () {
     sampVol = new Array(32).fill(1.0); sampPan = new Array(32).fill(0.0);
     sampLs = new Array(32).fill(0.0); sampLe = new Array(32).fill(1.0);
     sampCut = new Array(32).fill(1.0); sampRes = new Array(32).fill(0.0); sampPit = new Array(32).fill(0.0);
-    sampGateOn = new Array(32).fill(0); sampDistOn = new Array(32).fill(0); pendingSampFx = null; fxN = 0;
+    sampGateOn = new Array(32).fill(0); sampDistOn = new Array(32).fill(0);
+    sampCombOn = new Array(32).fill(0); sampCloudsOn = new Array(32).fill(0); pendingSampFx = null; fxN = 0;
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false); lfoPending = new Array(16).fill(0);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
@@ -598,16 +608,14 @@ globalThis.onMidiMessageInternal = function (data) {
     if (status === 0x90 && d2 > 0 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {
         const i = d1 - STEP_BASE;
         if (samplerMode) {                       /* SAMPLER: step buttons toggle per-slot FX on the SELECTED slots only */
-            var fxName = (i === 0) ? 'gate' : (i === 1) ? 'dist' : null;
+            var fxName = (i < FX_STEPS.length) ? FX_STEPS[i] : null;
+            var arr = fxName ? fxArr(fxName) : null;
             if (fxName && selSlots.length > 0) {  /* FX target ONLY selected slots; no selection = no-op */
-                var rep = selPrimary;
-                var curOn = (fxName === 'gate') ? sampGateOn[rep] : sampDistOn[rep];
+                var curOn = arr[selPrimary];
                 var newOn, doRand;
                 if (curOn) { if (shiftHeld) { newOn = 1; doRand = 1; } else { newOn = 0; doRand = 0; } }
                 else { newOn = 1; doRand = 1; }   /* toggling ON randomizes the params */
-                for (var k = 0; k < selSlots.length; k++) {    /* optimistic local state */
-                    if (fxName === 'gate') sampGateOn[selSlots[k]] = newOn; else sampDistOn[selSlots[k]] = newOn;
-                }
+                for (var k = 0; k < selSlots.length; k++) arr[selSlots[k]] = newOn;   /* optimistic */
                 fxN++;
                 pendingSampFx = { fx: fxName, sels: selSlots.slice(), on: newOn, rand: doRand, n: fxN };
                 writeControl();
