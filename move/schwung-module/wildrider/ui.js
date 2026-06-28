@@ -383,11 +383,12 @@ function renderSamplerLEDs(flashOn) {
         else if (st === 'filled') color = White;
         setLED(PAD_NOTES[c], color);
     }
-    /* step buttons = per-slot FX (step1 GATE, step2 DISTORT). Reflect the selected
-     * slot's state, or slot 0 as the representative when nothing is selected (ALL). */
-    var fxRep = (selPrimary >= 0) ? selPrimary : 0;
+    /* step buttons = per-slot FX (step1 GATE, step2 DISTORT). FX target only the
+     * selection, so light them from the primary selected slot; off when nothing is
+     * selected (the buttons are inert without a target). */
     for (var i = 0; i < 16; i++) {
-        var on = (i === 0) ? !!sampGateOn[fxRep] : (i === 1) ? !!sampDistOn[fxRep] : false;
+        var on = false;
+        if (selPrimary >= 0) on = (i === 0) ? !!sampGateOn[selPrimary] : (i === 1) ? !!sampDistOn[selPrimary] : false;
         setLED(STEP_BASE + i, on ? FX_ON_COLOR : Black);
     }
     ledDirty = false;
@@ -596,24 +597,24 @@ globalThis.onMidiMessageInternal = function (data) {
      * Shift+press re-randomizes that one LFO (keeping its on/off state). */
     if (status === 0x90 && d2 > 0 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {
         const i = d1 - STEP_BASE;
-        if (samplerMode) {                       /* SAMPLER: step buttons toggle per-slot FX (selected slots, or ALL) */
+        if (samplerMode) {                       /* SAMPLER: step buttons toggle per-slot FX on the SELECTED slots only */
             var fxName = (i === 0) ? 'gate' : (i === 1) ? 'dist' : null;
-            if (fxName) {
-                var targets = (selSlots.length > 0) ? selSlots.slice() : [];
-                if (targets.length === 0) { for (var z = 0; z < 32; z++) targets.push(z); }   /* no selection -> ALL */
-                var rep = (selPrimary >= 0) ? selPrimary : 0;
+            if (fxName && selSlots.length > 0) {  /* FX target ONLY selected slots; no selection = no-op */
+                var rep = selPrimary;
                 var curOn = (fxName === 'gate') ? sampGateOn[rep] : sampDistOn[rep];
                 var newOn, doRand;
                 if (curOn) { if (shiftHeld) { newOn = 1; doRand = 1; } else { newOn = 0; doRand = 0; } }
                 else { newOn = 1; doRand = 1; }   /* toggling ON randomizes the params */
-                for (var k = 0; k < targets.length; k++) {     /* optimistic local state */
-                    if (fxName === 'gate') sampGateOn[targets[k]] = newOn; else sampDistOn[targets[k]] = newOn;
+                for (var k = 0; k < selSlots.length; k++) {    /* optimistic local state */
+                    if (fxName === 'gate') sampGateOn[selSlots[k]] = newOn; else sampDistOn[selSlots[k]] = newOn;
                 }
                 fxN++;
-                pendingSampFx = { fx: fxName, sels: targets, on: newOn, rand: doRand, n: fxN };
+                pendingSampFx = { fx: fxName, sels: selSlots.slice(), on: newOn, rand: doRand, n: fxN };
                 writeControl();
-                showAction(fxName.toUpperCase() + (newOn ? (doRand && curOn ? ' RND' : ' ON') : ' OFF') + (selSlots.length ? '' : ' ALL'));
+                showAction(fxName.toUpperCase() + (newOn ? (doRand && curOn ? ' RND' : ' ON') : ' OFF'));
                 ledDirty = true; screenDirty = true;
+            } else if (fxName) {
+                showAction('SELECT A SLOT');      /* tell the user the FX need a target */
             }
             return;                              /* step row is FX in the sampler view (no LFO) */
         }
