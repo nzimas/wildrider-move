@@ -28,9 +28,19 @@ import time
 from pathlib import Path
 
 from . import aesthetics
+from .catalog import GATE as _GATE_SPEC, DISTORT as _DISTORT_SPEC
 from .osc_bridge import OSCBridge
+from .params import Curve as _Curve, RandomizePolicy as _RandPol
 from .snapshot import full_snapshot
 from .state import StateManager
+
+# Sampler step-button FX reuse the real GATE / DISTORT module specs (full param
+# sets, musical randomization ranges). which: 0 = GATE, 1 = DISTORT in the engine.
+_SAMP_FX_SPEC = {"gate": _GATE_SPEC, "dist": _DISTORT_SPEC}
+_SAMP_FX_WHICH = {"gate": 0, "dist": 1}
+# args the chain manages (not randomized): enable/wet/bypass set per-toggle, amp
+# kept at the module default, nodeEnable has no synthdef arg.
+_SAMP_FX_SKIP = {"nodeEnable", "enable", "wet", "bypass", "amp"}
 
 # Guided "artist-inspired" styles a new patch is generated in (Track 1).
 ARTISTS = list(aesthetics.MODULE_PALETTE.keys()) or ["vidna_obmana"]
@@ -78,9 +88,8 @@ class HeadlessController:
         self._samp = [{"state": "empty", "t0": 0.0, "frames": 0,
                        "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
                        "cut": 1.0, "res": 0.0, "pit": 0.0,         # cut/res 0..1, pit semis
-                       # per-slot insert FX (step buttons): GATE + DISTORT
-                       "gate_on": 0, "gate_rate": 4.0, "gate_duty": 0.5,
-                       "dist_on": 0, "dist_drive": 0.5, "dist_tone": 8000.0}
+                       # per-slot insert FX (step buttons): real GATE + DISTORT modules
+                       "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {}}
                       for _ in range(32)]
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
@@ -387,8 +396,7 @@ class HeadlessController:
         self._samp[pad] = {"state": "empty", "t0": 0.0, "frames": 0,
                            "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
                            "cut": 1.0, "res": 0.0, "pit": 0.0,
-                           "gate_on": 0, "gate_rate": 4.0, "gate_duty": 0.5,
-                           "dist_on": 0, "dist_drive": 0.5, "dist_tone": 8000.0}
+                           "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {}}
 
     def set_loop_range(self, start: float, end: float) -> None:
         """CTRL-ALL loop region (knob 1 = start, knob 2 = end) for ALL takes,
@@ -440,37 +448,56 @@ class HeadlessController:
                 self._samp[s][param] = v
                 self._push_slot(s)
 
-    def _push_slotfx(self, slot: int) -> None:
-        sl = self._samp[slot]
-        self.bridge.send("/atelier/sampler/slotfx", slot,
-                         sl["gate_on"], sl["gate_rate"], sl["gate_duty"],
-                         sl["dist_on"], sl["dist_drive"], sl["dist_tone"])
-
-    def _rand_fx(self, sl: dict, fx: str) -> None:
-        """Randomize one effect's params (called when an FX is toggled on / re-rolled)."""
+    def _rand_fx(self, fx: str) -> dict:
+        """Randomize the FULL param set of the real GATE/DISTORT module, exactly the
+        way the patch generator does (musical ranges + danger clamps via the catalog
+        ParamMetadata). Returns {synth_arg: value}. amp/pan/enable/wet/bypass are
+        managed by the chain, not randomized; spatial stays neutral so the slot's own
+        pan/level stay authoritative."""
+        spec = _SAMP_FX_SPEC[fx]
         rng = self.state.rng
-        if fx == "gate":
-            sl["gate_rate"] = round(rng.uniform(2.0, 14.0), 2)     # rhythmic Hz
-            sl["gate_duty"] = round(rng.uniform(0.12, 0.6), 3)
-        elif fx == "dist":
-            sl["dist_drive"] = round(rng.uniform(0.3, 1.0), 3)
-            sl["dist_tone"] = round(rng.uniform(1800.0, 11000.0), 1)
+        params: dict[str, float] = {}
+        for p in spec.node_params:
+            arg = p.id.split(".")[-1]
+            if arg in _SAMP_FX_SKIP:
+                continue
+            if arg == "pan":
+                params[arg] = 0.0
+                continue
+            if p.curve is _Curve.ENUM:
+                # enum range is [0, n-1], not the [0,1] musical band the scalar
+                # randomizer assumes — pick across the full index set (or keep default
+                # for OFF-policy enums like gate shape/invert).
+                if p.randomize_policy is _RandPol.OFF or not p.enum_values:
+                    params[arg] = int(p.default)
+                else:
+                    params[arg] = rng.randint(0, len(p.enum_values) - 1)
+                continue
+            params[arg] = round(p.randomize(rng, p.default, 1.0, expert=False), 5)
+        return params
+
+    def _push_slotfx(self, slot: int, fx: str) -> None:
+        sl = self._samp[slot]
+        which = _SAMP_FX_WHICH[fx]
+        flat: list = ["bypass", 0 if sl[fx + "_on"] else 1]
+        for k, v in sl[fx + "_params"].items():
+            flat += [k, v]
+        self.bridge.send("/atelier/sampler/fxset", slot, which, *flat)
 
     def sampler_fx(self, fx: str, sels: list, on: int, rand: int) -> None:
-        """Step-button FX on the SELECTED slots. on -> toggle state; rand (and on)
-        -> (re)randomize the effect's params. fx is 'gate' or 'dist'."""
-        if fx not in ("gate", "dist"):
+        """Step-button FX on the targeted slots. on -> bypass toggle; rand (with on)
+        -> (re)randomize the module's full param set. fx is 'gate' or 'dist'."""
+        if fx not in _SAMP_FX_WHICH:
             return
-        onkey = fx + "_on"
         for s in sels:
             s = int(s)
             if not (0 <= s < 32):
                 continue
             sl = self._samp[s]
-            sl[onkey] = 1 if on else 0
+            sl[fx + "_on"] = 1 if on else 0
             if on and rand:
-                self._rand_fx(sl, fx)
-            self._push_slotfx(s)
+                sl[fx + "_params"] = self._rand_fx(fx)
+            self._push_slotfx(s, fx)
 
     def set_pitch_all(self, semis: float) -> None:
         """CTRL-ALL pitch (knob 5, no selection): semitone shift for ALL takes."""

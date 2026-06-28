@@ -857,8 +857,7 @@
 	// CTRL-ALL knob scrub glides the loop region smoothly instead of clicking. The
 	// crossfade follows the chosen region [s, e): tail buf[e-fade..e] fades out, head
 	// buf[s..s+fade] fades in.
-	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 1.0, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1, pan = 0, cutoff = 18000, res = 0, gate = 1, release = 0.5, pitch = 0,
-		fxGateOn = 0, fxGateRate = 4, fxGateDuty = 0.5, fxDistOn = 0, fxDistDrive = 0.5, fxDistTone = 8000|
+	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 1.0, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1, pan = 0, cutoff = 18000, res = 0, gate = 1, release = 0.5, pitch = 0|
 		var sr = BufSampleRate.kr(buf);
 		// varispeed pitch (+-24 semis): scale the read rate. At pitch 0 rate=1 so reads
 		// land on integer positions (bit-exact); cubic interp keeps quality when pitched.
@@ -889,12 +888,9 @@
 		// transparent stereo balance: pan 0 leaves L/R untouched (no centre gain change).
 		sig = (nchan == 2).if({ [sig[0] * (1 - pan).clip(0, 1), sig[1] * (1 + pan).clip(0, 1)] }, { sig });
 		// amp env: fast fade-IN on start; 0.5s fade-OUT on stop (gate->0) then self-free.
+		// fade-OUT on stop; doneAction frees the play synth (the slot's FX chain is
+		// reaped separately by the engine after the release tail).
 		sig = sig * EnvGen.kr(Env.asr(fadein, 1, release), gate, doneAction: 2) * amp.lag(0.03);
-		// per-slot insert FX toggled from the sampler step buttons (selection-targeted).
-		// GATE: rhythmic amplitude gate; DISTORT: drive -> tanh -> tone LPF. Each is a
-		// lagged dry<->wet crossfade so toggling is click-free.
-		sig = XFade2.ar(sig, sig * LFPulse.kr(fxGateRate, 0, fxGateDuty).lag(0.004), (fxGateOn.lag(0.02) * 2) - 1);
-		sig = XFade2.ar(sig, LPF.ar((sig * (1 + (fxDistDrive * 8))).tanh, fxDistTone.clip(200, 16000)) * 0.5, (fxDistOn.lag(0.02) * 2) - 1);
 		Out.ar(out, ~killbad.(sig));
 	}).add;
 };
