@@ -859,9 +859,13 @@
 	// buf[s..s+fade] fades in.
 	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 0.85, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1|
 		var sr = BufSampleRate.kr(buf);
-		var ls = loopStart.lag(0.08), le = loopEnd.lag(0.08);
+		// loopStart moves the READ position, so a fast change pitch-bends (the
+		// "squeaky bip"). Lag it SLOWLY so a scrub glides gently (s and len stay
+		// consistent, so it never reads past the take). loopEnd only moves the wrap
+		// point (no read-position jump), so it can track quickly.
+		var ls = loopStart.lag(0.25), le = loopEnd.lag(0.05);
 		var s = ls * frames;
-		var len = ((le - ls) * frames).max(sr * 0.02);      // >= 20ms loop
+		var len = ((le - ls) * frames).max(sr * 0.02);   // >= 20ms loop
 		var fade = (xfade * sr).clip(64, (len * 0.25).max(64));
 		var period = (len - fade).max(1);
 		var phase = Phasor.ar(0, BufRateScale.kr(buf), 0, period);

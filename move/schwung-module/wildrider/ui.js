@@ -635,12 +635,13 @@ globalThis.onMidiMessageInternal = function (data) {
             const delta = decodeDelta(d2);
             if (delta === 0) return;
             if (samplerMode) {                /* context knobs: 1=loop start, 2=loop end (CTRL-ALL) */
+                var step = 0.0025;            /* fine: ~400 detents across the whole take */
                 if (i === 0) {
-                    loopStart = clamp01(loopStart + delta * 0.01);
-                    if (loopStart > loopEnd - 0.02) loopStart = Math.max(0, loopEnd - 0.02);
+                    loopStart = clamp01(loopStart + delta * step);
+                    if (loopStart > loopEnd - 0.01) loopStart = Math.max(0, loopEnd - 0.01);
                 } else if (i === 1) {
-                    loopEnd = clamp01(loopEnd + delta * 0.01);
-                    if (loopEnd < loopStart + 0.02) loopEnd = Math.min(1, loopStart + 0.02);
+                    loopEnd = clamp01(loopEnd + delta * step);
+                    if (loopEnd < loopStart + 0.01) loopEnd = Math.min(1, loopStart + 0.01);
                 } else { return; }            /* knobs 3-8 reserved for future sampler params */
                 writeControl(); screenDirty = true;
                 return;

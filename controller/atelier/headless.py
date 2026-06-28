@@ -83,6 +83,10 @@ class HeadlessController:
         SHARE.mkdir(parents=True, exist_ok=True)
         self._write_modules_list()
         self.bridge.start()
+        # Seed the generator from real entropy so every session produces a DIFFERENT
+        # sequence of patches. The default root_seed is a fixed constant (1), which
+        # made every launch replay the identical patches in the identical order.
+        self.state.reseed(int.from_bytes(os.urandom(4), "big") & 0x7fffffff)
         # Start with an EMPTY canvas — no default patch. The user builds via Track1
         # (new patch), CHAINS, or by pressing empty pads (grow). But the 16 global
         # LFOs (step buttons) + 8 macros must ALWAYS exist for consistent control,
@@ -381,8 +385,8 @@ class HeadlessController:
         applies it live to every playing slot + to new playbacks."""
         s = max(0.0, min(1.0, float(start)))
         e = max(0.0, min(1.0, float(end)))
-        if e < s + 0.02:                 # keep a minimum loop window
-            e = min(1.0, s + 0.02)
+        if e < s + 0.01:                 # keep a minimum loop window
+            e = min(1.0, s + 0.01)
         self._loop_start, self._loop_end = s, e
         self.bridge.send("/atelier/sampler/looprange", s, e)
 
