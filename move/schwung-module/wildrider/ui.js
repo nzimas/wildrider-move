@@ -23,7 +23,7 @@
 import {
     Black, BrightGreen, ForestGreen, AzureBlue, RoyalBlue,
     ElectricViolet, Violet, VividYellow, Mustard, White, Red, Purple,
-    MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveMasterTouch, MoveDelete,
+    MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveKnob1Touch, MoveKnob8Touch, MoveMasterTouch, MoveDelete,
     MovePlay, MoveRec, MoveMainKnob, MoveMainButton, MoveRow1, MoveRow2, MoveRow3, MoveRow4
 } from '/data/UserData/move-anything/shared/constants.mjs';
 import { setLED, decodeDelta } from '/data/UserData/move-anything/shared/input_filter.mjs';
@@ -104,6 +104,13 @@ let sampStates = new Array(32).fill('empty');   /* per slot from status.json */
 let sampFlashOn = false;       /* red-flash phase for recording slots */
 /* CTRL-ALL loop region (knob 1 = start, knob 2 = end), 0..1 of each take. */
 let loopStart = 0.0, loopEnd = 1.0;
+/* Slot-selection mode (Shift+pad in the sampler view): knob 8 = volume, knob 7 =
+ * pan, knobs 1/2 = loop start/end for THIS slot only. Bars show on knob TOUCH. */
+let selSlot = -1;                             /* selected slot, or -1 */
+let selVol = 1.0, selPan = 0.0, selLs = 0.0, selLe = 1.0;   /* working values */
+let sampKnobShow = null;                       /* 'vol'|'pan'|'ls'|'le' bar to draw */
+let sampVol = new Array(32).fill(1.0), sampPan = new Array(32).fill(0.0);
+let sampLs = new Array(32).fill(0.0), sampLe = new Array(32).fill(1.0);
 let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
 let levels = {};               /* cell -> module audio level (amp), default 1.0 */
@@ -127,6 +134,7 @@ function writeControl() {
     const doc = { seq: seq, cmd: lastCmd, arg: lastArg, macros: macroVal };
     if (lastLevel) doc.level = lastLevel;
     doc.looprange = [loopStart, loopEnd];   /* CTRL-ALL loop region (applied on change) */
+    if (selSlot >= 0) doc.slot = { sel: selSlot, vol: selVol, pan: selPan, ls: selLs, le: selLe };
     host_write_file(CONTROL_FILE, JSON.stringify(doc));
 }
 function sendCmd(cmd, arg) { seq++; lastCmd = cmd; lastArg = arg; writeControl(); }
@@ -258,15 +266,21 @@ function readStatus() {
         }
         lastMorphTo = sceneMorphTo; lastSceneActive = sceneActive;
     }
-    /* Sampler slot states. */
+    /* Sampler slot states + per-slot params. */
     if (s.sampler && Array.isArray(s.sampler.states)) {
-        for (var qi = 0; qi < 32; qi++) sampStates[qi] = s.sampler.states[qi] || 'empty';
+        for (var qi = 0; qi < 32; qi++) {
+            sampStates[qi] = s.sampler.states[qi] || 'empty';
+            if (s.sampler.vol) sampVol[qi] = s.sampler.vol[qi];
+            if (s.sampler.pan) sampPan[qi] = s.sampler.pan[qi];
+            if (s.sampler.ls) sampLs[qi] = s.sampler.ls[qi];
+            if (s.sampler.le) sampLe[qi] = s.sampler.le[qi];
+        }
     }
     /* Only mark dirty when the VISIBLE state changed (not cpu/meter jitter), so
      * an idle patch causes ZERO LED/SPI traffic — that traffic XRuns audio. */
     var sceneSig = scenesMode ? ('S' + sceneActive + '/' + sceneMorphTo + '/' +
         sceneFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
-    var sampSig = samplerMode ? ('Z' + sampStates.join(',')) : '';
+    var sampSig = samplerMode ? ('Z' + selSlot + ':' + sampStates.join(',')) : '';
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
         return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig + '|' + sampSig;
     if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
@@ -346,7 +360,8 @@ function drawMorphEdit() {
 function renderSamplerLEDs(flashOn) {
     for (var c = 0; c < 32; c++) {
         var st = sampStates[c], color = Black;
-        if (st === 'recording') color = flashOn ? Red : Black;
+        if (st === 'recording') color = flashOn ? Red : Black;   /* recording wins */
+        else if (c === selSlot) color = VividYellow;             /* selected slot */
         else if (st === 'playing') color = Purple;
         else if (st === 'filled') color = White;
         setLED(PAD_NOTES[c], color);
@@ -357,6 +372,15 @@ function renderSamplerLEDs(flashOn) {
 function drawSampler() {
     if (typeof clear_screen !== 'function' || typeof print !== 'function') return;
     clear_screen();
+    /* When a slot is selected and a knob is touched, show that param's bar. */
+    if (selSlot >= 0 && sampKnobShow) {
+        print(0, 6, 'SLOT ' + (selSlot + 1), 2);
+        if (sampKnobShow === 'vol') { print(0, 24, 'VOLUME', 1); bar(selVol); }
+        else if (sampKnobShow === 'pan') { print(0, 24, 'PAN ' + (selPan === 0 ? 'C' : (selPan > 0 ? 'R' + Math.round(selPan * 100) : 'L' + Math.round(-selPan * 100))), 1); bbar(selPan); }
+        else if (sampKnobShow === 'ls') { print(0, 24, 'LOOP START ' + Math.round(selLs * 100) + '%', 1); bar(selLs); }
+        else if (sampKnobShow === 'le') { print(0, 24, 'LOOP END ' + Math.round(selLe * 100) + '%', 1); bar(selLe); }
+        return;
+    }
     print(0, 6, 'SAMPLER', 2);
     var rec = 0, fill = 0, play = 0;
     for (var i = 0; i < 32; i++) {
@@ -365,8 +389,9 @@ function drawSampler() {
     }
     if (rec > 0) print(0, 30, 'RECORDING...', 1);
     else print(0, 30, (fill + play) + ' takes   ' + play + ' playing', 1);
-    print(0, 44, 'loop ' + Math.round(loopStart * 100) + '-' + Math.round(loopEnd * 100) + '%', 1);
-    print(0, 56, 'k1=start k2=end  X+pad=del', 1);
+    if (selSlot >= 0) print(0, 44, 'slot ' + (selSlot + 1) + ': k8 vol k7 pan k1/2 loop', 1);
+    else print(0, 44, 'loop ' + Math.round(loopStart * 100) + '-' + Math.round(loopEnd * 100) + '%  shift+pad sel', 1);
+    print(0, 56, 'tap=rec/play  X+pad=del', 1);
 }
 
 /* ---- screen ----
@@ -379,9 +404,16 @@ function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phas
 function showLfo(i, label) { overlay = { kind: 'lfo', idx: i, label: label }; overlayUntil = phase + 24; screenDirty = true; }
 function showAction(label) { overlay = { kind: 'action', label: label }; overlayUntil = phase + 24; screenDirty = true; }
 
-function bar(frac) {   /* draw a 0..1 bar */
+function bar(frac) {   /* draw a 0..1 unipolar bar */
     if (typeof draw_rect === 'function') draw_rect(6, 34, 116, 14, 1);
     if (typeof fill_rect === 'function') fill_rect(8, 36, Math.max(0, Math.round(frac * 112)), 10, 1);
+}
+function bbar(val) {   /* draw a -1..1 bipolar bar, filled from the centre */
+    if (typeof draw_rect !== 'function' || typeof fill_rect !== 'function') return;
+    draw_rect(6, 34, 116, 14, 1);
+    var cx = 64, w = Math.round(Math.abs(val) * 56);
+    if (val >= 0) fill_rect(cx, 36, w, 10, 1); else fill_rect(cx - w, 36, w, 10, 1);
+    fill_rect(cx, 34, 1, 14, 1);   /* centre tick */
 }
 
 function drawScreen() {
@@ -431,6 +463,9 @@ globalThis.init = function () {
     morphEdit = false; morphTime = 10;
     samplerMode = false; sampStates = new Array(32).fill('empty'); sampFlashOn = false;
     loopStart = 0.0; loopEnd = 1.0;
+    selSlot = -1; selVol = 1.0; selPan = 0.0; selLs = 0.0; selLe = 1.0; sampKnobShow = null;
+    sampVol = new Array(32).fill(1.0); sampPan = new Array(32).fill(0.0);
+    sampLs = new Array(32).fill(0.0); sampLe = new Array(32).fill(1.0);
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false); lfoPending = new Array(16).fill(0);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
@@ -506,6 +541,22 @@ globalThis.onMidiMessageInternal = function (data) {
         masterTouched = (status === 0x90 && d2 >= 64);   /* used only by the LFO-randomize combo */
         return;
     }
+    /* Encoder capacitive touch (notes 0..7 = knob 1..8). In the sampler slot view,
+     * TOUCHING a control knob shows its bar (not only on rotation). */
+    if (d1 >= MoveKnob1Touch && d1 <= MoveKnob8Touch && (status === 0x90 || status === 0x80)) {
+        if (samplerMode && selSlot >= 0) {
+            var touched = (status === 0x90 && d2 >= 64);
+            var ki = d1 - MoveKnob1Touch;    /* 0..7 = knob 1..8 */
+            if (touched) {
+                sampKnobShow = (ki === 7) ? 'vol' : (ki === 6) ? 'pan' : (ki === 0) ? 'ls' : (ki === 1) ? 'le' : null;
+            } else if ((ki === 7 && sampKnobShow === 'vol') || (ki === 6 && sampKnobShow === 'pan') ||
+                       (ki === 0 && sampKnobShow === 'ls') || (ki === 1 && sampKnobShow === 'le')) {
+                sampKnobShow = null;          /* released the knob whose bar is showing */
+            }
+            screenDirty = true;
+        }
+        return;
+    }
 
     /* Step buttons (notes 16..31) = the 16 global LFOs. Press toggles on/off;
      * Shift+press re-randomizes that one LFO (keeping its on/off state). */
@@ -533,8 +584,14 @@ globalThis.onMidiMessageInternal = function (data) {
      * (revealed in tick() once it crosses the threshold) and does NOT toggle. */
     if (status === 0x90 && d2 > 0 && d1 >= 68 && d1 <= 99) {
         const cell = NOTE_TO_CELL[d1];
-        if (samplerMode) {                           /* SAMPLER: tap = rec/play/stop, X+pad = delete */
-            if (deleteHeld) { sampStates[cell] = 'empty'; sendCmd('sampdel', cell); }
+        if (samplerMode) {                           /* SAMPLER: tap=rec/play/stop, shift=select, X=delete */
+            if (shiftHeld) {                         /* Shift+pad selects (toggles) this slot */
+                selSlot = (selSlot === cell) ? -1 : cell;
+                if (selSlot >= 0) { selVol = sampVol[selSlot]; selPan = sampPan[selSlot]; selLs = sampLs[selSlot]; selLe = sampLe[selSlot]; }
+                sampKnobShow = null; ledDirty = true; screenDirty = true;
+                return;
+            }
+            if (deleteHeld) { sampStates[cell] = 'empty'; if (selSlot === cell) selSlot = -1; sendCmd('sampdel', cell); }
             else { sendCmd('samppad', cell); }       /* controller resolves rec/play/stop by state */
             ledDirty = true; screenDirty = true;
             return;
@@ -634,15 +691,25 @@ globalThis.onMidiMessageInternal = function (data) {
             const i = d1 - MoveKnob1;
             const delta = decodeDelta(d2);
             if (delta === 0) return;
-            if (samplerMode) {                /* context knobs: 1=loop start, 2=loop end (CTRL-ALL) */
-                var step = 0.0025;            /* fine: ~400 detents across the whole take */
+            if (samplerMode) {
+                var step = 0.0025;            /* fine loop step: ~400 detents across the take */
+                if (selSlot >= 0) {           /* slot-selected: per-slot vol/pan/loop */
+                    if (i === 7) { selVol = clamp01(selVol + delta * 0.02); sampKnobShow = 'vol'; }
+                    else if (i === 6) { selPan = Math.max(-1, Math.min(1, selPan + delta * 0.02)); sampKnobShow = 'pan'; }
+                    else if (i === 0) { selLs = clamp01(selLs + delta * step); if (selLs > selLe - 0.01) selLs = Math.max(0, selLe - 0.01); sampKnobShow = 'ls'; }
+                    else if (i === 1) { selLe = clamp01(selLe + delta * step); if (selLe < selLs + 0.01) selLe = Math.min(1, selLs + 0.01); sampKnobShow = 'le'; }
+                    else { return; }
+                    writeControl(); screenDirty = true;
+                    return;
+                }
+                /* CTRL-ALL: knob 1 = loop start, knob 2 = loop end (all slots) */
                 if (i === 0) {
                     loopStart = clamp01(loopStart + delta * step);
                     if (loopStart > loopEnd - 0.01) loopStart = Math.max(0, loopEnd - 0.01);
                 } else if (i === 1) {
                     loopEnd = clamp01(loopEnd + delta * step);
                     if (loopEnd < loopStart + 0.01) loopEnd = Math.min(1, loopStart + 0.01);
-                } else { return; }            /* knobs 3-8 reserved for future sampler params */
+                } else { return; }            /* knobs 3-8 reserved */
                 writeControl(); screenDirty = true;
                 return;
             }

@@ -857,7 +857,7 @@
 	// CTRL-ALL knob scrub glides the loop region smoothly instead of clicking. The
 	// crossfade follows the chosen region [s, e): tail buf[e-fade..e] fades out, head
 	// buf[s..s+fade] fades in.
-	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 0.85, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1|
+	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 1.0, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1, pan = 0|
 		var sr = BufSampleRate.kr(buf);
 		var rate = BufRateScale.kr(buf);
 		var startF = (loopStart * frames).max(0);
@@ -874,7 +874,8 @@
 		var tail = BufRd.ar(nchan, buf, pos, loop: 1, interpolation: 2);
 		var head = BufRd.ar(nchan, buf, startF + (pos - (endF - fade)), loop: 1, interpolation: 2);
 		var sig = (tail * (1 - u).sqrt) + (head * u.sqrt);
-		sig = sig * EnvGen.kr(Env.asr(fadein, 1, fadein), 1);     // declick on play start/stop
-		Out.ar(out, ~killbad.(sig * amp));
+		sig = ~panOut.(sig, pan, nchan);                         // per-slot pan (stereo balance)
+		sig = sig * EnvGen.kr(Env.asr(fadein, 1, fadein), 1) * amp.lag(0.03);  // per-slot volume
+		Out.ar(out, ~killbad.(sig));
 	}).add;
 };

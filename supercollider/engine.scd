@@ -250,7 +250,9 @@
 		~sampBufs = Array.newClear(32); ~sampRecSyn = Array.newClear(32);
 		~sampPlaySyn = Array.newClear(32); ~sampFrames = Array.newClear(32);
 		~sampMaxFrames = (30 * sr).asInteger;     // 30s max take per slot
-		~sampLoopStart = 0.0; ~sampLoopEnd = 1.0;  // global CTRL-ALL loop region (0..1)
+		// per-slot params: loop region (0..1), volume (0..~1.3), pan (-1..1)
+		~sampLs = Array.fill(32, 0.0); ~sampLe = Array.fill(32, 1.0);
+		~sampVol = Array.fill(32, 1.0); ~sampPan = Array.fill(32, 0.0);
 		~built = true;
 		s.startAliveThread(0.0, 0.5);   // poll /status so avgCPU / numSynths stay live
 		~ctrl.value.sendMsg('/atelier/ready');
@@ -459,15 +461,27 @@
 			~sampPlaySyn[slot].notNil.if { ~sampPlaySyn[slot].free };
 			~sampPlaySyn[slot] = Synth.head(~gSampPlay, ("samplerPlay_" ++ ~nchan).asSymbol,
 				[\buf, buf.bufnum, \frames, fr, \out, ~masterBus.index,
-				 \loopStart, ~sampLoopStart, \loopEnd, ~sampLoopEnd]);
+				 \loopStart, ~sampLs[slot], \loopEnd, ~sampLe[slot],
+				 \amp, ~sampVol[slot], \pan, ~sampPan[slot]]);
 		};
 	};
 };
-// CTRL-ALL: set the global loop region (0..1) and push it onto every playing slot.
+// CTRL-ALL: set the loop region (0..1) on EVERY slot + push to all playing.
 ~sampSetLoop = { |start, end|
 	(~sampBufs.notNil).if {
-		~sampLoopStart = start.clip(0, 1); ~sampLoopEnd = end.clip(0, 1);
-		~sampPlaySyn.do { |syn| syn.notNil.if { syn.set(\loopStart, ~sampLoopStart, \loopEnd, ~sampLoopEnd) } };
+		32.do { |i| ~sampLs[i] = start.clip(0, 1); ~sampLe[i] = end.clip(0, 1) };
+		~sampPlaySyn.do { |syn| syn.notNil.if { syn.set(\loopStart, start.clip(0, 1), \loopEnd, end.clip(0, 1)) } };
+	};
+};
+// Per-slot params (slot-selection mode): volume, pan, loop start/end for ONE slot.
+~sampSetSlot = { |slot, vol, pan, ls, le|
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+		~sampVol[slot] = vol.max(0); ~sampPan[slot] = pan.clip(-1, 1);
+		~sampLs[slot] = ls.clip(0, 1); ~sampLe[slot] = le.clip(0, 1);
+		~sampPlaySyn[slot].notNil.if {
+			~sampPlaySyn[slot].set(\amp, ~sampVol[slot], \pan, ~sampPan[slot],
+				\loopStart, ~sampLs[slot], \loopEnd, ~sampLe[slot]);
+		};
 	};
 };
 ~sampPlayStop = { |slot|
@@ -492,6 +506,7 @@
 	OSCdef(\sampStop, { |m| ~sampPlayStop.(m[1].asInteger) }, '/atelier/sampler/stop'),
 	OSCdef(\sampFree, { |m| ~sampFree.(m[1].asInteger) }, '/atelier/sampler/free'),
 	OSCdef(\sampLoop, { |m| ~sampSetLoop.(m[1], m[2]) }, '/atelier/sampler/looprange'),
+	OSCdef(\sampSlot, { |m| ~sampSetSlot.(m[1].asInteger, m[2], m[3], m[4], m[5]) }, '/atelier/sampler/slot'),
 	OSCdef(\modnew, { |m| ~moduleNew.(m[1], m[2], m[3], m[4], m[5]) }, '/atelier/module/new'),
 	OSCdef(\modfree, { |m| ~moduleFree.(m[1]) }, '/atelier/module/free'),
 	OSCdef(\modnodes, { |m| ~moduleNodes.(m[1], m[2]) }, '/atelier/module/nodes'),
