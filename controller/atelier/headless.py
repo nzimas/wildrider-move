@@ -75,6 +75,8 @@ class HeadlessController:
         self._swap_lock = threading.Lock()   # serialize click-free patch swaps
         # Sampler: 32 slots, each empty | recording | filled | playing.
         self._samp = [{"state": "empty", "t0": 0.0, "frames": 0} for _ in range(32)]
+        self._loop_start = 0.0          # global CTRL-ALL loop region (0..1)
+        self._loop_end = 1.0
 
     # -- lifecycle --------------------------------------------------------- #
     def start(self) -> None:
@@ -373,6 +375,17 @@ class HeadlessController:
         self.bridge.send("/atelier/sampler/free", pad)
         self._samp[pad] = {"state": "empty", "t0": 0.0, "frames": 0}
 
+    def set_loop_range(self, start: float, end: float) -> None:
+        """CTRL-ALL loop region (knob 1 = start, knob 2 = end) for ALL takes,
+        normalised 0..1 of each take's length. The engine holds it globally and
+        applies it live to every playing slot + to new playbacks."""
+        s = max(0.0, min(1.0, float(start)))
+        e = max(0.0, min(1.0, float(end)))
+        if e < s + 0.02:                 # keep a minimum loop window
+            e = min(1.0, s + 0.02)
+        self._loop_start, self._loop_end = s, e
+        self.bridge.send("/atelier/sampler/looprange", s, e)
+
     def _sampler_status(self) -> dict:
         return {"states": [s["state"] for s in self._samp]}
 
@@ -550,6 +563,7 @@ class HeadlessController:
         last_macros = [None] * 8
         last_level = None
         last_gain = None
+        last_looprange = None
         while not self._stop.is_set():
             time.sleep(period)
             try:
@@ -587,6 +601,16 @@ class HeadlessController:
                 if mgf is not None and mgf != last_gain:
                     last_gain = mgf
                     self._safe(lambda v=mgf: self.bridge.send("/atelier/mastergain", v))
+            # Sampler CTRL-ALL loop region (knob 1/2 in the sampler view).
+            lr = doc.get("looprange")
+            if isinstance(lr, list) and len(lr) == 2:
+                try:
+                    key = (round(float(lr[0]), 4), round(float(lr[1]), 4))
+                except (TypeError, ValueError):
+                    key = None
+                if key is not None and key != last_looprange:
+                    last_looprange = key
+                    self._safe(lambda a=key: self.set_loop_range(a[0], a[1]))
             seq = doc.get("seq")
             if isinstance(seq, int) and seq != last_seq:
                 last_seq = seq

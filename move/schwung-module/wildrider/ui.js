@@ -102,6 +102,8 @@ let morphTime = 10;            /* seconds, 1..99, default 10 */
 let samplerMode = false;
 let sampStates = new Array(32).fill('empty');   /* per slot from status.json */
 let sampFlashOn = false;       /* red-flash phase for recording slots */
+/* CTRL-ALL loop region (knob 1 = start, knob 2 = end), 0..1 of each take. */
+let loopStart = 0.0, loopEnd = 1.0;
 let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
 let levels = {};               /* cell -> module audio level (amp), default 1.0 */
@@ -124,6 +126,7 @@ function writeControl() {
     if (typeof host_write_file !== 'function') return;
     const doc = { seq: seq, cmd: lastCmd, arg: lastArg, macros: macroVal };
     if (lastLevel) doc.level = lastLevel;
+    doc.looprange = [loopStart, loopEnd];   /* CTRL-ALL loop region (applied on change) */
     host_write_file(CONTROL_FILE, JSON.stringify(doc));
 }
 function sendCmd(cmd, arg) { seq++; lastCmd = cmd; lastArg = arg; writeControl(); }
@@ -360,9 +363,10 @@ function drawSampler() {
         var s = sampStates[i];
         if (s === 'recording') rec++; else if (s === 'playing') play++; else if (s === 'filled') fill++;
     }
-    if (rec > 0) print(0, 34, 'RECORDING...', 1);
-    else print(0, 34, (fill + play) + ' takes   ' + play + ' playing', 1);
-    print(0, 48, 'tap=rec/play  X+pad=del', 1);
+    if (rec > 0) print(0, 30, 'RECORDING...', 1);
+    else print(0, 30, (fill + play) + ' takes   ' + play + ' playing', 1);
+    print(0, 44, 'loop ' + Math.round(loopStart * 100) + '-' + Math.round(loopEnd * 100) + '%', 1);
+    print(0, 56, 'k1=start k2=end  X+pad=del', 1);
 }
 
 /* ---- screen ----
@@ -426,6 +430,7 @@ globalThis.init = function () {
     sceneActive = -1; sceneMorphTo = -1; lastSceneActive = -1; lastMorphTo = -1;
     morphEdit = false; morphTime = 10;
     samplerMode = false; sampStates = new Array(32).fill('empty'); sampFlashOn = false;
+    loopStart = 0.0; loopEnd = 1.0;
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false); lfoPending = new Array(16).fill(0);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
@@ -628,11 +633,21 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 >= MoveKnob1 && d1 <= MoveKnob8) {
             const i = d1 - MoveKnob1;
             const delta = decodeDelta(d2);
-            if (delta !== 0) {
-                macroVal[i] = clamp01(macroVal[i] + delta * 0.015);
-                writeControl();           /* macro change: same seq, new values */
-                showMacro(i);
+            if (delta === 0) return;
+            if (samplerMode) {                /* context knobs: 1=loop start, 2=loop end (CTRL-ALL) */
+                if (i === 0) {
+                    loopStart = clamp01(loopStart + delta * 0.01);
+                    if (loopStart > loopEnd - 0.02) loopStart = Math.max(0, loopEnd - 0.02);
+                } else if (i === 1) {
+                    loopEnd = clamp01(loopEnd + delta * 0.01);
+                    if (loopEnd < loopStart + 0.02) loopEnd = Math.min(1, loopStart + 0.02);
+                } else { return; }            /* knobs 3-8 reserved for future sampler params */
+                writeControl(); screenDirty = true;
+                return;
             }
+            macroVal[i] = clamp01(macroVal[i] + delta * 0.015);
+            writeControl();                   /* macro change: same seq, new values */
+            showMacro(i);
             return;
         }
     }

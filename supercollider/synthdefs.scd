@@ -853,14 +853,21 @@
 	//   tail read = buf[phase+period] = buf[frames-fade .. frames] (fades OUT).
 	//   At the wrap the playhead is continuous (end gHead=1 at buf[period-] -> start
 	//   gTail=1 at buf[period]), and out-of-take tail reads land on `fade`=0 -> x0.
-	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 0.85, fadein = 0.02, xfade = 0.03|
+	// loopStart/loopEnd are NORMALISED (0..1 of the take). They are lagged so a live
+	// CTRL-ALL knob scrub glides the loop region smoothly instead of clicking. The
+	// crossfade follows the chosen region [s, e): tail buf[e-fade..e] fades out, head
+	// buf[s..s+fade] fades in.
+	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 0.85, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1|
 		var sr = BufSampleRate.kr(buf);
-		var fade = (xfade * sr).clip(64, (frames * 0.25).max(64));
-		var period = (frames - fade).max(1);
+		var ls = loopStart.lag(0.08), le = loopEnd.lag(0.08);
+		var s = ls * frames;
+		var len = ((le - ls) * frames).max(sr * 0.02);      // >= 20ms loop
+		var fade = (xfade * sr).clip(64, (len * 0.25).max(64));
+		var period = (len - fade).max(1);
 		var phase = Phasor.ar(0, BufRateScale.kr(buf), 0, period);
 		var xpos = (phase / fade).min(1);
-		var sig = (BufRd.ar(nchan, buf, phase, loop: 1, interpolation: 2) * xpos.sqrt)
-		        + (BufRd.ar(nchan, buf, phase + period, loop: 1, interpolation: 2) * (1 - xpos).sqrt);
+		var sig = (BufRd.ar(nchan, buf, s + phase, loop: 1, interpolation: 2) * xpos.sqrt)
+		        + (BufRd.ar(nchan, buf, s + phase + period, loop: 1, interpolation: 2) * (1 - xpos).sqrt);
 		sig = sig * EnvGen.kr(Env.asr(fadein, 1, fadein), 1);   // declick on play start/stop
 		Out.ar(out, ~killbad.(sig * amp));
 	}).add;

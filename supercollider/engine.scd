@@ -250,6 +250,7 @@
 		~sampBufs = Array.newClear(32); ~sampRecSyn = Array.newClear(32);
 		~sampPlaySyn = Array.newClear(32); ~sampFrames = Array.newClear(32);
 		~sampMaxFrames = (30 * sr).asInteger;     // 30s max take per slot
+		~sampLoopStart = 0.0; ~sampLoopEnd = 1.0;  // global CTRL-ALL loop region (0..1)
 		~built = true;
 		s.startAliveThread(0.0, 0.5);   // poll /status so avgCPU / numSynths stay live
 		~ctrl.value.sendMsg('/atelier/ready');
@@ -457,8 +458,16 @@
 		(buf.notNil and: { fr > 0 }).if {
 			~sampPlaySyn[slot].notNil.if { ~sampPlaySyn[slot].free };
 			~sampPlaySyn[slot] = Synth.head(~gSampPlay, ("samplerPlay_" ++ ~nchan).asSymbol,
-				[\buf, buf.bufnum, \frames, fr, \out, ~masterBus.index]);
+				[\buf, buf.bufnum, \frames, fr, \out, ~masterBus.index,
+				 \loopStart, ~sampLoopStart, \loopEnd, ~sampLoopEnd]);
 		};
+	};
+};
+// CTRL-ALL: set the global loop region (0..1) and push it onto every playing slot.
+~sampSetLoop = { |start, end|
+	(~sampBufs.notNil).if {
+		~sampLoopStart = start.clip(0, 1); ~sampLoopEnd = end.clip(0, 1);
+		~sampPlaySyn.do { |syn| syn.notNil.if { syn.set(\loopStart, ~sampLoopStart, \loopEnd, ~sampLoopEnd) } };
 	};
 };
 ~sampPlayStop = { |slot|
@@ -482,6 +491,7 @@
 	OSCdef(\sampPlay, { |m| ~sampPlayStart.(m[1].asInteger) }, '/atelier/sampler/play'),
 	OSCdef(\sampStop, { |m| ~sampPlayStop.(m[1].asInteger) }, '/atelier/sampler/stop'),
 	OSCdef(\sampFree, { |m| ~sampFree.(m[1].asInteger) }, '/atelier/sampler/free'),
+	OSCdef(\sampLoop, { |m| ~sampSetLoop.(m[1], m[2]) }, '/atelier/sampler/looprange'),
 	OSCdef(\modnew, { |m| ~moduleNew.(m[1], m[2], m[3], m[4], m[5]) }, '/atelier/module/new'),
 	OSCdef(\modfree, { |m| ~moduleFree.(m[1]) }, '/atelier/module/free'),
 	OSCdef(\modnodes, { |m| ~moduleNodes.(m[1], m[2]) }, '/atelier/module/nodes'),
