@@ -404,7 +404,7 @@ class HeadlessController:
 
     @staticmethod
     def _res_amt(n: float) -> float:
-        return max(0.0, min(1.0, n)) * 4.0                 # 0 .. 4 (MoogFF self-oscillation)
+        return max(0.0, min(1.0, n))                       # normalised; engine maps to RLPF rq
 
     def set_slot_params(self, slot: int, vol: float, pan: float, ls: float, le: float,
                         cut: float, res: float) -> None:

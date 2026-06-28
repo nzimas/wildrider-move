@@ -874,9 +874,14 @@
 		var tail = BufRd.ar(nchan, buf, pos, loop: 1, interpolation: 2);
 		var head = BufRd.ar(nchan, buf, startF + (pos - (endF - fade)), loop: 1, interpolation: 2);
 		var sig = (tail * (1 - u).sqrt) + (head * u.sqrt);
-		// resonant filter: MoogFF 4-pole ladder (self-oscillates near res 4). Lagged
-		// for smooth sweeps; the 18k/0 default is ~transparent (filter "off").
-		sig = MoogFF.ar(sig, cutoff.lag(0.02).clip(20, 18000), res.lag(0.02).clip(0, 3.97));
+		// resonant filter that KEEPS the passband volume at high resonance (unlike a
+		// Moog ladder, whose feedback steals body/floor). RLPF holds unity gain at DC
+		// regardless of Q, so the resonance only ADDS a peak. A 2x cascade gives a
+		// 4-pole slope with the resonance on the 2nd stage. res 0..1 -> rq 1..0.08
+		// (Q 1..~12). 18k/0 default is ~transparent.
+		var fc = cutoff.lag(0.02).clip(20, 18000);
+		var rq = (0.08 ** res.lag(0.02).clip(0, 1)).clip(0.08, 1);
+		sig = RLPF.ar(RLPF.ar(sig, fc, 1.0), fc, rq);
 		sig = ~panOut.(sig, pan, nchan);                         // per-slot pan (stereo balance)
 		sig = sig * EnvGen.kr(Env.asr(fadein, 1, fadein), 1) * amp.lag(0.03);  // per-slot volume
 		Out.ar(out, ~killbad.(sig));
