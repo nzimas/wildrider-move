@@ -256,6 +256,9 @@
 		~sampVol = Array.fill(32, 1.0); ~sampPan = Array.fill(32, 0.0);
 		~sampCut = Array.fill(32, 18000.0); ~sampRes = Array.fill(32, 0.0);
 		~sampPit = Array.fill(32, 0.0);   // pitch in semitones, -24..24
+		// per-slot insert FX (sampler step buttons): GATE + DISTORT, on/off + params
+		~sampGateOn = Array.fill(32, 0); ~sampGateRate = Array.fill(32, 4.0); ~sampGateDuty = Array.fill(32, 0.5);
+		~sampDistOn = Array.fill(32, 0); ~sampDistDrive = Array.fill(32, 0.5); ~sampDistTone = Array.fill(32, 8000.0);
 		~built = true;
 		s.startAliveThread(0.0, 0.5);   // poll /status so avgCPU / numSynths stay live
 		~ctrl.value.sendMsg('/atelier/ready');
@@ -466,7 +469,20 @@
 				[\buf, buf.bufnum, \frames, fr, \out, ~masterBus.index,
 				 \loopStart, ~sampLs[slot], \loopEnd, ~sampLe[slot],
 				 \amp, ~sampVol[slot], \pan, ~sampPan[slot],
-				 \cutoff, ~sampCut[slot], \res, ~sampRes[slot], \pitch, ~sampPit[slot]]);
+				 \cutoff, ~sampCut[slot], \res, ~sampRes[slot], \pitch, ~sampPit[slot],
+				 \fxGateOn, ~sampGateOn[slot], \fxGateRate, ~sampGateRate[slot], \fxGateDuty, ~sampGateDuty[slot],
+				 \fxDistOn, ~sampDistOn[slot], \fxDistDrive, ~sampDistDrive[slot], \fxDistTone, ~sampDistTone[slot]]);
+		};
+	};
+};
+// Per-slot insert FX (sampler step buttons): store + push to the playing synth.
+~sampSetFx = { |slot, gateOn, gateRate, gateDuty, distOn, distDrive, distTone|
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+		~sampGateOn[slot] = gateOn; ~sampGateRate[slot] = gateRate; ~sampGateDuty[slot] = gateDuty;
+		~sampDistOn[slot] = distOn; ~sampDistDrive[slot] = distDrive; ~sampDistTone[slot] = distTone;
+		~sampPlaySyn[slot].notNil.if {
+			~sampPlaySyn[slot].set(\fxGateOn, gateOn, \fxGateRate, gateRate, \fxGateDuty, gateDuty,
+				\fxDistOn, distOn, \fxDistDrive, distDrive, \fxDistTone, distTone);
 		};
 	};
 };
@@ -531,6 +547,7 @@
 	OSCdef(\sampSlot, { |m| ~sampSetSlot.(m[1].asInteger, m[2], m[3], m[4], m[5], m[6], m[7], m[8]) }, '/atelier/sampler/slot'),
 	OSCdef(\sampFilt, { |m| ~sampSetFilter.(m[1], m[2]) }, '/atelier/sampler/filterall'),
 	OSCdef(\sampPitch, { |m| ~sampSetPitchAll.(m[1]) }, '/atelier/sampler/pitchall'),
+	OSCdef(\sampFx, { |m| ~sampSetFx.(m[1].asInteger, m[2], m[3], m[4], m[5], m[6], m[7]) }, '/atelier/sampler/slotfx'),
 	OSCdef(\modnew, { |m| ~moduleNew.(m[1], m[2], m[3], m[4], m[5]) }, '/atelier/module/new'),
 	OSCdef(\modfree, { |m| ~moduleFree.(m[1]) }, '/atelier/module/free'),
 	OSCdef(\modnodes, { |m| ~moduleNodes.(m[1], m[2]) }, '/atelier/module/nodes'),

@@ -116,6 +116,10 @@ let lastSamParam = null, lastSamValue = 0;     /* last per-slot edit (sent as `s
 let sampVol = new Array(32).fill(1.0), sampPan = new Array(32).fill(0.0);
 let sampLs = new Array(32).fill(0.0), sampLe = new Array(32).fill(1.0);
 let sampCut = new Array(32).fill(1.0), sampRes = new Array(32).fill(0.0), sampPit = new Array(32).fill(0.0);
+/* Per-slot step-button FX (step 1 = GATE, step 2 = DISTORT). */
+let sampGateOn = new Array(32).fill(0), sampDistOn = new Array(32).fill(0);
+let pendingSampFx = null, fxN = 0;            /* sampfx event sent in writeControl */
+const FX_ON_COLOR = Mustard;
 let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
 let levels = {};               /* cell -> module audio level (amp), default 1.0 */
@@ -142,6 +146,7 @@ function writeControl() {
     doc.filterall = [filtCut, filtRes];     /* CTRL-ALL filter cutoff/res */
     doc.pitchall = filtPit;                 /* CTRL-ALL pitch (semitones) */
     if (selSlots.length > 0 && lastSamParam) doc.samedit = { sels: selSlots, p: lastSamParam, v: lastSamValue };
+    if (pendingSampFx) doc.sampfx = pendingSampFx;
     host_write_file(CONTROL_FILE, JSON.stringify(doc));
 }
 function sendCmd(cmd, arg) { seq++; lastCmd = cmd; lastArg = arg; writeControl(); }
@@ -284,13 +289,15 @@ function readStatus() {
             if (s.sampler.cut) sampCut[qi] = s.sampler.cut[qi];
             if (s.sampler.res) sampRes[qi] = s.sampler.res[qi];
             if (s.sampler.pit) sampPit[qi] = s.sampler.pit[qi];
+            if (s.sampler.gate) sampGateOn[qi] = s.sampler.gate[qi];
+            if (s.sampler.dist) sampDistOn[qi] = s.sampler.dist[qi];
         }
     }
     /* Only mark dirty when the VISIBLE state changed (not cpu/meter jitter), so
      * an idle patch causes ZERO LED/SPI traffic — that traffic XRuns audio. */
     var sceneSig = scenesMode ? ('S' + sceneActive + '/' + sceneMorphTo + '/' +
         sceneFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
-    var sampSig = samplerMode ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',')) : '';
+    var sampSig = samplerMode ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',') + '|' + sampGateOn.join('') + sampDistOn.join('')) : '';
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
         return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig + '|' + sampSig;
     if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
@@ -376,7 +383,12 @@ function renderSamplerLEDs(flashOn) {
         else if (st === 'filled') color = White;
         setLED(PAD_NOTES[c], color);
     }
-    for (var i = 0; i < 16; i++) setLED(STEP_BASE + i, Black);   /* step row off here */
+    /* step buttons = per-slot FX (step1 GATE, step2 DISTORT), lit for the primary slot */
+    for (var i = 0; i < 16; i++) {
+        var on = false;
+        if (selPrimary >= 0) on = (i === 0) ? !!sampGateOn[selPrimary] : (i === 1) ? !!sampDistOn[selPrimary] : false;
+        setLED(STEP_BASE + i, on ? FX_ON_COLOR : Black);
+    }
     ledDirty = false;
 }
 function cutHz(n) { return Math.round(20 * Math.pow(900, n)); }   /* normalised -> Hz */
@@ -488,6 +500,7 @@ globalThis.init = function () {
     sampVol = new Array(32).fill(1.0); sampPan = new Array(32).fill(0.0);
     sampLs = new Array(32).fill(0.0); sampLe = new Array(32).fill(1.0);
     sampCut = new Array(32).fill(1.0); sampRes = new Array(32).fill(0.0); sampPit = new Array(32).fill(0.0);
+    sampGateOn = new Array(32).fill(0); sampDistOn = new Array(32).fill(0); pendingSampFx = null; fxN = 0;
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false); lfoPending = new Array(16).fill(0);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
@@ -582,6 +595,24 @@ globalThis.onMidiMessageInternal = function (data) {
      * Shift+press re-randomizes that one LFO (keeping its on/off state). */
     if (status === 0x90 && d2 > 0 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {
         const i = d1 - STEP_BASE;
+        if (samplerMode) {                       /* SAMPLER: step buttons toggle per-slot FX on the SELECTED slots */
+            var fxName = (i === 0) ? 'gate' : (i === 1) ? 'dist' : null;
+            if (fxName && selSlots.length > 0) {
+                var curOn = (fxName === 'gate') ? sampGateOn[selPrimary] : sampDistOn[selPrimary];
+                var newOn, doRand;
+                if (curOn) { if (shiftHeld) { newOn = 1; doRand = 1; } else { newOn = 0; doRand = 0; } }
+                else { newOn = 1; doRand = 1; }   /* toggling ON randomizes the params */
+                for (var k = 0; k < selSlots.length; k++) {     /* optimistic */
+                    if (fxName === 'gate') sampGateOn[selSlots[k]] = newOn; else sampDistOn[selSlots[k]] = newOn;
+                }
+                fxN++;
+                pendingSampFx = { fx: fxName, sels: selSlots.slice(), on: newOn, rand: doRand, n: fxN };
+                writeControl();
+                showAction(fxName.toUpperCase() + (newOn ? (doRand && curOn ? ' RND' : ' ON') : ' OFF'));
+                ledDirty = true; screenDirty = true;
+            }
+            return;                              /* step row is FX in the sampler view (no LFO) */
+        }
         if (shiftHeld && masterTouched && i === 0) {   /* shift + vol-touch + step1 = randomize ALL */
             sendCmd('lforandall', -1);
             showAction('RND ALL LFOS');

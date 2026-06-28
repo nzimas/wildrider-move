@@ -77,7 +77,11 @@ class HeadlessController:
         # volume, pan). loop ls/le default full take; vol unity; pan centre.
         self._samp = [{"state": "empty", "t0": 0.0, "frames": 0,
                        "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
-                       "cut": 1.0, "res": 0.0, "pit": 0.0} for _ in range(32)]  # cut/res 0..1, pit semis
+                       "cut": 1.0, "res": 0.0, "pit": 0.0,         # cut/res 0..1, pit semis
+                       # per-slot insert FX (step buttons): GATE + DISTORT
+                       "gate_on": 0, "gate_rate": 4.0, "gate_duty": 0.5,
+                       "dist_on": 0, "dist_drive": 0.5, "dist_tone": 8000.0}
+                      for _ in range(32)]
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 
@@ -382,7 +386,9 @@ class HeadlessController:
         self.bridge.send("/atelier/sampler/free", pad)
         self._samp[pad] = {"state": "empty", "t0": 0.0, "frames": 0,
                            "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
-                           "cut": 1.0, "res": 0.0, "pit": 0.0}
+                           "cut": 1.0, "res": 0.0, "pit": 0.0,
+                           "gate_on": 0, "gate_rate": 4.0, "gate_duty": 0.5,
+                           "dist_on": 0, "dist_drive": 0.5, "dist_tone": 8000.0}
 
     def set_loop_range(self, start: float, end: float) -> None:
         """CTRL-ALL loop region (knob 1 = start, knob 2 = end) for ALL takes,
@@ -434,6 +440,38 @@ class HeadlessController:
                 self._samp[s][param] = v
                 self._push_slot(s)
 
+    def _push_slotfx(self, slot: int) -> None:
+        sl = self._samp[slot]
+        self.bridge.send("/atelier/sampler/slotfx", slot,
+                         sl["gate_on"], sl["gate_rate"], sl["gate_duty"],
+                         sl["dist_on"], sl["dist_drive"], sl["dist_tone"])
+
+    def _rand_fx(self, sl: dict, fx: str) -> None:
+        """Randomize one effect's params (called when an FX is toggled on / re-rolled)."""
+        rng = self.state.rng
+        if fx == "gate":
+            sl["gate_rate"] = round(rng.uniform(2.0, 14.0), 2)     # rhythmic Hz
+            sl["gate_duty"] = round(rng.uniform(0.12, 0.6), 3)
+        elif fx == "dist":
+            sl["dist_drive"] = round(rng.uniform(0.3, 1.0), 3)
+            sl["dist_tone"] = round(rng.uniform(1800.0, 11000.0), 1)
+
+    def sampler_fx(self, fx: str, sels: list, on: int, rand: int) -> None:
+        """Step-button FX on the SELECTED slots. on -> toggle state; rand (and on)
+        -> (re)randomize the effect's params. fx is 'gate' or 'dist'."""
+        if fx not in ("gate", "dist"):
+            return
+        onkey = fx + "_on"
+        for s in sels:
+            s = int(s)
+            if not (0 <= s < 32):
+                continue
+            sl = self._samp[s]
+            sl[onkey] = 1 if on else 0
+            if on and rand:
+                self._rand_fx(sl, fx)
+            self._push_slotfx(s)
+
     def set_pitch_all(self, semis: float) -> None:
         """CTRL-ALL pitch (knob 5, no selection): semitone shift for ALL takes."""
         p = max(-24.0, min(24.0, float(semis)))
@@ -457,7 +495,9 @@ class HeadlessController:
                 "le": [round(s["le"], 4) for s in self._samp],
                 "cut": [round(s["cut"], 4) for s in self._samp],
                 "res": [round(s["res"], 4) for s in self._samp],
-                "pit": [round(s["pit"], 2) for s in self._samp]}
+                "pit": [round(s["pit"], 2) for s in self._samp],
+                "gate": [s["gate_on"] for s in self._samp],
+                "dist": [s["dist_on"] for s in self._samp]}
 
     def _lfos_status(self) -> list:
         out = []
@@ -637,6 +677,7 @@ class HeadlessController:
         last_slot = None
         last_filter = None
         last_pitch = None
+        last_fx = None
         while not self._stop.is_set():
             time.sleep(period)
             try:
@@ -714,6 +755,15 @@ class HeadlessController:
                 if pk is not None and pk != last_pitch:
                     last_pitch = pk
                     self._safe(lambda v=pk: self.set_pitch_all(v))
+            # Sampler step-button FX: {fx, sels, on, rand, n} (n = monotonic so a
+            # re-randomize with identical on-state still triggers).
+            fx = doc.get("sampfx")
+            if isinstance(fx, dict) and isinstance(fx.get("sels"), list):
+                fxk = (str(fx.get("fx")), tuple(int(x) for x in fx["sels"]),
+                       int(bool(fx.get("on"))), int(bool(fx.get("rand"))), int(fx.get("n", 0)))
+                if fxk != last_fx:
+                    last_fx = fxk
+                    self._safe(lambda a=fxk: self.sampler_fx(a[0], list(a[1]), a[2], a[3]))
             seq = doc.get("seq")
             if isinstance(seq, int) and seq != last_seq:
                 last_seq = seq
