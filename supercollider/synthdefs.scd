@@ -859,20 +859,22 @@
 	// buf[s..s+fade] fades in.
 	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 0.85, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1|
 		var sr = BufSampleRate.kr(buf);
-		// loopStart moves the READ position, so a fast change pitch-bends (the
-		// "squeaky bip"). Lag it SLOWLY so a scrub glides gently (s and len stay
-		// consistent, so it never reads past the take). loopEnd only moves the wrap
-		// point (no read-position jump), so it can track quickly.
-		var ls = loopStart.lag(0.25), le = loopEnd.lag(0.05);
-		var s = ls * frames;
-		var len = ((le - ls) * frames).max(sr * 0.02);   // >= 20ms loop
-		var fade = (xfade * sr).clip(64, (len * 0.25).max(64));
-		var period = (len - fade).max(1);
-		var phase = Phasor.ar(0, BufRateScale.kr(buf), 0, period);
-		var xpos = (phase / fade).min(1);
-		var sig = (BufRd.ar(nchan, buf, s + phase, loop: 1, interpolation: 2) * xpos.sqrt)
-		        + (BufRd.ar(nchan, buf, s + phase + period, loop: 1, interpolation: 2) * (1 - xpos).sqrt);
-		sig = sig * EnvGen.kr(Env.asr(fadein, 1, fadein), 1);   // declick on play start/stop
+		var rate = BufRateScale.kr(buf);
+		var startF = (loopStart * frames).max(0);
+		var endF = (loopEnd * frames).max(startF + (sr * 0.02));   // end > start, >= 20ms
+		var len = endF - startF;
+		var fade = (xfade * sr).clip(64, len * 0.25);
+		// NATIVE start/end loop: Phasor only consults `start` when it WRAPS, so moving
+		// loopStart never jumps/glides the live read position -> NO pitch-bend
+		// ("squeaky bip"); the new start just takes effect at the next wrap, where the
+		// crossfade hides the seam. The body is [startF+fade, endF) so the crossfaded
+		// head region [startF, startF+fade] is not also played as the body (no double).
+		var pos = Phasor.ar(0, rate, startF + fade, endF);
+		var u = ((pos - (endF - fade)) / fade).clip(0, 1);        // 0 in body, 0->1 across the seam
+		var tail = BufRd.ar(nchan, buf, pos, loop: 1, interpolation: 2);
+		var head = BufRd.ar(nchan, buf, startF + (pos - (endF - fade)), loop: 1, interpolation: 2);
+		var sig = (tail * (1 - u).sqrt) + (head * u.sqrt);
+		sig = sig * EnvGen.kr(Env.asr(fadein, 1, fadein), 1);     // declick on play start/stop
 		Out.ar(out, ~killbad.(sig * amp));
 	}).add;
 };
