@@ -255,6 +255,7 @@
 		~sampLs = Array.fill(32, 0.0); ~sampLe = Array.fill(32, 1.0);
 		~sampVol = Array.fill(32, 1.0); ~sampPan = Array.fill(32, 0.0);
 		~sampCut = Array.fill(32, 18000.0); ~sampRes = Array.fill(32, 0.0);
+		~sampPit = Array.fill(32, 0.0);   // pitch in semitones, -24..24
 		~built = true;
 		s.startAliveThread(0.0, 0.5);   // poll /status so avgCPU / numSynths stay live
 		~ctrl.value.sendMsg('/atelier/ready');
@@ -465,7 +466,7 @@
 				[\buf, buf.bufnum, \frames, fr, \out, ~masterBus.index,
 				 \loopStart, ~sampLs[slot], \loopEnd, ~sampLe[slot],
 				 \amp, ~sampVol[slot], \pan, ~sampPan[slot],
-				 \cutoff, ~sampCut[slot], \res, ~sampRes[slot]]);
+				 \cutoff, ~sampCut[slot], \res, ~sampRes[slot], \pitch, ~sampPit[slot]]);
 		};
 	};
 };
@@ -483,17 +484,24 @@
 		~sampPlaySyn.do { |syn| syn.notNil.if { syn.set(\loopStart, start.clip(0, 1), \loopEnd, end.clip(0, 1)) } };
 	};
 };
-// Per-slot params (slot-selection mode): vol, pan, loop start/end, filter cut/res.
-~sampSetSlot = { |slot, vol, pan, ls, le, cutoff, res|
+// Per-slot params (slot-selection mode): vol, pan, loop, filter cut/res, pitch.
+~sampSetSlot = { |slot, vol, pan, ls, le, cutoff, res, pitch|
 	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
 		~sampVol[slot] = vol.max(0); ~sampPan[slot] = pan.clip(-1, 1);
 		~sampLs[slot] = ls.clip(0, 1); ~sampLe[slot] = le.clip(0, 1);
-		~sampCut[slot] = cutoff; ~sampRes[slot] = res;
+		~sampCut[slot] = cutoff; ~sampRes[slot] = res; ~sampPit[slot] = pitch.clip(-24, 24);
 		~sampPlaySyn[slot].notNil.if {
 			~sampPlaySyn[slot].set(\amp, ~sampVol[slot], \pan, ~sampPan[slot],
 				\loopStart, ~sampLs[slot], \loopEnd, ~sampLe[slot],
-				\cutoff, ~sampCut[slot], \res, ~sampRes[slot]);
+				\cutoff, ~sampCut[slot], \res, ~sampRes[slot], \pitch, ~sampPit[slot]);
 		};
+	};
+};
+// CTRL-ALL pitch: set every slot's pitch + push to all playing.
+~sampSetPitchAll = { |pitch|
+	(~sampBufs.notNil).if {
+		32.do { |i| ~sampPit[i] = pitch.clip(-24, 24) };
+		~sampPlaySyn.do { |syn| syn.notNil.if { syn.set(\pitch, pitch.clip(-24, 24)) } };
 	};
 };
 ~sampPlayStop = { |slot|
@@ -520,8 +528,9 @@
 	OSCdef(\sampStop, { |m| ~sampPlayStop.(m[1].asInteger) }, '/atelier/sampler/stop'),
 	OSCdef(\sampFree, { |m| ~sampFree.(m[1].asInteger) }, '/atelier/sampler/free'),
 	OSCdef(\sampLoop, { |m| ~sampSetLoop.(m[1], m[2]) }, '/atelier/sampler/looprange'),
-	OSCdef(\sampSlot, { |m| ~sampSetSlot.(m[1].asInteger, m[2], m[3], m[4], m[5], m[6], m[7]) }, '/atelier/sampler/slot'),
+	OSCdef(\sampSlot, { |m| ~sampSetSlot.(m[1].asInteger, m[2], m[3], m[4], m[5], m[6], m[7], m[8]) }, '/atelier/sampler/slot'),
 	OSCdef(\sampFilt, { |m| ~sampSetFilter.(m[1], m[2]) }, '/atelier/sampler/filterall'),
+	OSCdef(\sampPitch, { |m| ~sampSetPitchAll.(m[1]) }, '/atelier/sampler/pitchall'),
 	OSCdef(\modnew, { |m| ~moduleNew.(m[1], m[2], m[3], m[4], m[5]) }, '/atelier/module/new'),
 	OSCdef(\modfree, { |m| ~moduleFree.(m[1]) }, '/atelier/module/free'),
 	OSCdef(\modnodes, { |m| ~moduleNodes.(m[1], m[2]) }, '/atelier/module/nodes'),

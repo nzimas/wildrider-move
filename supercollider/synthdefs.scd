@@ -857,9 +857,11 @@
 	// CTRL-ALL knob scrub glides the loop region smoothly instead of clicking. The
 	// crossfade follows the chosen region [s, e): tail buf[e-fade..e] fades out, head
 	// buf[s..s+fade] fades in.
-	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 1.0, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1, pan = 0, cutoff = 18000, res = 0, gate = 1, release = 0.5|
+	SynthDef(("samplerPlay" ++ suf).asSymbol, { |buf = 0, frames = 44100, out = 0, amp = 1.0, fadein = 0.02, xfade = 0.03, loopStart = 0, loopEnd = 1, pan = 0, cutoff = 18000, res = 0, gate = 1, release = 0.5, pitch = 0|
 		var sr = BufSampleRate.kr(buf);
-		var rate = BufRateScale.kr(buf);
+		// varispeed pitch (+-24 semis): scale the read rate. At pitch 0 rate=1 so reads
+		// land on integer positions (bit-exact); cubic interp keeps quality when pitched.
+		var rate = BufRateScale.kr(buf) * pitch.lag(0.02).midiratio;
 		var startF = (loopStart * frames).max(0);
 		var endF = (loopEnd * frames).max(startF + (sr * 0.02));   // end > start, >= 20ms
 		var len = endF - startF;
@@ -871,8 +873,8 @@
 		// head region [startF, startF+fade] is not also played as the body (no double).
 		var pos = Phasor.ar(0, rate, startF + fade, endF);
 		var u = ((pos - (endF - fade)) / fade).clip(0, 1);        // 0 in body, 0->1 across the seam
-		var tail = BufRd.ar(nchan, buf, pos, loop: 1, interpolation: 2);
-		var head = BufRd.ar(nchan, buf, startF + (pos - (endF - fade)), loop: 1, interpolation: 2);
+		var tail = BufRd.ar(nchan, buf, pos, loop: 1, interpolation: 4);
+		var head = BufRd.ar(nchan, buf, startF + (pos - (endF - fade)), loop: 1, interpolation: 4);
 		var sig = (tail * (1 - u).sqrt) + (head * u.sqrt);
 		// resonant filter (RLPF cascade — keeps passband volume at high res, see
 		// below). It is BYPASSED when fully open so playback is BIT-EXACT to the take:

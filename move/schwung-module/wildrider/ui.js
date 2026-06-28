@@ -106,14 +106,16 @@ let sampFlashOn = false;       /* red-flash phase for recording slots */
 let loopStart = 0.0, loopEnd = 1.0;
 /* Slot-selection mode (Shift+pad in the sampler view): knob 8 = volume, knob 7 =
  * pan, knobs 1/2 = loop start/end for THIS slot only. Bars show on knob TOUCH. */
-let selSlot = -1;                             /* selected slot, or -1 */
-let selVol = 1.0, selPan = 0.0, selLs = 0.0, selLe = 1.0;   /* working values */
-let selCut = 1.0, selRes = 0.0;                /* filter cutoff/res, normalised 0..1 */
-let filtCut = 1.0, filtRes = 0.0;              /* CTRL-ALL filter working values */
+let selSlots = [];                            /* selected slots (multi-select), [] = none */
+let selPrimary = -1;                          /* slot whose values the bars show */
+let selVol = 1.0, selPan = 0.0, selLs = 0.0, selLe = 1.0;   /* working values (applied to all selected) */
+let selCut = 1.0, selRes = 0.0, selPit = 0.0;  /* filter cut/res (0..1), pitch (semis) */
+let filtCut = 1.0, filtRes = 0.0, filtPit = 0.0;  /* CTRL-ALL working values */
 let sampKnobShow = null;                       /* which param bar to draw */
+let lastSamParam = null, lastSamValue = 0;     /* last per-slot edit (sent as `samedit`) */
 let sampVol = new Array(32).fill(1.0), sampPan = new Array(32).fill(0.0);
 let sampLs = new Array(32).fill(0.0), sampLe = new Array(32).fill(1.0);
-let sampCut = new Array(32).fill(1.0), sampRes = new Array(32).fill(0.0);
+let sampCut = new Array(32).fill(1.0), sampRes = new Array(32).fill(0.0), sampPit = new Array(32).fill(0.0);
 let heldCell = -1, heldStart = 0, heldNameShown = false, heldAdjusted = false;
 const LONG_PRESS_MS = 400;     /* >= this = long press (show name, no toggle) */
 let levels = {};               /* cell -> module audio level (amp), default 1.0 */
@@ -138,7 +140,8 @@ function writeControl() {
     if (lastLevel) doc.level = lastLevel;
     doc.looprange = [loopStart, loopEnd];   /* CTRL-ALL loop region (applied on change) */
     doc.filterall = [filtCut, filtRes];     /* CTRL-ALL filter cutoff/res */
-    if (selSlot >= 0) doc.slot = { sel: selSlot, vol: selVol, pan: selPan, ls: selLs, le: selLe, cut: selCut, res: selRes };
+    doc.pitchall = filtPit;                 /* CTRL-ALL pitch (semitones) */
+    if (selSlots.length > 0 && lastSamParam) doc.samedit = { sels: selSlots, p: lastSamParam, v: lastSamValue };
     host_write_file(CONTROL_FILE, JSON.stringify(doc));
 }
 function sendCmd(cmd, arg) { seq++; lastCmd = cmd; lastArg = arg; writeControl(); }
@@ -280,13 +283,14 @@ function readStatus() {
             if (s.sampler.le) sampLe[qi] = s.sampler.le[qi];
             if (s.sampler.cut) sampCut[qi] = s.sampler.cut[qi];
             if (s.sampler.res) sampRes[qi] = s.sampler.res[qi];
+            if (s.sampler.pit) sampPit[qi] = s.sampler.pit[qi];
         }
     }
     /* Only mark dirty when the VISIBLE state changed (not cpu/meter jitter), so
      * an idle patch causes ZERO LED/SPI traffic — that traffic XRuns audio. */
     var sceneSig = scenesMode ? ('S' + sceneActive + '/' + sceneMorphTo + '/' +
         sceneFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
-    var sampSig = samplerMode ? ('Z' + selSlot + ':' + sampStates.join(',')) : '';
+    var sampSig = samplerMode ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',')) : '';
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
         return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig + '|' + sampSig;
     if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
@@ -367,7 +371,7 @@ function renderSamplerLEDs(flashOn) {
     for (var c = 0; c < 32; c++) {
         var st = sampStates[c], color = Black;
         if (st === 'recording') color = flashOn ? Red : Black;   /* recording wins */
-        else if (c === selSlot) color = VividYellow;             /* selected slot */
+        else if (selSlots.indexOf(c) >= 0) color = VividYellow;  /* selected slot(s) */
         else if (st === 'playing') color = Purple;
         else if (st === 'filled') color = White;
         setLED(PAD_NOTES[c], color);
@@ -382,13 +386,14 @@ function drawSampler() {
     clear_screen();
     /* A knob is touched/turning -> show that param's bar (slot value, or CTRL-ALL). */
     if (sampKnobShow) {
-        var sel = selSlot >= 0;
-        print(0, 6, sel ? ('SLOT ' + (selSlot + 1)) : 'ALL SLOTS', 2);
+        var sel = selSlots.length > 0;
+        print(0, 6, sel ? (selSlots.length > 1 ? (selSlots.length + ' SLOTS') : ('SLOT ' + (selPrimary + 1))) : 'ALL SLOTS', 2);
         var vol = sel ? selVol : 1, pan = sel ? selPan : 0;
         var ls = sel ? selLs : loopStart, le = sel ? selLe : loopEnd;
-        var cut = sel ? selCut : filtCut, res = sel ? selRes : filtRes;
+        var cut = sel ? selCut : filtCut, res = sel ? selRes : filtRes, pit = sel ? selPit : filtPit;
         if (sampKnobShow === 'vol') { print(0, 24, 'VOLUME', 1); bar(vol); }
         else if (sampKnobShow === 'pan') { print(0, 24, 'PAN ' + panLbl(pan), 1); bbar(pan); }
+        else if (sampKnobShow === 'pit') { print(0, 24, 'PITCH ' + (pit > 0 ? '+' : '') + (Math.round(pit * 10) / 10) + ' st', 1); bbar(pit / 24); }
         else if (sampKnobShow === 'cut') { print(0, 24, 'CUTOFF ' + cutHz(cut) + ' Hz', 1); bar(cut); }
         else if (sampKnobShow === 'res') { print(0, 24, 'RESONANCE ' + Math.round(res * 100) + '%', 1); bar(res); }
         else if (sampKnobShow === 'ls') { print(0, 24, 'LOOP START ' + Math.round(ls * 100) + '%', 1); bar(ls); }
@@ -403,8 +408,8 @@ function drawSampler() {
     }
     if (rec > 0) print(0, 30, 'RECORDING...', 1);
     else print(0, 30, (fill + play) + ' takes   ' + play + ' playing', 1);
-    if (selSlot >= 0) print(0, 44, 'slot ' + (selSlot + 1) + ': k8vol k7pan k3/4filt k1/2loop', 1);
-    else print(0, 44, 'CTRL-ALL k1/2 loop k3/4 filter  shift+pad', 1);
+    if (selSlots.length > 0) print(0, 44, selSlots.length + ' sel: k8vol k7pan k5pit k3/4filt k1/2loop', 1);
+    else print(0, 44, 'CTRL-ALL k1/2loop k3/4filt k5pit  shift+pad', 1);
     print(0, 56, 'tap=rec/play  X+pad=del', 1);
 }
 
@@ -477,11 +482,12 @@ globalThis.init = function () {
     morphEdit = false; morphTime = 10;
     samplerMode = false; sampStates = new Array(32).fill('empty'); sampFlashOn = false;
     loopStart = 0.0; loopEnd = 1.0;
-    selSlot = -1; selVol = 1.0; selPan = 0.0; selLs = 0.0; selLe = 1.0;
-    selCut = 1.0; selRes = 0.0; filtCut = 1.0; filtRes = 0.0; sampKnobShow = null;
+    selSlots = []; selPrimary = -1; selVol = 1.0; selPan = 0.0; selLs = 0.0; selLe = 1.0;
+    selCut = 1.0; selRes = 0.0; selPit = 0.0; filtCut = 1.0; filtRes = 0.0; filtPit = 0.0;
+    sampKnobShow = null; lastSamParam = null; lastSamValue = 0;
     sampVol = new Array(32).fill(1.0); sampPan = new Array(32).fill(0.0);
     sampLs = new Array(32).fill(0.0); sampLe = new Array(32).fill(1.0);
-    sampCut = new Array(32).fill(1.0); sampRes = new Array(32).fill(0.0);
+    sampCut = new Array(32).fill(1.0); sampRes = new Array(32).fill(0.0); sampPit = new Array(32).fill(0.0);
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false); lfoPending = new Array(16).fill(0);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
@@ -563,8 +569,9 @@ globalThis.onMidiMessageInternal = function (data) {
         if (samplerMode) {
             var touched = (status === 0x90 && d2 >= 64);
             var ki = d1 - MoveKnob1Touch;    /* 0..7 = knob 1..8 */
+            var sel = selSlots.length > 0;
             var which = (ki === 0) ? 'ls' : (ki === 1) ? 'le' : (ki === 2) ? 'cut' : (ki === 3) ? 'res'
-                      : (ki === 6 && selSlot >= 0) ? 'pan' : (ki === 7 && selSlot >= 0) ? 'vol' : null;
+                      : (ki === 4) ? 'pit' : (ki === 6 && sel) ? 'pan' : (ki === 7 && sel) ? 'vol' : null;
             if (touched) { if (which) { sampKnobShow = which; screenDirty = true; } }
             else if (which && sampKnobShow === which) { sampKnobShow = null; screenDirty = true; }
         }
@@ -598,13 +605,17 @@ globalThis.onMidiMessageInternal = function (data) {
     if (status === 0x90 && d2 > 0 && d1 >= 68 && d1 <= 99) {
         const cell = NOTE_TO_CELL[d1];
         if (samplerMode) {                           /* SAMPLER: tap=rec/play/stop, shift=select, X=delete */
-            if (shiftHeld) {                         /* Shift+pad selects (toggles) this slot */
-                selSlot = (selSlot === cell) ? -1 : cell;
-                if (selSlot >= 0) { selVol = sampVol[selSlot]; selPan = sampPan[selSlot]; selLs = sampLs[selSlot]; selLe = sampLe[selSlot]; selCut = sampCut[selSlot]; selRes = sampRes[selSlot]; }
+            if (shiftHeld) {                         /* Shift+pad toggles this slot in/out of the selection (multi-select) */
+                var si = selSlots.indexOf(cell);
+                if (si >= 0) { selSlots.splice(si, 1); }      /* deselect */
+                else { selSlots.push(cell); }                 /* add to selection */
+                selPrimary = (selSlots.length > 0) ? selSlots[selSlots.length - 1] : -1;
+                if (selPrimary >= 0) { selVol = sampVol[selPrimary]; selPan = sampPan[selPrimary]; selLs = sampLs[selPrimary]; selLe = sampLe[selPrimary]; selCut = sampCut[selPrimary]; selRes = sampRes[selPrimary]; selPit = sampPit[selPrimary]; }
+                lastSamParam = null;                          /* no stale edit applied to a new selection */
                 sampKnobShow = null; ledDirty = true; screenDirty = true;
                 return;
             }
-            if (deleteHeld) { sampStates[cell] = 'empty'; if (selSlot === cell) selSlot = -1; sendCmd('sampdel', cell); }
+            if (deleteHeld) { sampStates[cell] = 'empty'; var di = selSlots.indexOf(cell); if (di >= 0) selSlots.splice(di, 1); if (selPrimary === cell) selPrimary = selSlots.length ? selSlots[selSlots.length - 1] : -1; sendCmd('sampdel', cell); }
             else { sendCmd('samppad', cell); }       /* controller resolves rec/play/stop by state */
             ledDirty = true; screenDirty = true;
             return;
@@ -706,18 +717,29 @@ globalThis.onMidiMessageInternal = function (data) {
             if (delta === 0) return;
             if (samplerMode) {
                 var step = 0.0025;            /* fine loop step: ~400 detents across the take */
-                if (selSlot >= 0) {           /* slot-selected: per-slot vol/pan/loop/filter */
-                    if (i === 7) { selVol = clamp01(selVol + delta * 0.02); sampKnobShow = 'vol'; }
-                    else if (i === 6) { selPan = Math.max(-1, Math.min(1, selPan + delta * 0.02)); sampKnobShow = 'pan'; }
-                    else if (i === 2) { selCut = clamp01(selCut + delta * 0.01); sampKnobShow = 'cut'; }
-                    else if (i === 3) { selRes = clamp01(selRes + delta * 0.01); sampKnobShow = 'res'; }
-                    else if (i === 0) { selLs = clamp01(selLs + delta * step); if (selLs > selLe - 0.01) selLs = Math.max(0, selLe - 0.01); sampKnobShow = 'ls'; }
-                    else if (i === 1) { selLe = clamp01(selLe + delta * step); if (selLe < selLs + 0.01) selLe = Math.min(1, selLs + 0.01); sampKnobShow = 'le'; }
+                if (selSlots.length > 0) {    /* selected (1 or many): per-slot vol/pan/pitch/filter/loop */
+                    var pp = null, pv = 0;
+                    if (i === 7) { selVol = clamp01(selVol + delta * 0.02); pp = 'vol'; pv = selVol; }
+                    else if (i === 6) { selPan = Math.max(-1, Math.min(1, selPan + delta * 0.02)); pp = 'pan'; pv = selPan; }
+                    else if (i === 4) { selPit = Math.max(-24, Math.min(24, selPit + delta * 0.5)); pp = 'pit'; pv = selPit; }
+                    else if (i === 2) { selCut = clamp01(selCut + delta * 0.01); pp = 'cut'; pv = selCut; }
+                    else if (i === 3) { selRes = clamp01(selRes + delta * 0.01); pp = 'res'; pv = selRes; }
+                    else if (i === 0) { selLs = clamp01(selLs + delta * step); if (selLs > selLe - 0.01) selLs = Math.max(0, selLe - 0.01); pp = 'ls'; pv = selLs; }
+                    else if (i === 1) { selLe = clamp01(selLe + delta * step); if (selLe < selLs + 0.01) selLe = Math.min(1, selLs + 0.01); pp = 'le'; pv = selLe; }
                     else { return; }
+                    lastSamParam = pp; lastSamValue = pv; sampKnobShow = pp;
+                    /* mirror locally so the bars stay correct for all selected on next select */
+                    for (var k = 0; k < selSlots.length; k++) {
+                        var sx = selSlots[k];
+                        if (pp === 'vol') sampVol[sx] = pv; else if (pp === 'pan') sampPan[sx] = pv;
+                        else if (pp === 'pit') sampPit[sx] = pv; else if (pp === 'cut') sampCut[sx] = pv;
+                        else if (pp === 'res') sampRes[sx] = pv; else if (pp === 'ls') sampLs[sx] = pv;
+                        else if (pp === 'le') sampLe[sx] = pv;
+                    }
                     writeControl(); screenDirty = true;
                     return;
                 }
-                /* CTRL-ALL (no slot selected): k1/k2 = loop, k3/k4 = filter cutoff/res */
+                /* CTRL-ALL (no selection): k1/k2 = loop, k3/k4 = filter, k5 = pitch */
                 if (i === 0) {
                     loopStart = clamp01(loopStart + delta * step);
                     if (loopStart > loopEnd - 0.01) loopStart = Math.max(0, loopEnd - 0.01);
@@ -728,7 +750,8 @@ globalThis.onMidiMessageInternal = function (data) {
                     sampKnobShow = 'le';
                 } else if (i === 2) { filtCut = clamp01(filtCut + delta * 0.01); sampKnobShow = 'cut'; }
                 else if (i === 3) { filtRes = clamp01(filtRes + delta * 0.01); sampKnobShow = 'res'; }
-                else { return; }              /* knobs 5-8 reserved */
+                else if (i === 4) { filtPit = Math.max(-24, Math.min(24, filtPit + delta * 0.5)); sampKnobShow = 'pit'; }
+                else { return; }              /* knobs 6-8 reserved */
                 writeControl(); screenDirty = true;
                 return;
             }

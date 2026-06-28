@@ -77,7 +77,7 @@ class HeadlessController:
         # volume, pan). loop ls/le default full take; vol unity; pan centre.
         self._samp = [{"state": "empty", "t0": 0.0, "frames": 0,
                        "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
-                       "cut": 1.0, "res": 0.0} for _ in range(32)]  # cut/res normalised 0..1
+                       "cut": 1.0, "res": 0.0, "pit": 0.0} for _ in range(32)]  # cut/res 0..1, pit semis
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 
@@ -382,7 +382,7 @@ class HeadlessController:
         self.bridge.send("/atelier/sampler/free", pad)
         self._samp[pad] = {"state": "empty", "t0": 0.0, "frames": 0,
                            "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
-                           "cut": 1.0, "res": 0.0}
+                           "cut": 1.0, "res": 0.0, "pit": 0.0}
 
     def set_loop_range(self, start: float, end: float) -> None:
         """CTRL-ALL loop region (knob 1 = start, knob 2 = end) for ALL takes,
@@ -406,23 +406,40 @@ class HeadlessController:
     def _res_amt(n: float) -> float:
         return max(0.0, min(1.0, n))                       # normalised; engine maps to RLPF rq
 
-    def set_slot_params(self, slot: int, vol: float, pan: float, ls: float, le: float,
-                        cut: float, res: float) -> None:
-        """Slot-selection mode: per-slot vol / pan / loop / filter for ONE slot."""
+    # per-param clamps used by the multi-slot editor
+    _SAMP_CLAMP = {"vol": (0.0, 1.3), "pan": (-1.0, 1.0), "ls": (0.0, 1.0),
+                   "le": (0.0, 1.0), "cut": (0.0, 1.0), "res": (0.0, 1.0),
+                   "pit": (-24.0, 24.0)}
+
+    def _push_slot(self, slot: int) -> None:
+        """Send a slot's current stored params to its play synth (+ for next play)."""
         if not (0 <= slot < 32):
             return
-        v = max(0.0, min(1.3, float(vol)))
-        p = max(-1.0, min(1.0, float(pan)))
-        s = max(0.0, min(1.0, float(ls)))
-        e = max(0.0, min(1.0, float(le)))
-        if e < s + 0.01:
-            e = min(1.0, s + 0.01)
-        cn = max(0.0, min(1.0, float(cut)))
-        rn = max(0.0, min(1.0, float(res)))
         sl = self._samp[slot]
-        sl["vol"], sl["pan"], sl["ls"], sl["le"], sl["cut"], sl["res"] = v, p, s, e, cn, rn
-        self.bridge.send("/atelier/sampler/slot", slot, v, p, s, e,
-                         self._cut_hz(cn), self._res_amt(rn))
+        if sl["le"] < sl["ls"] + 0.01:                 # keep a minimum loop window
+            sl["le"] = min(1.0, sl["ls"] + 0.01)
+        self.bridge.send("/atelier/sampler/slot", slot, sl["vol"], sl["pan"], sl["ls"],
+                         sl["le"], self._cut_hz(sl["cut"]), self._res_amt(sl["res"]), sl["pit"])
+
+    def edit_slots(self, slots: list, param: str, value: float) -> None:
+        """Slot-selection mode (one or MANY slots): set `param` to `value` on every
+        selected slot, then push each. Same value applied to all selected."""
+        if param not in self._SAMP_CLAMP:
+            return
+        lo, hi = self._SAMP_CLAMP[param]
+        v = max(lo, min(hi, float(value)))
+        for s in slots:
+            s = int(s)
+            if 0 <= s < 32:
+                self._samp[s][param] = v
+                self._push_slot(s)
+
+    def set_pitch_all(self, semis: float) -> None:
+        """CTRL-ALL pitch (knob 5, no selection): semitone shift for ALL takes."""
+        p = max(-24.0, min(24.0, float(semis)))
+        for sl in self._samp:
+            sl["pit"] = p
+        self.bridge.send("/atelier/sampler/pitchall", p)
 
     def set_filter_all(self, cut: float, res: float) -> None:
         """CTRL-ALL filter (knob 3 = cutoff, knob 4 = resonance) for ALL takes."""
@@ -439,7 +456,8 @@ class HeadlessController:
                 "ls": [round(s["ls"], 4) for s in self._samp],
                 "le": [round(s["le"], 4) for s in self._samp],
                 "cut": [round(s["cut"], 4) for s in self._samp],
-                "res": [round(s["res"], 4) for s in self._samp]}
+                "res": [round(s["res"], 4) for s in self._samp],
+                "pit": [round(s["pit"], 2) for s in self._samp]}
 
     def _lfos_status(self) -> list:
         out = []
@@ -618,6 +636,7 @@ class HeadlessController:
         last_looprange = None
         last_slot = None
         last_filter = None
+        last_pitch = None
         while not self._stop.is_set():
             time.sleep(period)
             try:
@@ -665,22 +684,18 @@ class HeadlessController:
                 if key is not None and key != last_looprange:
                     last_looprange = key
                     self._safe(lambda a=key: self.set_loop_range(a[0], a[1]))
-            # Per-slot params (sampler slot-selection mode): {sel, vol, pan, ls, le, cut, res}.
-            sd = doc.get("slot")
-            if isinstance(sd, dict) and isinstance(sd.get("sel"), (int, float)):
+            # Slot-selection edit (one or MANY selected slots): {sels, p, v}.
+            se = doc.get("samedit")
+            if isinstance(se, dict) and isinstance(se.get("sels"), list):
                 try:
-                    sk = (int(sd["sel"]), round(float(sd.get("vol", 1.0)), 3),
-                          round(float(sd.get("pan", 0.0)), 3),
-                          round(float(sd.get("ls", 0.0)), 4),
-                          round(float(sd.get("le", 1.0)), 4),
-                          round(float(sd.get("cut", 1.0)), 4),
-                          round(float(sd.get("res", 0.0)), 4))
+                    sk = (tuple(int(x) for x in se["sels"]), str(se.get("p")),
+                          round(float(se.get("v", 0.0)), 4))
                 except (TypeError, ValueError):
                     sk = None
                 if sk is not None and sk != last_slot:
                     last_slot = sk
-                    self._safe(lambda a=sk: self.set_slot_params(*a))
-            # CTRL-ALL filter (knob 3/4 in the sampler view, no slot selected).
+                    self._safe(lambda a=sk: self.edit_slots(a[0], a[1], a[2]))
+            # CTRL-ALL filter (knob 3/4) + pitch (knob 5), no slot selected.
             fa = doc.get("filterall")
             if isinstance(fa, list) and len(fa) == 2:
                 try:
@@ -690,6 +705,15 @@ class HeadlessController:
                 if fk is not None and fk != last_filter:
                     last_filter = fk
                     self._safe(lambda a=fk: self.set_filter_all(a[0], a[1]))
+            pa = doc.get("pitchall")
+            if pa is not None:
+                try:
+                    pk = round(float(pa), 3)
+                except (TypeError, ValueError):
+                    pk = None
+                if pk is not None and pk != last_pitch:
+                    last_pitch = pk
+                    self._safe(lambda v=pk: self.set_pitch_all(v))
             seq = doc.get("seq")
             if isinstance(seq, int) and seq != last_seq:
                 last_seq = seq
