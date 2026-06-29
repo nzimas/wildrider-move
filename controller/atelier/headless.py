@@ -48,8 +48,13 @@ _SAMP_FX_PIN0 = {"pan", "spatialPos"}
 # Context bias: as a foreground sampler FX, CLOUDS must be reliably audible — its
 # catalog ranges go sparse/quiet, and a random freeze freezes an empty buffer
 # (silence). Pin freeze off and bias grain density/size/gain up.
-_SAMP_FX_FIX = {"clouds": {"freeze": 0}}
-_SAMP_FX_RANGE = {"clouds": {"dens": (0.8, 0.98), "size": (0.5, 0.85), "inGain": (1.3, 1.6)}}
+_SAMP_FX_FIX = {"clouds": {"freeze": 0},
+                # DISTORT: catalog drive (->24x) saturates everything to a near-square
+                # wave far louder than dry, so even a sliver of wet overwhelms. Tame the
+                # output level and keep the wet roughly in the range of the dry signal.
+                "dist": {"amp": 0.45}}
+_SAMP_FX_RANGE = {"clouds": {"dens": (0.8, 0.98), "size": (0.5, 0.85), "inGain": (1.3, 1.6)},
+                  "dist": {"drive": (1.2, 4.0), "feedback": (0.0, 0.2), "bias": (0.0, 0.3)}}
 
 # Guided "artist-inspired" styles a new patch is generated in (Track 1).
 ARTISTS = list(aesthetics.MODULE_PALETTE.keys()) or ["vidna_obmana"]
@@ -474,10 +479,10 @@ class HeadlessController:
         params: dict[str, float] = {}
         for p in spec.node_params:
             arg = p.id.split(".")[-1]
-            if arg in _SAMP_FX_SKIP:
-                continue
-            if arg in fixed:
+            if arg in fixed:                # fixed value wins (even over the skip list, e.g. a tamed amp)
                 params[arg] = fixed[arg]
+                continue
+            if arg in _SAMP_FX_SKIP:
                 continue
             if arg in _SAMP_FX_PIN0:
                 params[arg] = 0.0
