@@ -377,6 +377,9 @@ function handleMorphEdit(status, d1, d2) {
     if (status === 0xB0 && d1 === MoveBack && d2 > 0) {        /* Back = cancel */
         morphEdit = false; screenDirty = true; ledDirty = true; return;
     }
+    if (status === 0xB0 && d1 === MoveRow3 && d2 > 0) {        /* Track 3 again = close (toggle out) */
+        morphEdit = false; screenDirty = true; ledDirty = true; showAction('MORPH ' + morphTime + 's'); return;
+    }
     /* swallow everything else while editing */
 }
 function drawMorphEdit() {
@@ -384,7 +387,7 @@ function drawMorphEdit() {
     clear_screen();
     print(0, 6, 'MORPH TIME', 2);
     print(0, 34, morphTime + ' sec', 2);
-    print(0, 56, 'jog scan   click = ok', 1);
+    print(0, 56, 'jog=scan click=ok Trk3/Back=exit', 1);
 }
 
 /* ---- SAMPLER view LEDs: empty=off, recording=red(flash), filled=white, playing=purple ---- */
