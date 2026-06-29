@@ -649,7 +649,7 @@ globalThis.onMidiMessageInternal = function (data) {
         }
         return;
     }
-    if (status === 0x80 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {  /* step release */
+    if ((status === 0x80 || (status === 0x90 && d2 === 0)) && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {  /* step release (either note-off form) */
         const ri = d1 - STEP_BASE;
         if (samplerMode && ri < FX_STEPS.length && fxHeld === ri) {
             if (!fxHeldAdjusted) {               /* a tap (no jog) = arm/toggle, or re-randomize with shift */
