@@ -106,8 +106,9 @@ class HeadlessController:
                        "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {},
                        "comb_on": 0, "comb_params": {}, "clouds_on": 0, "clouds_params": {}}
                       for _ in range(32)]
-        # per-FX dry/wet balance (0..1, 0.5 = 50/50), shared by all slots that carry it
-        self._fx_wet = [0.5] * len(_SAMP_FX_ORDER)
+        # per-FX dry/wet balance (0..1, 0.5 = 50/50), shared by all slots that carry it.
+        # DISTORT defaults to 0.1 (10 wet / 90 dry). Order = _SAMP_FX_ORDER.
+        self._fx_wet = [0.5, 0.1, 0.5, 0.5]
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 

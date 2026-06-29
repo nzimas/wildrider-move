@@ -121,7 +121,9 @@ let sampCut = new Array(32).fill(1.0), sampRes = new Array(32).fill(0.0), sampPi
  * them (shift+pad). So: toggle the FX first, then pick the slots it applies to. */
 const FX_STEPS = ['gate', 'dist', 'comb', 'clouds'];   /* step 1..4 = FX position */
 let fxArmed = [0, 0, 0, 0];                    /* which FX are armed (shown on the step LEDs) */
-let fxWet = [0.5, 0.5, 0.5, 0.5];             /* per-FX dry/wet, 0..1 (0.5 = 50/50 default) */
+/* per-FX dry/wet defaults, 0..1 (0.5 = 50/50). DISTORT defaults to 0.1 (10 wet / 90 dry). */
+const FX_WET0 = [0.5, 0.1, 0.5, 0.5];        /* gate, dist, comb, clouds */
+let fxWet = FX_WET0.slice();
 /* Hold an FX step button + jog = adjust that FX's dry/wet. We decide tap-vs-hold on
  * release: a tap (no jog) toggles/arms; a jog turn adjusts wet (no toggle). */
 let fxHeld = -1, fxHeldShift = false, fxHeldAdjusted = false;
@@ -531,7 +533,7 @@ globalThis.init = function () {
     sampCut = new Array(32).fill(1.0); sampRes = new Array(32).fill(0.0); sampPit = new Array(32).fill(0.0);
     sampGateOn = new Array(32).fill(0); sampDistOn = new Array(32).fill(0);
     sampCombOn = new Array(32).fill(0); sampCloudsOn = new Array(32).fill(0);
-    fxArmed = [0, 0, 0, 0]; fxWet = [0.5, 0.5, 0.5, 0.5];
+    fxArmed = [0, 0, 0, 0]; fxWet = FX_WET0.slice();
     fxHeld = -1; fxHeldShift = false; fxHeldAdjusted = false;
     pendingFxSync = null; pendingFxWet = null; fxN = 0;
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
