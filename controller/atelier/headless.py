@@ -101,6 +101,8 @@ class HeadlessController:
                        "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {},
                        "comb_on": 0, "comb_params": {}, "clouds_on": 0, "clouds_params": {}}
                       for _ in range(32)]
+        # per-FX dry/wet balance (0..1, 0.5 = 50/50), shared by all slots that carry it
+        self._fx_wet = [0.5] * len(_SAMP_FX_ORDER)
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 
@@ -500,11 +502,22 @@ class HeadlessController:
         sl = self._samp[slot]
         which = _SAMP_FX_WHICH[fx]
         on = 1 if sl[fx + "_on"] else 0
-        flat: list = []
+        flat: list = ["wet", self._fx_wet[which]]   # per-FX dry/wet balance
         for k, v in sl[fx + "_params"].items():
             flat += [k, v]
         # /fxset <slot> <which> <on> name val ... — engine builds/teardowns the module
         self.bridge.send("/atelier/sampler/fxset", slot, which, on, *flat)
+
+    def set_fx_wet(self, fxi: int, wet: float) -> None:
+        """Set one FX's dry/wet (held step + jog). Updates every slot that carries it."""
+        fxi = int(fxi)
+        if not (0 <= fxi < len(_SAMP_FX_ORDER)):
+            return
+        self._fx_wet[fxi] = max(0.0, min(1.0, float(wet)))
+        fx = _SAMP_FX_ORDER[fxi]
+        for s in range(32):
+            if self._samp[s][fx + "_on"]:
+                self._push_slotfx(s, fx)
 
     def sampler_fx_sync(self, slots: list, armed: list, rerand: list) -> None:
         """Stamp the armed FX set onto the given slots: engage each armed FX (with
@@ -736,6 +749,7 @@ class HeadlessController:
         last_filter = None
         last_pitch = None
         last_sync_n = None
+        last_fxwet = None
         while not self._stop.is_set():
             time.sleep(period)
             try:
@@ -823,6 +837,13 @@ class HeadlessController:
                     last_sync_n = sn
                     self._safe(lambda d=sync: self.sampler_fx_sync(
                         d["slots"], d.get("armed", []), d.get("rerand", [])))
+            # FX dry/wet balance (held step + jog): {fx, wet, n}.
+            fw = doc.get("fxwet")
+            if isinstance(fw, dict):
+                fwk = (int(fw.get("fx", -1)), round(float(fw.get("wet", 0.5)), 4), int(fw.get("n", 0)))
+                if fwk != last_fxwet:
+                    last_fxwet = fwk
+                    self._safe(lambda a=fwk: self.set_fx_wet(a[0], a[1]))
             seq = doc.get("seq")
             if isinstance(seq, int) and seq != last_seq:
                 last_seq = seq

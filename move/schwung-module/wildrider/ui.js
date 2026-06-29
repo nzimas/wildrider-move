@@ -121,9 +121,13 @@ let sampCut = new Array(32).fill(1.0), sampRes = new Array(32).fill(0.0), sampPi
  * them (shift+pad). So: toggle the FX first, then pick the slots it applies to. */
 const FX_STEPS = ['gate', 'dist', 'comb', 'clouds'];   /* step 1..4 = FX position */
 let fxArmed = [0, 0, 0, 0];                    /* which FX are armed (shown on the step LEDs) */
+let fxWet = [0.5, 0.5, 0.5, 0.5];             /* per-FX dry/wet, 0..1 (0.5 = 50/50 default) */
+/* Hold an FX step button + jog = adjust that FX's dry/wet. We decide tap-vs-hold on
+ * release: a tap (no jog) toggles/arms; a jog turn adjusts wet (no toggle). */
+let fxHeld = -1, fxHeldShift = false, fxHeldAdjusted = false;
 let sampGateOn = new Array(32).fill(0), sampDistOn = new Array(32).fill(0);
 let sampCombOn = new Array(32).fill(0), sampCloudsOn = new Array(32).fill(0);
-let pendingFxSync = null, fxN = 0;            /* {slots, armed, rerand, n} sent in writeControl */
+let pendingFxSync = null, pendingFxWet = null, fxN = 0;   /* sync + wet msgs sent in writeControl */
 const FX_ON_COLOR = Mustard;
 /* Queue an FX sync: stamp `fxArmed` onto `slots` (controller engages armed FX with
  * fresh random params, disengages the rest). rerand[i]=1 re-randomizes FX i even if
@@ -159,6 +163,7 @@ function writeControl() {
     doc.pitchall = filtPit;                 /* CTRL-ALL pitch (semitones) */
     if (selSlots.length > 0 && lastSamParam) doc.samedit = { sels: selSlots, p: lastSamParam, v: lastSamValue };
     if (pendingFxSync) doc.sampfxsync = pendingFxSync;
+    if (pendingFxWet) doc.fxwet = pendingFxWet;
     host_write_file(CONTROL_FILE, JSON.stringify(doc));
 }
 function sendCmd(cmd, arg) { seq++; lastCmd = cmd; lastArg = arg; writeControl(); }
@@ -413,6 +418,13 @@ function panLbl(p) { return p === 0 ? 'C' : (p > 0 ? 'R' + Math.round(p * 100) :
 function drawSampler() {
     if (typeof clear_screen !== 'function' || typeof print !== 'function') return;
     clear_screen();
+    /* Holding an FX step button: show its dry/wet balance as a bipolar bar (centre = 50/50). */
+    if (fxHeld >= 0) {
+        print(0, 6, FX_STEPS[fxHeld].toUpperCase() + ' FX', 2);
+        print(0, 24, 'DRY/WET  ' + Math.round(fxWet[fxHeld] * 100) + '% wet', 1);
+        bbar((fxWet[fxHeld] - 0.5) * 2);
+        return;
+    }
     /* A knob is touched/turning -> show that param's bar (slot value, or CTRL-ALL). */
     if (sampKnobShow) {
         var sel = selSlots.length > 0;
@@ -519,7 +531,9 @@ globalThis.init = function () {
     sampCut = new Array(32).fill(1.0); sampRes = new Array(32).fill(0.0); sampPit = new Array(32).fill(0.0);
     sampGateOn = new Array(32).fill(0); sampDistOn = new Array(32).fill(0);
     sampCombOn = new Array(32).fill(0); sampCloudsOn = new Array(32).fill(0);
-    fxArmed = [0, 0, 0, 0]; pendingFxSync = null; fxN = 0;
+    fxArmed = [0, 0, 0, 0]; fxWet = [0.5, 0.5, 0.5, 0.5];
+    fxHeld = -1; fxHeldShift = false; fxHeldAdjusted = false;
+    pendingFxSync = null; pendingFxWet = null; fxN = 0;
     chainsMode = false; chainsModules = []; chainsIdx = 0; chainsSel = {}; chainsActive = null;
     lfoStates = new Array(16).fill(false); lfoPending = new Array(16).fill(0);
     heldCell = -1; heldStart = 0; heldNameShown = false; heldAdjusted = false;
@@ -614,20 +628,10 @@ globalThis.onMidiMessageInternal = function (data) {
      * Shift+press re-randomizes that one LFO (keeping its on/off state). */
     if (status === 0x90 && d2 > 0 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {
         const i = d1 - STEP_BASE;
-        if (samplerMode && i < FX_STEPS.length) {  /* SAMPLER: step buttons ARM an FX (applied to selected slots) */
-            if (shiftHeld && fxArmed[i]) {       /* shift + step (armed) = re-randomize it on the selected slots */
-                var rr = [0, 0, 0, 0]; rr[i] = 1;
-                queueFxSync(selSlots, rr);
-                showAction(FX_STEPS[i].toUpperCase() + ' RND');
-            } else {                             /* toggle the FX in the armed set; stamp onto selected slots */
-                fxArmed[i] = fxArmed[i] ? 0 : 1;
-                queueFxSync(selSlots, null);
-                showAction(FX_STEPS[i].toUpperCase() + (fxArmed[i] ? ' ARMED' : ' OFF') +
-                    (selSlots.length ? '' : ' — select slots'));
-            }
-            writeControl();
-            ledDirty = true; screenDirty = true;
-            return;                              /* step row is FX in the sampler view (no LFO) */
+        if (samplerMode && i < FX_STEPS.length) {  /* SAMPLER: press starts a hold; decide tap-vs-adjust on release */
+            fxHeld = i; fxHeldShift = shiftHeld; fxHeldAdjusted = false;
+            screenDirty = true;                  /* show the dry/wet bar while held */
+            return;
         }
         if (samplerMode) return;                 /* steps 5-16 unused in the sampler view */
         if (shiftHeld && masterTouched && i === 0) {   /* shift + vol-touch + step1 = randomize ALL */
@@ -645,7 +649,25 @@ globalThis.onMidiMessageInternal = function (data) {
         }
         return;
     }
-    if (status === 0x80 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) return;  /* step release */
+    if (status === 0x80 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {  /* step release */
+        const ri = d1 - STEP_BASE;
+        if (samplerMode && ri < FX_STEPS.length && fxHeld === ri) {
+            if (!fxHeldAdjusted) {               /* a tap (no jog) = arm/toggle, or re-randomize with shift */
+                if (fxHeldShift && fxArmed[ri]) {
+                    var rr = [0, 0, 0, 0]; rr[ri] = 1; queueFxSync(selSlots, rr);
+                    showAction(FX_STEPS[ri].toUpperCase() + ' RND');
+                } else {
+                    fxArmed[ri] = fxArmed[ri] ? 0 : 1;
+                    queueFxSync(selSlots, null);
+                    showAction(FX_STEPS[ri].toUpperCase() + (fxArmed[ri] ? ' ARMED' : ' OFF') +
+                        (selSlots.length ? '' : ' — select slots'));
+                }
+                writeControl();
+            }
+            fxHeld = -1; ledDirty = true; screenDirty = true;
+        }
+        return;
+    }
 
     /* Pad DOWN (note-on, velocity>0): start tracking the press. We decide on
      * RELEASE — a short tap toggles on/off; a long hold shows the module name
@@ -736,7 +758,7 @@ globalThis.onMidiMessageInternal = function (data) {
             return;
         }
         if (d1 === MoveRow4) {                                  /* Track 4 = toggle SAMPLER view */
-            if (d2 > 0) { samplerMode = !samplerMode; if (samplerMode) scenesMode = false; ledDirty = true; screenDirty = true; showAction(samplerMode ? 'SAMPLER' : 'PATCH'); }
+            if (d2 > 0) { samplerMode = !samplerMode; if (samplerMode) scenesMode = false; fxHeld = -1; ledDirty = true; screenDirty = true; showAction(samplerMode ? 'SAMPLER' : 'PATCH'); }
             return;
         }
         if (d1 === MoveDelete) { deleteHeld = d2 > 0; return; }   /* X key held = delete modifier */
@@ -748,6 +770,14 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveMainKnob) {       /* hold a pad + jog wheel -> that module's level (amp) */
             const delta = decodeDelta(d2);
             if (delta === 0) return;
+            if (samplerMode && fxHeld >= 0) {            /* hold an FX step + jog -> that FX's dry/wet */
+                fxWet[fxHeld] = Math.max(0, Math.min(1, fxWet[fxHeld] + delta * 0.02));
+                fxHeldAdjusted = true;
+                pendingFxWet = { fx: fxHeld, wet: fxWet[fxHeld], n: ++fxN };
+                writeControl();
+                screenDirty = true;
+                return;
+            }
             if (heldCell >= 0) levelCell = heldCell;     /* (re)latch the target while the pad is held */
             if (levelCell >= 0) {
                 const c = levelCell;
