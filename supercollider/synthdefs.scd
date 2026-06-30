@@ -161,28 +161,33 @@
 		amp = 1, pan = 0, bypass = 0, wet = 1, enable = 1|
 		var clkR, clkBase, clkTrig, clkLenV, clkVelV, gOn, pmod, f0, fC, fA, fB1, fB2,
 			envA, envB, fbA, opB2, opB1, opA, opC, hP, hN, idx, fdA,
-			gB2B1, gB2A, gB1A, gAC, gB1C, gB2C, ySel, voice, baseHz, topHz, bw, od,
+			gB2B1, gB2A, gB1A, gAC, gB1C, gB2C, ySel, voice, baseHz, topHz, bw, od, lpf,
 			fEnvS, cut, rq, mm, ampE, sig;
-		// harmonic morph: sine -> 2nd/3rd-partial-rich (cheap Chebyshev blend)
-		var hsh = { |x, a| ((x * (1 - a)) + ((((4 * x.cubed) - (3 * x)) * 0.6) + (((2 * x.squared) - 1) * 0.4) * a)) };
+		// harmonic morph: saturate to add upper partials (cheap — a few UGens, vs ~10
+		// for a Chebyshev blend; the per-op shaper is created 3x, so this matters a lot
+		// for synth INSTANTIATION cost -> patch-rebuild XRuns).
+		var hsh = { |x, a| (x * (1 + (a * 3.5))).tanh * (1 / (1 + (a * 1.6))) };
 		// --- unstable internal clock (re-gates the voice) ---
-		clkR = (clkRate * (2 ** (LFNoise2.kr(LFNoise1.kr(0.2).exprange(0.05, 0.6)) * clkDrift * 1.5))).clip(0.05, 30);
+		clkR = (clkRate * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.05, 30);
 		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
-		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7) + Impulse.kr(0);
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
 		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
 		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
 		gOn = Trig.kr(clkTrig, clkLenV);
 		pmod = Lag2.ar(In.ar(pmodbus, 1), 0.01);          // per-module vibrato LFO
 		f0 = (pitch.clip(0, 127).midicps * pmod).clip(8, 12000);
 		// operator freqs: ratio + fine offset + detune drift on A / B2
-		fC  = f0 * (ratioC + offC).max(0.01);
-		fA  = f0 * (ratioA + offA).max(0.01) * (1 + ((dtun / 127) * 0.04 * LFNoise2.kr(0.15)));
-		fB1 = f0 * (ratioB + offB1).max(0.01);
-		fB2 = f0 * (ratioB + offB2).max(0.01) * (1 - ((dtun / 127) * 0.04));
+		// Snap ratios to a musical grid (C -> integers, modulators -> 0.5 steps) so the
+		// carrier:modulator relationships stay HARMONIC; the small offsets + detune add
+		// drift on top. Un-snapped random ratios are what made it sound like noise.
+		fC  = f0 * (ratioC.round(1).clip(1, 16) + (offC * 0.5)).max(0.01);
+		fA  = f0 * (ratioA.round(0.5).clip(0.5, 16) + (offA * 0.5)).max(0.01) * (1 + ((dtun / 127) * 0.035 * LFNoise2.kr(0.15)));
+		fB1 = f0 * (ratioB.round(0.5).clip(0.5, 16) + (offB1 * 0.5)).max(0.01);
+		fB2 = f0 * (ratioB.round(0.5).clip(0.5, 16) + (offB2 * 0.5)).max(0.01) * (1 - ((dtun / 127) * 0.035));
 		// operator (FM index) envelopes: AD + end level, gated by the clock
 		envA = EnvGen.kr(Env.new([0, 1, (aEnd / 127)], [(aAtk / 127 * 2) + 0.001, (aDec / 127 * 4) + 0.004], [-4, -4]), gOn) * (aLev / 127);
 		envB = EnvGen.kr(Env.new([0, 1, (bEnd / 127)], [(bAtk / 127 * 2) + 0.001, (bDec / 127 * 4) + 0.004], [-4, -4]), gOn) * (bLev / 127);
-		idx = 7.0;                                          // FM index scale (radians)
+		idx = 3.0;                                          // FM index scale (radians) — kept moderate so the spectrum stays tonal, not noise
 		hP = (harm.max(0)) / 26; hN = (harm.neg.max(0)) / 26;
 		// algorithm matrix gains: [B2->B1, B2->A, B1->A, A->C, B1->C, B2->C]; Y carrier tap
 		gB2B1 = Select.kr(algo - 1, [0, 1, 0, 1, 0, 1, 0, 1]);
@@ -197,7 +202,7 @@
 		opB2 = SinOsc.ar(fB2, 0);
 		opB1 = hsh.(SinOsc.ar(fB1, opB2 * envB * idx * gB2B1), hP);
 		opA  = hsh.(SinOsc.ar(fA, fbA + (opB2 * envB * idx * gB2A) + (opB1 * envB * idx * gB1A)), hP);
-		fdA  = (fdbk / 120) * 6;
+		fdA  = (fdbk / 120) * 3.2;
 		LocalOut.ar(opA * fdA);
 		opC  = hsh.(SinOsc.ar(fC, (opA * envA * idx * gAC) + (opB1 * envB * idx * gB1C) + (opB2 * envB * idx * gB2C)), hN);
 		// two carrier taps (X = C; Y = algo-selected) crossfaded by MIX
@@ -208,8 +213,9 @@
 		bw = LPF.ar(HPF.ar(od, baseHz.clip(16, 16000)), topHz.max(baseHz * 1.1).clip(40, 18500));
 		fEnvS = EnvGen.kr(Env.adsr((fAtk / 127 * 2) + 0.001, (fDec / 127 * 3) + 0.004, (fSus / 127), (fRel / 127 * 4) + 0.02), gOn);
 		cut = ((fFreq / 127).linexp(0, 1, 28, 16000) * (2 ** (fEnvS * (fEnv / 64) * 4))).clip(20, 18000);
-		rq = (1 - ((fReso / 127) * 0.93)).clip(0.06, 1);
-		mm = Select.ar(fType.clip(0, 3), [bw, RLPF.ar(bw, cut, rq), RHPF.ar(bw, cut, rq), RLPF.ar(RLPF.ar(bw, cut, rq), cut, rq)]);
+		rq = (1 - ((fReso / 127) * 0.88)).clip(0.12, 1);    // floor keeps high res from blowing up on FM transients (-> XRuns)
+		lpf = RLPF.ar(bw, cut, rq);                          // computed once, reused for lp12 + lp24
+		mm = Select.ar(fType.clip(0, 3), [bw, lpf, RHPF.ar(bw, cut, rq), RLPF.ar(lpf, cut, rq)]);
 		ampE = EnvGen.kr(Env.adsr((ampAtk / 127 * 2) + 0.001, (ampDec / 127 * 3) + 0.004, (ampSus / 127), (ampRel / 127 * 4) + 0.02), gOn);
 		sig = mm * ampE * clkVelV * amp * enable;
 		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));

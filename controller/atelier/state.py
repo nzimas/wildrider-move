@@ -1340,9 +1340,9 @@ class StateManager:
         # and wide rather than a single centred tone. A polyadic source
         # decorrelates per-voice pan motion below.
         gen = m("FMTONE")
-        gen.set_node_count(3)
-        spread = [-0.6, 0.0, 0.6]             # symmetric L / centre / R
-        notes = [36.0, 48.0, 55.0]            # low octave + fifth, held as a drone
+        gen.set_node_count(2)
+        spread = [-0.55, 0.55]                # symmetric L / R
+        notes = [36.0, 48.0]                  # low octave + fifth, held as a drone
         for i, nd in enumerate(gen.node_slots):
             nd["fmtone.pitch"].base = notes[i]
             nd["fmtone.pan"].base = spread[i]
