@@ -401,7 +401,7 @@ function drawPerf() {
     print(0, 6, 'PERFORMANCES', 2);
     var n = 0; for (var i = 0; i < 32; i++) if (perfFilled[i]) n++;
     print(0, 34, n + ' saved' + (perfActive >= 0 ? '  on ' + (perfActive + 1) : ''), 1);
-    print(0, 48, 'pad=load  shift+pad=save', 1);
+    print(0, 48, 'pad=load shift+pad=save X+pad=del', 1);
 }
 
 /* ---- Scene morph-time editor (Shift + Track 3): jog scans, jog-click confirms ---- */
@@ -736,8 +736,9 @@ globalThis.onMidiMessageInternal = function (data) {
             ledDirty = true; screenDirty = true;
             return;
         }
-        if (perfMode) {                              /* PERFORMANCES: pad=load project, shift+pad=save */
-            if (shiftHeld) { perfFilled[cell] = true; perfActive = cell; sendCmd('savep', cell); showAction('SAVED ' + (cell + 1)); }
+        if (perfMode) {                              /* PERFORMANCES: pad=load, shift+pad=save, X+pad=delete */
+            if (deleteHeld) { if (perfFilled[cell]) { perfFilled[cell] = false; if (perfActive === cell) perfActive = -1; sendCmd('delp', cell); showAction('DEL ' + (cell + 1)); } }
+            else if (shiftHeld) { perfFilled[cell] = true; perfActive = cell; sendCmd('savep', cell); showAction('SAVED ' + (cell + 1)); }
             else if (perfFilled[cell]) { perfActive = cell; sendCmd('loadp', cell); showAction('LOAD ' + (cell + 1)); }
             ledDirty = true; screenDirty = true;
             return;

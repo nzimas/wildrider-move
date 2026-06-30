@@ -507,6 +507,13 @@ class HeadlessController:
             else:
                 s["state"] = "empty"
 
+    def delete_performance(self, pad: int) -> None:
+        """X + pad in the Performances view: remove a saved project from disk."""
+        import shutil
+        d = self._perf_dir(int(pad))
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+
     def set_loop_range(self, start: float, end: float) -> None:
         """CTRL-ALL loop region (knob 1 = start, knob 2 = end) for ALL takes,
         normalised 0..1 of each take's length. Applied live to every playing slot
@@ -983,6 +990,8 @@ class HeadlessController:
             self._safe(lambda: self.save_performance(arg))
         elif cmd == "loadp":                # Performances view: pad = load project
             self._safe(lambda: self.load_performance(arg))
+        elif cmd == "delp":                 # Performances view: X + pad = delete project
+            self._safe(lambda: self.delete_performance(arg))
         elif cmd == "samppad":              # sampler view: record/play/stop toggle on a slot
             self._safe(lambda: self.sampler_pad(arg))
         elif cmd == "sampdel":              # sampler view: X + slot = delete
