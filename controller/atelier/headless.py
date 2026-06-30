@@ -41,6 +41,14 @@ _SAMP_FX_SPEC = {"gate": _GATE_SPEC, "dist": _DISTORT_SPEC,
                  "comb": _COMB_SPEC, "clouds": _CLOUDS_SPEC}
 _SAMP_FX_WHICH = {"gate": 0, "dist": 1, "comb": 2, "clouds": 3}
 _SAMP_FX_ORDER = ["gate", "dist", "comb", "clouds"]
+
+
+def _fresh_samp_slot() -> dict:
+    return {"state": "empty", "t0": 0.0, "frames": 0,
+            "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
+            "cut": 1.0, "res": 0.0, "pit": 0.0,
+            "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {},
+            "comb_on": 0, "comb_params": {}, "clouds_on": 0, "clouds_params": {}}
 # args the chain manages (not randomized): enable/wet/bypass set by the engine, amp
 # kept at the module default, nodeEnable has no synthdef arg. Spatial pinned neutral.
 _SAMP_FX_SKIP = {"nodeEnable", "enable", "wet", "bypass", "amp"}
@@ -73,6 +81,7 @@ CONTROL_RATE = float(_env("ATELIER_CONTROL_RATE", "60"))
 SHARE = Path(_env("WR_SHARE", "/data/UserData/wildrider/share"))
 SNAP_FILE = SHARE / "snapshot.json"
 STATUS_FILE = SHARE / "status.json"
+PERF_DIR = SHARE.parent / "performances"   # top-level projects: patch + scenes + samples
 # ui.js -> controller: the JS sandbox has file IO but no UDP socket, so the
 # overtake ui.js writes commands/macro values here and the controller polls it.
 CONTROL_FILE = SHARE / "control.json"
@@ -109,6 +118,7 @@ class HeadlessController:
         # per-FX dry/wet balance (0..1, 0.5 = 50/50), shared by all slots that carry it.
         # DISTORT defaults to 0.1 (10 wet / 90 dry). Order = _SAMP_FX_ORDER.
         self._fx_wet = [0.5, 0.1, 0.5, 0.5]
+        self._perf_reload = 0      # bumps on performance load so the ui re-reads macros
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 
@@ -416,6 +426,86 @@ class HeadlessController:
                            "cut": 1.0, "res": 0.0, "pit": 0.0,
                            "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {},
                            "comb_on": 0, "comb_params": {}, "clouds_on": 0, "clouds_params": {}}
+
+    # -- Performances: top-tier project = patch + scenes + modulation + samples - #
+    def _perf_dir(self, pad: int):
+        return PERF_DIR / f"perf_{int(pad):02d}"
+
+    def _perf_status(self) -> dict:
+        filled = [False] * 32
+        try:
+            for pad in range(32):
+                if (self._perf_dir(pad) / "patch.json").exists():
+                    filled[pad] = True
+        except Exception:
+            pass
+        return {"filled": filled}
+
+    def save_performance(self, pad: int) -> None:
+        """Save the WHOLE project into a performance slot: the full patch (modules,
+        wiring, MIDI, modulation, sequencer, macros) + the scene bank via save_patch,
+        plus the sampler slot settings/FX and each take's audio as a WAV."""
+        pad = int(pad)
+        if not (0 <= pad < 32):
+            return
+        from .persistence import save_patch
+        d = self._perf_dir(pad)
+        (d / "samples").mkdir(parents=True, exist_ok=True)
+        save_patch(self.state, str(d / "patch.json"))
+        slots = []
+        for s in self._samp:
+            c = dict(s)
+            c.pop("t0", None)
+            if c["state"] == "recording":
+                c["state"] = "filled"
+            slots.append(c)
+        with open(d / "sampler.json", "w") as f:
+            json.dump({"slots": slots, "fx_wet": self._fx_wet}, f)
+        for i, s in enumerate(self._samp):
+            if s["state"] in ("filled", "playing"):
+                self.bridge.send("/atelier/sampler/save", i,
+                                 str(d / "samples" / f"slot_{i:02d}.wav"))
+
+    def load_performance(self, pad: int) -> None:
+        """Recall a performance: rebuild the patch + scenes + modulation (load_patch),
+        then restore the sampler — free all slots, reload each take's WAV, and re-apply
+        its settings/FX (pushed BEFORE the async buffer load so the resumed playback
+        comes up with the saved per-slot state)."""
+        d = self._perf_dir(int(pad))
+        if not (d / "patch.json").exists():
+            return
+        from .persistence import load_patch
+        load_patch(self.state, str(d / "patch.json"))
+        self._perf_reload += 1          # tell the ui to re-sync its macro knobs
+        samp = {}
+        try:
+            samp = json.loads((d / "sampler.json").read_text())
+        except Exception:
+            pass
+        wet = samp.get("fx_wet") or [0.5, 0.1, 0.5, 0.5]
+        self._fx_wet = (list(wet) + [0.5, 0.1, 0.5, 0.5])[:4]
+        saved = samp.get("slots") or []
+        new = []
+        for i in range(32):
+            sl = _fresh_samp_slot()
+            if i < len(saved) and isinstance(saved[i], dict):
+                sl.update(saved[i])
+                sl["t0"] = 0.0
+            new.append(sl)
+        self._samp = new
+        for i in range(32):                          # clear the live sampler first
+            self.bridge.send("/atelier/sampler/free", i)
+        for i, s in enumerate(self._samp):
+            wav = d / "samples" / f"slot_{i:02d}.wav"
+            if s["state"] in ("filled", "playing") and wav.exists():
+                self._push_slot(i)                   # stored settings (applied on the resumed play)
+                for fx in _SAMP_FX_ORDER:
+                    if s.get(fx + "_on"):
+                        self._push_slotfx(i, fx)
+                autoplay = 1 if s["state"] == "playing" else 0
+                self.bridge.send("/atelier/sampler/load", i, str(wav), autoplay)
+            else:
+                s["state"] = "empty"
 
     def set_loop_range(self, start: float, end: float) -> None:
         """CTRL-ALL loop region (knob 1 = start, knob 2 = end) for ALL takes,
@@ -889,6 +979,10 @@ class HeadlessController:
             self._safe(lambda: self.load_scene_pad(arg))
         elif cmd == "morphtime":            # Shift+Track3 editor: set scene morph seconds
             self._morph_s = max(1.0, min(99.0, float(arg)))
+        elif cmd == "savep":                # Performances view: shift+pad = save project
+            self._safe(lambda: self.save_performance(arg))
+        elif cmd == "loadp":                # Performances view: pad = load project
+            self._safe(lambda: self.load_performance(arg))
         elif cmd == "samppad":              # sampler view: record/play/stop toggle on a slot
             self._safe(lambda: self.sampler_pad(arg))
         elif cmd == "sampdel":              # sampler view: X + slot = delete
@@ -927,6 +1021,8 @@ class HeadlessController:
                 "macros": self._macros_status(),
                 "lfos": self._lfos_status(),   # 16 bools: step-button LFO on/off
                 "scenes": self._scenes_status(),  # {filled[32], active, morphTo}
+                "performances": self._perf_status(),  # {filled[32]}
+                "perfReload": self._perf_reload,
                 "sampler": self._sampler_status(),  # {states[32]}
             }
             tmp = STATUS_FILE.with_suffix(".json.tmp")

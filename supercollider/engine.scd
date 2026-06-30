@@ -611,8 +611,31 @@
 	};
 };
 
+// Performance save/load of a slot's sample audio. Save writes the recorded portion
+// to a WAV; load reads a WAV back in and (optionally) resumes playback once it lands
+// (Buffer.read is async, so per-slot settings/FX must be pushed BEFORE the load).
+~sampSaveBuf = { |slot, path|
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+		(~sampBufs[slot].notNil and: { (~sampFrames[slot] ? 0) > 0 }).if {
+			~sampBufs[slot].write(path.asString, "wav", "float", ~sampFrames[slot], 0);
+		};
+	};
+};
+~sampLoadBuf = { |slot, path, autoplay|
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+		~sampFreeChain.(slot);
+		~sampBufs[slot].notNil.if { ~sampBufs[slot].free };
+		~sampBufs[slot] = Buffer.read(s, path.asString, action: { |b|
+			~sampFrames[slot] = b.numFrames;
+			(autoplay > 0).if { ~sampPlayStart.(slot) };
+		});
+	};
+};
+
 ~defs = [
 	OSCdef(\boot, { |m| ~boot.(m[1], m[2], m[3]) }, '/atelier/boot'),
+	OSCdef(\sampSave, { |m| ~sampSaveBuf.(m[1].asInteger, m[2]) }, '/atelier/sampler/save'),
+	OSCdef(\sampLoad, { |m| ~sampLoadBuf.(m[1].asInteger, m[2], m[3].asInteger) }, '/atelier/sampler/load'),
 	OSCdef(\sampRec, { |m| ~sampRecStart.(m[1].asInteger) }, '/atelier/sampler/rec'),
 	OSCdef(\sampRecStop, { |m| ~sampRecStop.(m[1].asInteger, m[2].asInteger) }, '/atelier/sampler/recstop'),
 	OSCdef(\sampPlay, { |m| ~sampPlayStart.(m[1].asInteger) }, '/atelier/sampler/play'),

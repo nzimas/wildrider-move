@@ -24,7 +24,7 @@ import {
     Black, BrightGreen, ForestGreen, AzureBlue, RoyalBlue,
     ElectricViolet, Violet, VividYellow, Mustard, White, Red, Purple,
     MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveKnob1Touch, MoveKnob8Touch, MoveMasterTouch, MoveDelete,
-    MovePlay, MoveRec, MoveMainKnob, MoveMainButton, MoveRow1, MoveRow2, MoveRow3, MoveRow4
+    MovePlay, MoveRec, MoveMainKnob, MoveMainButton, MoveMenu, MoveRow1, MoveRow2, MoveRow3, MoveRow4
 } from '/data/UserData/move-anything/shared/constants.mjs';
 import { setLED, decodeDelta } from '/data/UserData/move-anything/shared/input_filter.mjs';
 
@@ -86,6 +86,14 @@ const LFO_ON_COLOR = VividYellow;
  * current performance (patch + LFOs + macros) into that slot. */
 let scenesMode = false;
 let sceneFilled = new Array(32).fill(false);   /* which slots hold a scene */
+/* ---- PERFORMANCES view (Menu button) — 32 pads = 32 project slots ----
+ * A performance is the top-tier unit: whole patch + scenes + modulation + samples.
+ * Short press a filled pad = load that project; Shift+pad = save the current one. */
+let perfMode = false;
+let perfFilled = new Array(32).fill(false);    /* which pads hold a saved performance */
+let perfActive = -1;                           /* last saved/loaded pad (highlighted) */
+let lastPerfReload = -1;                        /* edge-detect a performance load (re-sync macros) */
+const PERF_FILLED_COLOR = BrightGreen;
 let sceneActive = -1;          /* currently loaded scene pad (or -1) */
 let sceneMorphTo = -1;         /* morph destination pad while morphing (or -1) */
 let lastSceneActive = -1, lastMorphTo = -1;    /* edge-detect for macro re-sync */
@@ -288,6 +296,13 @@ function readStatus() {
         }
         sceneActive = (s.scenes.active != null) ? s.scenes.active : -1;
         sceneMorphTo = (s.scenes.morphTo != null) ? s.scenes.morphTo : -1;
+    }
+    if (s.perfReload !== undefined && s.perfReload !== lastPerfReload) {
+        lastPerfReload = s.perfReload;                /* a performance just loaded -> re-read its macros */
+        macrosSynced = false; levels = {}; lastLevel = null;
+    }
+    if (s.performances && Array.isArray(s.performances.filled)) {
+        for (var qpi = 0; qpi < 32; qpi++) perfFilled[qpi] = !!s.performances.filled[qpi];
         /* Re-sync the 8 knob accumulators to the recalled scene's macros once a
          * morph FINISHES (or an instant load lands) — the controller restores the
          * scene's macro values at that point, so re-read them from status. */
@@ -318,9 +333,10 @@ function readStatus() {
      * an idle patch causes ZERO LED/SPI traffic — that traffic XRuns audio. */
     var sceneSig = scenesMode ? ('S' + sceneActive + '/' + sceneMorphTo + '/' +
         sceneFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
+    var perfSig = perfMode ? ('P' + perfActive + '/' + perfFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
     var sampSig = samplerMode ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',') + '|' + fxArmed.join('') + sampGateOn.join('') + sampDistOn.join('') + sampCombOn.join('') + sampCloudsOn.join('')) : '';
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
-        return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig + '|' + sampSig;
+        return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig + '|' + sampSig + '|' + perfSig;
     if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
 }
 
@@ -366,6 +382,26 @@ function drawScenes() {
         print(0, 34, n + ' stored' + (sceneActive >= 0 ? '  on ' + (sceneActive + 1) : ''), 1);
         print(0, 48, 'pad=load  shift+pad=save', 1);
     }
+}
+
+/* ---- PERFORMANCES view LEDs: filled=green, active=white ---- */
+function renderPerfLEDs() {
+    for (var c = 0; c < 32; c++) {
+        var color = Black;
+        if (c === perfActive && perfFilled[c]) color = White;   /* last saved/loaded */
+        else if (perfFilled[c]) color = PERF_FILLED_COLOR;       /* holds a project */
+        setLED(PAD_NOTES[c], color);
+    }
+    for (var i = 0; i < 16; i++) setLED(STEP_BASE + i, Black);    /* step row off here */
+    ledDirty = false;
+}
+function drawPerf() {
+    if (typeof clear_screen !== 'function' || typeof print !== 'function') return;
+    clear_screen();
+    print(0, 6, 'PERFORMANCES', 2);
+    var n = 0; for (var i = 0; i < 32; i++) if (perfFilled[i]) n++;
+    print(0, 34, n + ' saved' + (perfActive >= 0 ? '  on ' + (perfActive + 1) : ''), 1);
+    print(0, 48, 'pad=load  shift+pad=save', 1);
 }
 
 /* ---- Scene morph-time editor (Shift + Track 3): jog scans, jog-click confirms ---- */
@@ -521,6 +557,7 @@ globalThis.init = function () {
     playHeld = false; recHeld = false;
     masterTouched = false; row2Down = 0;
     scenesMode = false; sceneFilled = new Array(32).fill(false);
+    perfMode = false; perfFilled = new Array(32).fill(false); perfActive = -1;
     sceneActive = -1; sceneMorphTo = -1; lastSceneActive = -1; lastMorphTo = -1;
     morphEdit = false; morphTime = 10;
     samplerMode = false; sampStates = new Array(32).fill('empty'); sampFlashOn = false;
@@ -580,6 +617,11 @@ globalThis.tick = function () {
     if (scenesMode) {                       /* SCENES view owns the grid + screen */
         if (ledDirty) renderScenesLEDs();
         if (screenDirty) { drawScenes(); screenDirty = false; }
+        return;
+    }
+    if (perfMode) {                         /* PERFORMANCES view owns the grid + screen */
+        if (ledDirty) renderPerfLEDs();
+        if (screenDirty) { drawPerf(); screenDirty = false; }
         return;
     }
     /* Long-press crossed the threshold: reveal the module name (no toggle).
@@ -694,6 +736,12 @@ globalThis.onMidiMessageInternal = function (data) {
             ledDirty = true; screenDirty = true;
             return;
         }
+        if (perfMode) {                              /* PERFORMANCES: pad=load project, shift+pad=save */
+            if (shiftHeld) { perfFilled[cell] = true; perfActive = cell; sendCmd('savep', cell); showAction('SAVED ' + (cell + 1)); }
+            else if (perfFilled[cell]) { perfActive = cell; sendCmd('loadp', cell); showAction('LOAD ' + (cell + 1)); }
+            ledDirty = true; screenDirty = true;
+            return;
+        }
         if (scenesMode) {                            /* SCENES: pad=load, shift+pad=store */
             if (shiftHeld) { sceneFilled[cell] = true; sendCmd('storescene', cell); }
             else if (sceneFilled[cell]) { sendCmd('loadscene', cell); }
@@ -740,6 +788,11 @@ globalThis.onMidiMessageInternal = function (data) {
             return;
         }
         if (d1 === MoveShift) { shiftHeld = d2 > 0; return; }
+        if (d1 === MoveMenu && d2 > 0) {                        /* Menu (3 lines) = PERFORMANCES view */
+            perfMode = !perfMode; if (perfMode) { samplerMode = false; scenesMode = false; fxHeld = -1; }
+            ledDirty = true; screenDirty = true; showAction(perfMode ? 'PERFORMANCES' : 'PATCH');
+            return;
+        }
         if (d1 === MoveRow1 && d2 > 0) {
             if (shiftHeld) { enterChains(); return; }          /* shift+Track1 = CHAINS builder */
             macrosSynced = false; levels = {}; lastLevel = null; sendCmd('newpatch', -1); showAction('NEW PATCH'); return;
@@ -755,12 +808,12 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveRow3) {                                  /* Track 3 = SCENES view; Shift+Track 3 = morph-time editor */
             if (d2 > 0) {
                 if (shiftHeld) { morphEdit = true; screenDirty = true; }
-                else { scenesMode = !scenesMode; if (scenesMode) samplerMode = false; ledDirty = true; screenDirty = true; showAction(scenesMode ? 'SCENES' : 'PATCH'); }
+                else { scenesMode = !scenesMode; if (scenesMode) { samplerMode = false; perfMode = false; } ledDirty = true; screenDirty = true; showAction(scenesMode ? 'SCENES' : 'PATCH'); }
             }
             return;
         }
         if (d1 === MoveRow4) {                                  /* Track 4 = toggle SAMPLER view */
-            if (d2 > 0) { samplerMode = !samplerMode; if (samplerMode) scenesMode = false; fxHeld = -1; ledDirty = true; screenDirty = true; showAction(samplerMode ? 'SAMPLER' : 'PATCH'); }
+            if (d2 > 0) { samplerMode = !samplerMode; if (samplerMode) { scenesMode = false; perfMode = false; } fxHeld = -1; ledDirty = true; screenDirty = true; showAction(samplerMode ? 'SAMPLER' : 'PATCH'); }
             return;
         }
         if (d1 === MoveDelete) { deleteHeld = d2 > 0; return; }   /* X key held = delete modifier */
