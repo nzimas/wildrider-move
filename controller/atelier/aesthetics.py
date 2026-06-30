@@ -444,6 +444,14 @@ def _weighted_bag(weights: dict[str, int]) -> list[str]:
     return bag
 
 
+# Max summed cpu_per_node for a generated patch. Count-only selection let heavy
+# modules (clouds/fbank/plaits) stack a patch to ~97% scsynth DSP on the Move's CM4,
+# so a scene-morph commit (which rebuilds the module set in one block) tipped it over
+# -> XRuns. Budgeting by cost keeps worst-case patches ~40%, with headroom for LFOs,
+# morph/performance crossfades and sampler FX. Measured: 0 XRuns over 12 morphs.
+CPU_BUDGET = 13.0
+
+
 def pick_modules(rng, artist: str) -> list[str] | None:
     """An artist-congruent module set: GENERATORS are the backbone (several of
     them, repeats allowed up to each type's palette weight), then a BOUNDED handful
@@ -451,13 +459,22 @@ def pick_modules(rng, artist: str) -> list[str] | None:
     pal = MODULE_PALETTE.get(artist)
     if not pal:
         return None
+    from .catalog import CATALOG
+    cpu_cost = {t: float(getattr(spec, "cpu_per_node", 1.0)) for t, spec in CATALOG.items()}
     chosen: list[str] = []
     used: dict[str, int] = {}
+    total = [0.0]
 
     def take(t: str, cap: int) -> bool:
-        if used.get(t, 0) < cap and len(chosen) < 16:
+        # Budget by estimated DSP cost, not just count: the CM4's scsynth maxes out
+        # (~97%) on a count-only patch, leaving no headroom for LFOs / scene-morph
+        # commits / sampler FX -> XRuns. Cap the total so heavy modules (clouds,
+        # fbank, plaits...) don't stack a patch past what leaves room to morph.
+        c = cpu_cost.get(t, 1.0)
+        if used.get(t, 0) < cap and len(chosen) < 16 and (total[0] + c) <= CPU_BUDGET:
             chosen.append(t)
             used[t] = used.get(t, 0) + 1
+            total[0] += c
             return True
         return False
 
