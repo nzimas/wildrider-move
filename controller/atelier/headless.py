@@ -474,9 +474,7 @@ class HeadlessController:
         d = self._perf_dir(int(pad))
         if not (d / "patch.json").exists():
             return
-        from .persistence import load_patch
-        load_patch(self.state, str(d / "patch.json"))
-        self._perf_reload += 1          # tell the ui to re-sync its macro knobs
+        # restore the sampler bookkeeping up front (status + the pushes below use it)
         samp = {}
         try:
             samp = json.loads((d / "sampler.json").read_text())
@@ -493,19 +491,31 @@ class HeadlessController:
                 sl["t0"] = 0.0
             new.append(sl)
         self._samp = new
-        for i in range(32):                          # clear the live sampler first
-            self.bridge.send("/atelier/sampler/free", i)
-        for i, s in enumerate(self._samp):
-            wav = d / "samples" / f"slot_{i:02d}.wav"
-            if s["state"] in ("filled", "playing") and wav.exists():
-                self._push_slot(i)                   # stored settings (applied on the resumed play)
-                for fx in _SAMP_FX_ORDER:
-                    if s.get(fx + "_on"):
-                        self._push_slotfx(i, fx)
-                autoplay = 1 if s["state"] == "playing" else 0
-                self.bridge.send("/atelier/sampler/load", i, str(wav), autoplay)
-            else:
-                s["state"] = "empty"
+
+        # Rebuild the patch through the click-free swap: the master fades OUT, the
+        # graph rebuilds while silent (so a distort module's start-up transient /
+        # feedback can't ring out as a bang), then fades back IN auto-normalised.
+        from .persistence import load_patch
+        d_path = str(d / "patch.json")
+
+        def _build():
+            load_patch(self.state, d_path)
+            self._perf_reload += 1                   # ui re-syncs its macro knobs
+            for i in range(32):                      # clear the live sampler
+                self.bridge.send("/atelier/sampler/free", i)
+            for i, s in enumerate(self._samp):       # restore each take (muted during the swap)
+                wav = d / "samples" / f"slot_{i:02d}.wav"
+                if s["state"] in ("filled", "playing") and wav.exists():
+                    self._push_slot(i)
+                    for fx in _SAMP_FX_ORDER:
+                        if s.get(fx + "_on"):
+                            self._push_slotfx(i, fx)
+                    autoplay = 1 if s["state"] == "playing" else 0
+                    self.bridge.send("/atelier/sampler/load", i, str(wav), autoplay)
+                else:
+                    s["state"] = "empty"
+
+        self._swap_patch(_build)
 
     def delete_performance(self, pad: int) -> None:
         """X + pad in the Performances view: remove a saved project from disk."""
