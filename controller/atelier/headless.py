@@ -119,6 +119,8 @@ class HeadlessController:
         # DISTORT defaults to 0.1 (10 wet / 90 dry). Order = _SAMP_FX_ORDER.
         self._fx_wet = [0.5, 0.1, 0.5, 0.5]
         self._perf_reload = 0      # bumps on performance load so the ui re-reads macros
+        self._master_gain = 6.0    # current master makeup (saved/restored per performance)
+        self._perf_xfade = 2.0     # seconds to crossfade between performances (gapless)
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 
@@ -273,7 +275,8 @@ class HeadlessController:
                     # ~0.6, not clipping. Min 0.4 attenuates loud patches below unity;
                     # max 6 lifts quiet ambient ones.
                     gain = 6.0 if peak < 1e-3 else max(0.4, min(6.0, 0.3 / peak))
-                    self.bridge.send("/atelier/mastergain", round(gain, 2))  # fade in at level
+                    self._master_gain = round(gain, 2)
+                    self.bridge.send("/atelier/mastergain", self._master_gain)  # fade in at level
                 except Exception:
                     pass
         threading.Thread(target=worker, daemon=True).start()
@@ -460,7 +463,8 @@ class HeadlessController:
                 c["state"] = "filled"
             slots.append(c)
         with open(d / "sampler.json", "w") as f:
-            json.dump({"slots": slots, "fx_wet": self._fx_wet}, f)
+            json.dump({"slots": slots, "fx_wet": self._fx_wet,
+                       "master_gain": self._master_gain}, f)
         for i, s in enumerate(self._samp):
             if s["state"] in ("filled", "playing"):
                 self.bridge.send("/atelier/sampler/save", i,
@@ -471,18 +475,46 @@ class HeadlessController:
         then restore the sampler — free all slots, reload each take's WAV, and re-apply
         its settings/FX (pushed BEFORE the async buffer load so the resumed playback
         comes up with the saved per-slot state)."""
+        import time
+        from .scenes import DiscretePolicy
         d = self._perf_dir(int(pad))
         if not (d / "patch.json").exists():
             return
-        # restore the sampler bookkeeping up front (status + the pushes below use it)
+        patch_json = json.loads((d / "patch.json").read_text())
         samp = {}
         try:
             samp = json.loads((d / "sampler.json").read_text())
         except Exception:
             pass
+
+        # --- GAPLESS PATCH TRANSITION ---------------------------------------- #
+        # Crossfade the live patch into the saved one (no mute/rebuild gap): set up
+        # the scene-morph engine with dst = the performance's patch snapshot. Audio
+        # keeps flowing; structural change commits mid-crossfade with cord fades.
+        dst = dict(patch_json)
+        dst.pop("scenes", None)
+        ctrl = dst.pop("control", None) or {}
+        dst["macros"] = ctrl.get("macros", [])
+        self.state.scenes.load_list(patch_json.get("scenes", []))   # the project's scene bank
+        src = self.state._capture_snapshot()
+        self.state._scene_morph = {
+            "dst_id": None, "src": src, "dst": dst, "start": time.monotonic(),
+            "duration": self._perf_xfade, "since_frame": 0.0, "committed": False,
+            "structural": self.state._morph_is_structural(src, dst),
+            "exclusions": [], "policy": DiscretePolicy.THRESHOLD,
+        }
+        self._perf_reload += 1                       # ui re-syncs its macro knobs
+        # restore this project's calibrated master makeup (lagged in the engine = smooth)
+        mg = samp.get("master_gain")
+        if isinstance(mg, (int, float)):
+            self._master_gain = float(mg)
+            self.bridge.send("/atelier/mastergain", round(self._master_gain, 2))
+
+        # --- SAMPLER: crossfade old takes -> new ----------------------------- #
         wet = samp.get("fx_wet") or [0.5, 0.1, 0.5, 0.5]
         self._fx_wet = (list(wet) + [0.5, 0.1, 0.5, 0.5])[:4]
         saved = samp.get("slots") or []
+        old_playing = [self._samp[i]["state"] == "playing" for i in range(32)]
         new = []
         for i in range(32):
             sl = _fresh_samp_slot()
@@ -491,31 +523,19 @@ class HeadlessController:
                 sl["t0"] = 0.0
             new.append(sl)
         self._samp = new
-
-        # Rebuild the patch through the click-free swap: the master fades OUT, the
-        # graph rebuilds while silent (so a distort module's start-up transient /
-        # feedback can't ring out as a bang), then fades back IN auto-normalised.
-        from .persistence import load_patch
-        d_path = str(d / "patch.json")
-
-        def _build():
-            load_patch(self.state, d_path)
-            self._perf_reload += 1                   # ui re-syncs its macro knobs
-            for i in range(32):                      # clear the live sampler
-                self.bridge.send("/atelier/sampler/free", i)
-            for i, s in enumerate(self._samp):       # restore each take (muted during the swap)
-                wav = d / "samples" / f"slot_{i:02d}.wav"
-                if s["state"] in ("filled", "playing") and wav.exists():
-                    self._push_slot(i)
-                    for fx in _SAMP_FX_ORDER:
-                        if s.get(fx + "_on"):
-                            self._push_slotfx(i, fx)
-                    autoplay = 1 if s["state"] == "playing" else 0
-                    self.bridge.send("/atelier/sampler/load", i, str(wav), autoplay)
-                else:
-                    s["state"] = "empty"
-
-        self._swap_patch(_build)
+        for i, s in enumerate(self._samp):
+            wav = d / "samples" / f"slot_{i:02d}.wav"
+            if s["state"] in ("filled", "playing") and wav.exists():
+                self._push_slot(i)                   # stored settings (applied on resumed play)
+                for fx in _SAMP_FX_ORDER:
+                    if s.get(fx + "_on"):
+                        self._push_slotfx(i, fx)
+                autoplay = 1 if s["state"] == "playing" else 0
+                self.bridge.send("/atelier/sampler/load", i, str(wav), autoplay)  # gapless crossfade
+            else:
+                s["state"] = "empty"
+                if old_playing[i]:                   # fade out a take the new project drops
+                    self.bridge.send("/atelier/sampler/stop", i)
 
     def delete_performance(self, pad: int) -> None:
         """X + pad in the Performances view: remove a saved project from disk."""
@@ -899,6 +919,7 @@ class HeadlessController:
                     mgf = None
                 if mgf is not None and mgf != last_gain:
                     last_gain = mgf
+                    self._master_gain = mgf
                     self._safe(lambda v=mgf: self.bridge.send("/atelier/mastergain", v))
             # Sampler CTRL-ALL loop region (knob 1/2 in the sampler view).
             lr = doc.get("looprange")

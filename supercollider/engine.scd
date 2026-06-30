@@ -622,13 +622,19 @@
 	};
 };
 ~sampLoadBuf = { |slot, path, autoplay|
+	var oldBuf;
 	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
-		~sampFreeChain.(slot);
-		~sampBufs[slot].notNil.if { ~sampBufs[slot].free };
+		// Gapless swap: fade the OLD take out (it keeps reading its own buffer by
+		// bufnum while it releases), read the NEW take into a fresh slot buffer, and
+		// (auto)play it — so old fades down as new fades up. Free the old buffer only
+		// after its release tail, never under the still-sounding old synth.
+		oldBuf = ~sampBufs[slot];
+		~sampPlaySyn[slot].notNil.if { ~sampPlayStop.(slot) };
 		~sampBufs[slot] = Buffer.read(s, path.asString, action: { |b|
 			~sampFrames[slot] = b.numFrames;
 			(autoplay > 0).if { ~sampPlayStart.(slot) };
 		});
+		oldBuf.notNil.if { SystemClock.sched(~sampRelease + 0.4, { oldBuf.free; nil }) };
 	};
 };
 
