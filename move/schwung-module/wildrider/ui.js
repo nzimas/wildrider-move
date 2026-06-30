@@ -753,7 +753,7 @@ globalThis.onMidiMessageInternal = function (data) {
         if (g === undefined || g === null) {         /* empty pad -> grow the patch */
             if (!shiftHeld && !deleteHeld) {
                 /* Play/Rec force a specific generator; else random by row. */
-                var mt = (playHeld && recHeld) ? 'WAVIARY' : playHeld ? 'RINGS' : recHeld ? 'DX7' : '';
+                var mt = (playHeld && recHeld) ? 'WAVIARY' : playHeld ? 'RINGS' : recHeld ? 'FMTONE' : '';
                 sendAddmod(cell, mt);
                 showAction(mt ? ('ADD ' + mt) : ((Math.floor(cell / 8) % 2 === 0) ? 'ADD GEN' : 'ADD FX'));
             }
@@ -819,7 +819,7 @@ globalThis.onMidiMessageInternal = function (data) {
         }
         if (d1 === MoveDelete) { deleteHeld = d2 > 0; return; }   /* X key held = delete modifier */
         if (d1 === MovePlay) { playHeld = d2 > 0; return; }       /* Play+empty pad = add RINGS */
-        if (d1 === MoveRec) { recHeld = d2 > 0; return; }         /* Rec+empty pad = add DX7; Play+Rec = WAVIARY */
+        if (d1 === MoveRec) { recHeld = d2 > 0; return; }         /* Rec+empty pad = add FMTONE; Play+Rec = WAVIARY */
         /* The master knob (CC 79) is the Move's NATIVE host master volume — the
          * host owns it, so we never touch it (intercepting would fight the host
          * volume). Per-module level lives on the JOG wheel instead. */
