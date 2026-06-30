@@ -177,13 +177,14 @@
 		pmod = Lag2.ar(In.ar(pmodbus, 1), 0.01);          // per-module vibrato LFO
 		f0 = (pitch.clip(0, 127).midicps * pmod).clip(8, 12000);
 		// operator freqs: ratio + fine offset + detune drift on A / B2
-		// Snap ratios to a musical grid (C -> integers, modulators -> 0.5 steps) so the
-		// carrier:modulator relationships stay HARMONIC; the small offsets + detune add
-		// drift on top. Un-snapped random ratios are what made it sound like noise.
+		// Snap the CARRIER to integers (keeps the voice in tune), but snap the
+		// MODULATORS only to a fine 0.25 grid — that lets inharmonic ratios (1.25,
+		// 1.75, 2.25, 3.5 ...) through for metallic / glassy / bell timbres, while the
+		// moderate index keeps them tonal rather than noise. Offsets/detune drift on top.
 		fC  = f0 * (ratioC.round(1).clip(1, 16) + (offC * 0.5)).max(0.01);
-		fA  = f0 * (ratioA.round(0.5).clip(0.5, 16) + (offA * 0.5)).max(0.01) * (1 + ((dtun / 127) * 0.035 * LFNoise2.kr(0.15)));
-		fB1 = f0 * (ratioB.round(0.5).clip(0.5, 16) + (offB1 * 0.5)).max(0.01);
-		fB2 = f0 * (ratioB.round(0.5).clip(0.5, 16) + (offB2 * 0.5)).max(0.01) * (1 - ((dtun / 127) * 0.035));
+		fA  = f0 * (ratioA.round(0.25).clip(0.25, 16) + (offA * 0.5)).max(0.01) * (1 + ((dtun / 127) * 0.035 * LFNoise2.kr(0.15)));
+		fB1 = f0 * (ratioB.round(0.25).clip(0.25, 16) + (offB1 * 0.5)).max(0.01);
+		fB2 = f0 * (ratioB.round(0.25).clip(0.25, 16) + (offB2 * 0.5)).max(0.01) * (1 - ((dtun / 127) * 0.035));
 		// operator (FM index) envelopes: AD + end level, gated by the clock
 		envA = EnvGen.kr(Env.new([0, 1, (aEnd / 127)], [(aAtk / 127 * 2) + 0.001, (aDec / 127 * 4) + 0.004], [-4, -4]), gOn) * (aLev / 127);
 		envB = EnvGen.kr(Env.new([0, 1, (bEnd / 127)], [(bAtk / 127 * 2) + 0.001, (bDec / 127 * 4) + 0.004], [-4, -4]), gOn) * (bLev / 127);
