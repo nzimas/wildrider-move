@@ -714,7 +714,7 @@
 // headless engine; s.avgCPU / numSynths are filled by the server status watcher.
 ~cpuTask = Routine({
 	loop {
-		~built.if { ~ctrl.value.sendMsg('/atelier/cpu', s.avgCPU / 100, s.peakCPU / 100, s.numSynths) };
+		~built.if { ~ctrl.value.sendMsg('/atelier/cpu', s.avgCPU, s.peakCPU, s.numSynths) };  // avg/peak are already percent
 		1.0.wait;
 	}
 }).play(SystemClock);

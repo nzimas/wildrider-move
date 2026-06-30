@@ -503,7 +503,7 @@ class StateManager:
         # CPU watchdog awareness
         total_nodes = sum(m.node_count for m in self.patch.modules.values()
                           if spec(m.type).is_audio)
-        self.cpu_warn = total_nodes > 96 or self.bridge.cpu.get("peak", 0) > 0.9
+        self.cpu_warn = total_nodes > 96 or self.bridge.cpu.get("peak", 0) > 90  # peakCPU percent
 
     # ------------------------------------------------------------------ #
     # Modulation editing.
