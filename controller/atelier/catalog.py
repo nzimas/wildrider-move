@@ -134,63 +134,70 @@ FBANK = ModuleSpec(
 # bundled 16,384-preset factory bank ships with the engine; user .syx banks load
 # at runtime. Param ids match the SynthDef arg names so the engine receives them.
 # --------------------------------------------------------------------------- #
-def _dx7_operator_params() -> list[ParamMetadata]:
-    """The per-operator timbre controls (manual mode). Six operators, each with
-    frequency ratio (coarse/fine/detune) and output level — these, with the
-    algorithm + feedback, are what shape the FM spectrum. All randomizable +
-    modulatable. Op1 is the default carrier; op2 modulates it on algorithm 1."""
-    out: list[ParamMetadata] = []
-    for n in range(1, 7):
-        lvl = 99.0 if n == 1 else (75.0 if n == 2 else 0.0)
-        out += [
-            P(f"dx7.op{n}Coarse", f"Op{n} Ratio", rmin=0.0, rmax=31.0, default=1.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.SAFE, musical=(0.0, 14.0)),
-            P(f"dx7.op{n}Fine", f"Op{n} Fine", rmin=0.0, rmax=99.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE),
-            P(f"dx7.op{n}Detune", f"Op{n} Detune", rmin=0.0, rmax=14.0, default=7.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.SAFE, musical=(3.0, 11.0)),
-            P(f"dx7.op{n}Level", f"Op{n} Level", rmin=0.0, rmax=99.0, default=lvl, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE, musical=(0.0, 99.0)),
-        ]
-    return out
-
-
-DX7 = ModuleSpec(
-    type="DX7",
-    role="Yamaha DX7 6-operator FM voice: 16,384 factory presets, or a hand-tweakable manual patch.",
-    node_meaning="DX7 FM voice (one held note).",
-    synthdef="dx7",
+FMTONE = ModuleSpec(
+    type="FMTONE",
+    role="Bespoke 4-operator FM voice (Elektron Digitone 'FM TONE'): 8 algorithms, X/Y "
+         "mix, harmonics + detune, two operator envelopes, overdrive, base/width + multimode "
+         "filter, amp env. A wonky internal clock self-articulates it for evolving textures.",
+    node_meaning="FM TONE voice (one note in the stack).",
+    synthdef="fmtone",
     insert_capable=False,
     generative_capable=True,
-    max_nodes=8,
+    max_nodes=4,
     cpu_per_node=2.6,
-    gestures=["fm-bank", "preset-morph", "detuned-stack", "arp"],
+    gestures=["fm-tone", "metallic", "detuned-stack", "percussive-fm", "drone"],
     node_params=[
-        P("dx7.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
-        P("dx7.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
-        P("dx7.velocity", "Velocity", rmin=0.0, rmax=127.0, default=100.0, rate=Rate.DISCRETE, formatter="int", musical=(40.0, 120.0)),
-        P("dx7.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.7, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.35, 0.9)),
-        P("dx7.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+        P("fmtone.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("fmtone.pitch", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
+        P("fmtone.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.7, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.35, 0.9)),
+        P("fmtone.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
     ],
     global_params=[
-        # Voice source: "factory" picks one of 16,384 bundled presets; "manual"
-        # builds the voice live from the operator/LFO controls below.
-        P("dx7.mode", "Mode", curve=Curve.ENUM, enum=["factory", "manual"], default=0, randomize=RandomizePolicy.OFF, modulatable=False),
-        P("dx7.preset", "Preset", rmin=0.0, rmax=16383.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE),
-        P("dx7.transpose", "Transpose", unit="semitone", rmin=-24.0, rmax=24.0, default=0.0, rate=Rate.DISCRETE, formatter="semitone", randomize=RandomizePolicy.SAFE, musical=(-12.0, 12.0)),
-        # UNSTABLE INTERNAL CLOCK — an irregular sequencer that re-gates the FM
-        # envelope (so the many decaying/percussive presets stay alive + audible).
-        # Plays with timing, note length and velocity; pitch is NOT sequenced.
-        P("dx7.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
-        P("dx7.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
-        P("dx7.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
-        P("dx7.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
-        P("dx7.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
-        # Manual-mode timbre controls (inert in factory mode).
-        P("dx7.algorithm", "Algorithm", rmin=0.0, rmax=31.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE, musical=(0.0, 31.0)),
-        P("dx7.feedback", "Feedback", rmin=0.0, rmax=7.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE, musical=(0.0, 7.0)),
-        P("dx7.lfoRate", "LFO Rate", rmin=0.0, rmax=99.0, default=35.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE),
-        P("dx7.lfoWave", "LFO Wave", curve=Curve.ENUM, enum=["triangle", "saw down", "saw up", "square", "sine", "s&h"], default=0, randomize=RandomizePolicy.WIDE),
-        P("dx7.lfoPMD", "LFO Pitch Mod", rmin=0.0, rmax=99.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.SAFE, musical=(0.0, 40.0)),
-        P("dx7.lfoAMD", "LFO Amp Mod", rmin=0.0, rmax=99.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.SAFE, musical=(0.0, 50.0)),
-        P("dx7.lfoPMS", "LFO Pitch Sens", rmin=0.0, rmax=7.0, default=0.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.SAFE, musical=(0.0, 5.0)),
-        *_dx7_operator_params(),
+        # --- FM core (SYN1) ---
+        P("fmtone.algo", "Algorithm", rmin=1.0, rmax=8.0, default=1.0, rate=Rate.DISCRETE, formatter="int", randomize=RandomizePolicy.WIDE, musical=(1.0, 8.0)),
+        P("fmtone.ratioC", "Ratio C", rmin=0.25, rmax=16.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.5, 4.0)),
+        P("fmtone.ratioA", "Ratio A", rmin=0.25, rmax=16.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.5, 9.0)),
+        P("fmtone.ratioB", "Ratio B", rmin=0.25, rmax=16.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.5, 9.0)),
+        P("fmtone.offC", "Offset C", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.3, 0.3)),
+        P("fmtone.offA", "Offset A", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.5, 0.5)),
+        P("fmtone.offB1", "Offset B1", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.5, 0.5)),
+        P("fmtone.offB2", "Offset B2", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.5, 0.5)),
+        P("fmtone.harm", "Harmonics", rmin=-26.0, rmax=26.0, default=0.0, curve=Curve.BIPOLAR, formatter="float2", musical=(-18.0, 18.0)),
+        P("fmtone.dtun", "Detune", rmin=0.0, rmax=127.0, default=0.0, formatter="int", musical=(0.0, 55.0)),
+        P("fmtone.fdbk", "Feedback", rmin=0.0, rmax=120.0, default=0.0, formatter="int", musical=(0.0, 75.0)),
+        P("fmtone.mix", "X/Y Mix", rmin=-64.0, rmax=63.0, default=0.0, curve=Curve.BIPOLAR, formatter="int", musical=(-45.0, 45.0)),
+        # --- operator (FM index) envelopes (SYN2): A, and B macro-mapped ---
+        P("fmtone.aAtk", "A Attack", rmin=0.0, rmax=127.0, default=0.0, formatter="int", musical=(0.0, 35.0)),
+        P("fmtone.aDec", "A Decay", rmin=0.0, rmax=127.0, default=50.0, formatter="int", musical=(20.0, 100.0)),
+        P("fmtone.aEnd", "A End", rmin=0.0, rmax=127.0, default=0.0, formatter="int", musical=(0.0, 60.0)),
+        P("fmtone.aLev", "A Level", rmin=0.0, rmax=127.0, default=85.0, formatter="int", danger=DangerClass.LOUDNESS, musical=(45.0, 110.0)),
+        P("fmtone.bAtk", "B Attack", rmin=0.0, rmax=127.0, default=0.0, formatter="int", musical=(0.0, 35.0)),
+        P("fmtone.bDec", "B Decay", rmin=0.0, rmax=127.0, default=50.0, formatter="int", musical=(20.0, 100.0)),
+        P("fmtone.bEnd", "B End", rmin=0.0, rmax=127.0, default=0.0, formatter="int", musical=(0.0, 60.0)),
+        P("fmtone.bLev", "B Level", rmin=0.0, rmax=127.0, default=0.0, formatter="int", danger=DangerClass.LOUDNESS, musical=(0.0, 95.0)),
+        # --- multimode + base/width filter (FLTR) ---
+        P("fmtone.fType", "Filter Type", curve=Curve.ENUM, enum=["off", "lp12", "hp12", "lp24"], default=1, randomize=RandomizePolicy.WIDE),
+        P("fmtone.fFreq", "Cutoff", rmin=0.0, rmax=127.0, default=90.0, formatter="int", musical=(35.0, 115.0)),
+        P("fmtone.fReso", "Resonance", rmin=0.0, rmax=127.0, default=20.0, formatter="int", musical=(5.0, 85.0)),
+        P("fmtone.fEnv", "Filter Env", rmin=-64.0, rmax=63.0, default=0.0, curve=Curve.BIPOLAR, formatter="int", musical=(-40.0, 55.0)),
+        P("fmtone.fAtk", "F Attack", rmin=0.0, rmax=127.0, default=0.0, formatter="int", musical=(0.0, 40.0)),
+        P("fmtone.fDec", "F Decay", rmin=0.0, rmax=127.0, default=55.0, formatter="int", musical=(20.0, 100.0)),
+        P("fmtone.fSus", "F Sustain", rmin=0.0, rmax=127.0, default=70.0, formatter="int", musical=(20.0, 110.0)),
+        P("fmtone.fRel", "F Release", rmin=0.0, rmax=127.0, default=45.0, formatter="int", musical=(20.0, 100.0)),
+        P("fmtone.base", "Base", rmin=0.0, rmax=127.0, default=0.0, formatter="int", musical=(0.0, 45.0)),
+        P("fmtone.width", "Width", rmin=0.0, rmax=127.0, default=127.0, formatter="int", musical=(55.0, 127.0)),
+        # --- amp (AMP) ---
+        P("fmtone.ampAtk", "Amp Attack", rmin=0.0, rmax=127.0, default=1.0, formatter="int", musical=(0.0, 25.0)),
+        P("fmtone.ampDec", "Amp Decay", rmin=0.0, rmax=127.0, default=60.0, formatter="int", musical=(25.0, 100.0)),
+        P("fmtone.ampSus", "Amp Sustain", rmin=0.0, rmax=127.0, default=95.0, formatter="int", musical=(40.0, 115.0)),
+        P("fmtone.ampRel", "Amp Release", rmin=0.0, rmax=127.0, default=50.0, formatter="int", musical=(20.0, 95.0)),
+        P("fmtone.drv", "Overdrive", rmin=0.0, rmax=127.0, default=0.0, formatter="int", danger=DangerClass.LOUDNESS, musical=(0.0, 55.0)),
+        # --- unstable internal clock (re-gates the voice; pitch is NOT sequenced) ---
+        P("fmtone.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("fmtone.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("fmtone.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("fmtone.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("fmtone.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
     ],
 )
 
@@ -982,14 +989,14 @@ WAVEFOLDER = ModuleSpec(
 # takeover does not use it. Its ModuleSpec + SeqEngine remain in the codebase for
 # desktop parity, but it is not registered, so it never appears in any patch/grid.
 CATALOG: dict[str, ModuleSpec] = {
-    m.type: m for m in (DX7, PITCH, TIME, COMB, GAIN, SDLY, VERB,
+    m.type: m for m in (FMTONE, PITCH, TIME, COMB, GAIN, SDLY, VERB,
                         CLOUDS, GRAINS, RINGS, WAVIARY, ENV, GATE, DISTORT,
                         OVERDRIVE, AMPSIM, EQUALIZER, FLANGER, PHASER, RINGMOD,
                         BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER)
 }   # FBANK + PLAITS + MOLLY + BUCHLOID retired above; BEN replaced by WAVIARY
 
 # Ordered lanes (source -> processors -> spatial tail).
-DEFAULT_LANE_ORDER = ["DX7", "PITCH", "TIME", "COMB", "GAIN",
+DEFAULT_LANE_ORDER = ["FMTONE", "PITCH", "TIME", "COMB", "GAIN",
                       "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "WAVIARY", "ENV", "GATE",
                       "DISTORT", "OVERDRIVE", "AMPSIM", "EQUALIZER", "FLANGER", "PHASER", "RINGMOD",
                       "BITCRUSHER", "LOFI", "TREMOLO", "WAVEFOLDER"]

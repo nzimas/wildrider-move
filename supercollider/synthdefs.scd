@@ -143,6 +143,78 @@
 		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
 	}).add;
 
+	// ---- FMTONE: bespoke 4-operator FM voice (Elektron Digitone "FM TONE") -
+	// Signal path: FM core (ops C, A, B1, B2; 8 algorithms with X/Y carrier taps +
+	// MIX crossfade; HARM additive-ish harmonics; DTUN; feedback on A) -> Overdrive
+	// -> Base/Width filter -> Multimode filter (+ env) -> Amp env. Two AD-with-end
+	// operator envelopes (A, B macro-mapped) set the FM index over time. A wonky
+	// internal clock re-gates the voice (shared with DX7) so it self-articulates.
+	SynthDef(("fmtone" ++ suf).asSymbol, { |out = 0, pmodbus = 0, amodbus = 0,
+		pitch = 48, gate = 1,
+		algo = 1, ratioC = 1, ratioA = 1, ratioB = 1, offC = 0, offA = 0, offB1 = 0, offB2 = 0,
+		harm = 0, dtun = 0, fdbk = 0, mix = 0,
+		aAtk = 0, aDec = 50, aEnd = 0, aLev = 85, bAtk = 0, bDec = 50, bEnd = 0, bLev = 0,
+		fType = 0, fFreq = 90, fReso = 20, fEnv = 0, fAtk = 0, fDec = 55, fSus = 70, fRel = 45,
+		base = 0, width = 127,
+		ampAtk = 1, ampDec = 60, ampSus = 95, ampRel = 50, drv = 0,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5,
+		amp = 1, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, gOn, pmod, f0, fC, fA, fB1, fB2,
+			envA, envB, fbA, opB2, opB1, opA, opC, hP, hN, idx, fdA,
+			gB2B1, gB2A, gB1A, gAC, gB1C, gB2C, ySel, voice, baseHz, topHz, bw, od,
+			fEnvS, cut, rq, mm, ampE, sig;
+		// harmonic morph: sine -> 2nd/3rd-partial-rich (cheap Chebyshev blend)
+		var hsh = { |x, a| ((x * (1 - a)) + ((((4 * x.cubed) - (3 * x)) * 0.6) + (((2 * x.squared) - 1) * 0.4) * a)) };
+		// --- unstable internal clock (re-gates the voice) ---
+		clkR = (clkRate * (2 ** (LFNoise2.kr(LFNoise1.kr(0.2).exprange(0.05, 0.6)) * clkDrift * 1.5))).clip(0.05, 30);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7) + Impulse.kr(0);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		gOn = Trig.kr(clkTrig, clkLenV);
+		pmod = Lag2.ar(In.ar(pmodbus, 1), 0.01);          // per-module vibrato LFO
+		f0 = (pitch.clip(0, 127).midicps * pmod).clip(8, 12000);
+		// operator freqs: ratio + fine offset + detune drift on A / B2
+		fC  = f0 * (ratioC + offC).max(0.01);
+		fA  = f0 * (ratioA + offA).max(0.01) * (1 + ((dtun / 127) * 0.04 * LFNoise2.kr(0.15)));
+		fB1 = f0 * (ratioB + offB1).max(0.01);
+		fB2 = f0 * (ratioB + offB2).max(0.01) * (1 - ((dtun / 127) * 0.04));
+		// operator (FM index) envelopes: AD + end level, gated by the clock
+		envA = EnvGen.kr(Env.new([0, 1, (aEnd / 127)], [(aAtk / 127 * 2) + 0.001, (aDec / 127 * 4) + 0.004], [-4, -4]), gOn) * (aLev / 127);
+		envB = EnvGen.kr(Env.new([0, 1, (bEnd / 127)], [(bAtk / 127 * 2) + 0.001, (bDec / 127 * 4) + 0.004], [-4, -4]), gOn) * (bLev / 127);
+		idx = 7.0;                                          // FM index scale (radians)
+		hP = (harm.max(0)) / 26; hN = (harm.neg.max(0)) / 26;
+		// algorithm matrix gains: [B2->B1, B2->A, B1->A, A->C, B1->C, B2->C]; Y carrier tap
+		gB2B1 = Select.kr(algo - 1, [0, 1, 0, 1, 0, 1, 0, 1]);
+		gB2A  = Select.kr(algo - 1, [1, 0, 0, 0, 1, 0, 1, 0]);
+		gB1A  = Select.kr(algo - 1, [0, 0, 0, 1, 1, 0, 1, 0]);
+		gAC   = Select.kr(algo - 1, [1, 1, 1, 1, 1, 1, 1, 0]);
+		gB1C  = Select.kr(algo - 1, [1, 0, 1, 0, 0, 1, 1, 1]);
+		gB2C  = Select.kr(algo - 1, [0, 0, 1, 0, 0, 0, 0, 1]);
+		ySel  = Select.kr(algo - 1, [2, 2, 1, 1, 1, 2, 2, 3]);   // 0=C 1=A 2=B1 3=B2
+		// operators in modulation order B2 -> B1 -> A -> C; feedback on A
+		fbA = LocalIn.ar(1);
+		opB2 = SinOsc.ar(fB2, 0);
+		opB1 = hsh.(SinOsc.ar(fB1, opB2 * envB * idx * gB2B1), hP);
+		opA  = hsh.(SinOsc.ar(fA, fbA + (opB2 * envB * idx * gB2A) + (opB1 * envB * idx * gB1A)), hP);
+		fdA  = (fdbk / 120) * 6;
+		LocalOut.ar(opA * fdA);
+		opC  = hsh.(SinOsc.ar(fC, (opA * envA * idx * gAC) + (opB1 * envB * idx * gB1C) + (opB2 * envB * idx * gB2C)), hN);
+		// two carrier taps (X = C; Y = algo-selected) crossfaded by MIX
+		voice = XFade2.ar(opC, Select.ar(ySel, [opC, opA, opB1, opB2]), (mix / 64).clip(-1, 1));
+		// Overdrive -> Base/Width filter -> Multimode filter -> Amp
+		od = ((voice * (1 + ((drv / 127) * 9))).tanh) * (1 - (drv / 254));
+		baseHz = (base / 127).linexp(0, 1, 16, 13000); topHz = (width / 127).linexp(0, 1, 180, 18500);
+		bw = LPF.ar(HPF.ar(od, baseHz.clip(16, 16000)), topHz.max(baseHz * 1.1).clip(40, 18500));
+		fEnvS = EnvGen.kr(Env.adsr((fAtk / 127 * 2) + 0.001, (fDec / 127 * 3) + 0.004, (fSus / 127), (fRel / 127 * 4) + 0.02), gOn);
+		cut = ((fFreq / 127).linexp(0, 1, 28, 16000) * (2 ** (fEnvS * (fEnv / 64) * 4))).clip(20, 18000);
+		rq = (1 - ((fReso / 127) * 0.93)).clip(0.06, 1);
+		mm = Select.ar(fType.clip(0, 3), [bw, RLPF.ar(bw, cut, rq), RHPF.ar(bw, cut, rq), RLPF.ar(RLPF.ar(bw, cut, rq), cut, rq)]);
+		ampE = EnvGen.kr(Env.adsr((ampAtk / 127 * 2) + 0.001, (ampDec / 127 * 3) + 0.004, (ampSus / 127), (ampRel / 127 * 4) + 0.02), gOn);
+		sig = mm * ampE * clkVelV * amp * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
 	// ---- DISTORT: versatile multi-stage distortion / saturation ----------
 	// A full waveshaping chain (best-of SC, core UGens + a Chebyshev Shaper):
 	// pre-emphasis tone -> drive + asymmetry bias -> 8-way waveshaper bank ->

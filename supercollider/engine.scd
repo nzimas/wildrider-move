@@ -371,10 +371,23 @@
 				notes: Array.fill(nodes, 60), vels: Array.fill(nodes, 100));
 			~dx7ApplyVoice.(mid);
 		}, {
-			nodeSynths = Array.fill(nodes, {
-				Synth.tail(grp, defName, [\out, outBus.index, \in, inBus.index]);
+			(type.toUpper == "FMTONE").if({
+				// FMTONE: generative FM voice. Reuses the per-module vibrato LFO (InfEfx
+				// -> pmodbus) like DX7, but its params are set DIRECTLY (no preset map).
+				var pbus = Bus.audio(s, 1), abus = Bus.audio(s, 1), lfo;
+				lfo = Synth.head(grp, \InfEfx, [\pmodbus, pbus.index, \amodbus, abus.index,
+					\lfo_wave, ~dx7_wavebufs[4].bufnum]);
+				nodeSynths = Array.fill(nodes, {
+					Synth.tail(grp, defName, [\out, outBus.index, \pmodbus, pbus.index, \amodbus, abus.index]);
+				});
+				~modules[mid.asSymbol] = (group: grp, nodes: nodeSynths, type: type, inBus: inBus,
+					outBus: outBus, pbus: pbus, abus: abus, lfo: lfo);
+			}, {
+				nodeSynths = Array.fill(nodes, {
+					Synth.tail(grp, defName, [\out, outBus.index, \in, inBus.index]);
+				});
+				~modules[mid.asSymbol] = (group: grp, nodes: nodeSynths, type: type, inBus: inBus, outBus: outBus);
 			});
-			~modules[mid.asSymbol] = (group: grp, nodes: nodeSynths, type: type, inBus: inBus, outBus: outBus);
 		});
 	};
 };
@@ -386,6 +399,7 @@
 		info[\group].free;
 		info[\inBus].free;
 		info[\outBus].free;
+		info[\pbus].notNil.if { info[\pbus].free; info[\abus].free };   // FMTONE vibrato buses
 		~modules.removeAt(mid.asSymbol);
 	};
 	st.notNil.if {
@@ -408,8 +422,13 @@
 					st[\notes] = st[\notes].add(60); st[\vels] = st[\vels].add(100);
 					~dx7RecalcNode.(mid, info[\nodes].size - 1);
 				}, {
-					info[\nodes] = info[\nodes].add(Synth.tail(info[\group], defName,
-						[\out, info[\outBus].index, \in, info[\inBus].index]));
+					info[\pbus].notNil.if({                                  // FMTONE generative voice
+						info[\nodes] = info[\nodes].add(Synth.tail(info[\group], defName,
+							[\out, info[\outBus].index, \pmodbus, info[\pbus].index, \amodbus, info[\abus].index]));
+					}, {
+						info[\nodes] = info[\nodes].add(Synth.tail(info[\group], defName,
+							[\out, info[\outBus].index, \in, info[\inBus].index]));
+					});
 				});
 			};
 		} {

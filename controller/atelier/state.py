@@ -1323,8 +1323,8 @@ class StateManager:
     # ------------------------------------------------------------------ #
     def init_default(self) -> None:
         """Build the default as a free-form graph: a serial chain
-        DX7 -> PITCH -> TIME -> COMB -> GAIN -> SDLY -> VERB."""
-        chain = ["DX7", "PITCH", "TIME", "COMB", "GAIN", "SDLY", "VERB"]
+        FMTONE -> PITCH -> TIME -> COMB -> GAIN -> SDLY -> VERB."""
+        chain = ["FMTONE", "PITCH", "TIME", "COMB", "GAIN", "SDLY", "VERB"]
         prev = None
         for i, t in enumerate(chain):
             mod = self.add_module(t, node_count=1, x=40 + i * 210, y=60)
@@ -1335,19 +1335,18 @@ class StateManager:
         def m(t):
             return next(mm for mm in self.patch.modules.values() if mm.type == t)
 
-        # DX7: a wide 3-voice stack on one factory preset — notes spread across an
+        # FMTONE: a wide 3-voice stack on one factory preset — notes spread across an
         # octave triad and panned across the stereo field, so the source is rich
         # and wide rather than a single centred tone. A polyadic source
         # decorrelates per-voice pan motion below.
-        gen = m("DX7")
+        gen = m("FMTONE")
         gen.set_node_count(3)
         spread = [-0.6, 0.0, 0.6]             # symmetric L / centre / R
         notes = [36.0, 48.0, 55.0]            # low octave + fifth, held as a drone
-        gen.global_slots["dx7.preset"].base = 0.0
         for i, nd in enumerate(gen.node_slots):
-            nd["dx7.note"].base = notes[i]
-            nd["dx7.pan"].base = spread[i]
-            nd["dx7.amp"].base = 0.4
+            nd["fmtone.pitch"].base = notes[i]
+            nd["fmtone.pan"].base = spread[i]
+            nd["fmtone.amp"].base = 0.4
 
         m("PITCH").wet_dry = 0.3
         m("TIME").wet_dry = 0.3
@@ -1367,7 +1366,7 @@ class StateManager:
         # modest so each voice stays in its own hemisphere (base ±0.6 ± 0.4): the
         # image animates but never collapses to one side (was 0.45, which could
         # align all voices hard to one channel and momentarily mute the other).
-        self.add_mod_route("rt_pan", "agitation", gen.id, "dx7.pan",
+        self.add_mod_route("rt_pan", "agitation", gen.id, "fmtone.pan",
                            scope="allDecorrelated", depth=0.2)
         # LFO bank: 8 assignable LFOs by default (expandable to 30).
         self.ensure_lfos(8)
@@ -1487,7 +1486,7 @@ class StateManager:
                     chosen.append(t)
                     used[t] = used.get(t, 0) + 1
 
-            take("DX7")            # DX7 self-sounds; COMB/PLAY need excitation/buffer
+            take("FMTONE")            # DX7 self-sounds; COMB/PLAY need excitation/buffer
             guard = 0
             while len(chosen) < n and guard < 200:
                 guard += 1
