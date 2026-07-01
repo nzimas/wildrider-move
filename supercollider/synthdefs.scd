@@ -887,8 +887,13 @@
 		var inL = (nchan == 1).if({ dry }, { dry[0] });
 		var inR = (nchan == 1).if({ dry }, { dry[1] });
 		var mono = (inL + inR) * 0.5;
-		var tr = (trigRate * densityMul).clip(0.02, 110);
-		var trig = Select.kr(trigMode.clip(0, 1), [Impulse.kr(tr), Dust.kr(tr)]);
+		// unstable internal clock (matches WAVIARY/FMTONE): drifting rate + dropped/extra
+		// hits. RINGS exposes no chaos/drift params, so bake in the same default feel
+		// (chaos ~0.4, drift ~0.3); trigMode blends an extra pure-random (Dust) layer on top.
+		var tr = (trigRate * densityMul * (2 ** (LFNoise2.kr(LFNoise1.kr(0.2).exprange(0.05, 0.6)) * 0.45))).clip(0.02, 110);
+		var trig = CoinGate.kr(0.74, Impulse.kr(tr))     // drifting rate, ~26% of hits dropped
+		         + Dust.kr(tr * 0.28)                    // occasional extra hits
+		         + Dust.kr(tr * trigMode.clip(0, 1));    // trigMode -> more randomness
 		var polyN = Select.kr(poly.clip(0, 2), [1, 2, 4]);
 		var pitS = (pit + pitchShift).clip(24, 108);   // pitchShift in semitones; keep out of sub-gargle territory
 		// MiRings: in, trig, pit, struct, bright, damp, pos, model, poly, intern_exciter, easteregg, bypass
