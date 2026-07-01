@@ -77,6 +77,7 @@ let pendingPitchMod = null, pitchN = 0;   /* per-module pitch event {t, v, n} */
 let knob2Touched = false;                 /* knob 2 capacitive touch -> show the pitch bar while touched */
 let pFiltCut = 1.0, pFiltRes = 0.0;       /* knobs 3/4 = global master lowpass (cutoff/res, 0..1) */
 let pFiltShow = null;                      /* which master-filter bar to draw ('cut'|'res') while touched/turning */
+let filtTouched = false;                   /* knob 3/4 capacitive touch -> hold the filter bar while touched */
 let shiftHeld = false;
 let masterTouched = false;     /* volume-knob capacitive touch held */
 let row2Down = 0;              /* Track 2 press time, for short/long detect */
@@ -516,7 +517,7 @@ function clearHeld() { if (overlay && (overlay.kind === 'name' || overlay.kind =
 function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phase + 30; screenDirty = true; }
 function showDensity(target) { overlay = { kind: 'density', target: (target === undefined ? -1 : target) }; overlayUntil = knob1Touched ? 1e12 : (phase + 30); screenDirty = true; }
 function showPitch(target) { overlay = { kind: 'pitch', target: (target === undefined ? -1 : target) }; overlayUntil = knob2Touched ? 1e12 : (phase + 30); screenDirty = true; }
-function showFilter(which) { pFiltShow = which; overlay = { kind: 'pfilter', which: which }; overlayUntil = phase + 30; screenDirty = true; }
+function showFilter(which) { pFiltShow = which; overlay = { kind: 'pfilter', which: which }; overlayUntil = filtTouched ? 1e12 : (phase + 30); screenDirty = true; }
 /* which generator (if any) a held pad targets for per-module density */
 function heldGenCell() {
     var hc = heldCell;
@@ -597,7 +598,7 @@ globalThis.init = function () {
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
     macroVal = new Array(8).fill(0); density = 0; densityCell = {}; pendingDensMod = null; densN = 0; knob1Touched = false;
     genPitch = 0; pitchCell = {}; pendingPitchMod = null; pitchN = 0; knob2Touched = false;
-    pFiltCut = 1.0; pFiltRes = 0.0; pFiltShow = null;
+    pFiltCut = 1.0; pFiltRes = 0.0; pFiltShow = null; filtTouched = false;
     seq = 0; deleteHeld = false; shiftHeld = false;
     playHeld = false; recHeld = false;
     masterTouched = false; row2Down = 0;
@@ -717,11 +718,11 @@ globalThis.onMidiMessageInternal = function (data) {
             knob2Touched = (status === 0x90 && d2 >= 64);
             if (knob2Touched) { showPitch(heldGenCell()); }
             else if (overlay && overlay.kind === 'pitch') { overlay = null; screenDirty = true; }
-        } else if ((d1 - MoveKnob1Touch) === 2 || (d1 - MoveKnob1Touch) === 3) {  /* PATCH view: knob 3/4 touch shows the master filter bar */
-            var tf = (status === 0x90 && d2 >= 64);
+        } else if ((d1 - MoveKnob1Touch) === 2 || (d1 - MoveKnob1Touch) === 3) {  /* PATCH view: knob 3/4 touch shows the master filter bar (held while touched) */
             var fw = ((d1 - MoveKnob1Touch) === 2) ? 'cut' : 'res';
-            if (tf) { showFilter(fw); }
-            else if (overlay && overlay.kind === 'pfilter' && overlay.which === fw) { overlay = null; pFiltShow = null; screenDirty = true; }
+            filtTouched = (status === 0x90 && d2 >= 64);
+            if (filtTouched) { showFilter(fw); }
+            else if (overlay && overlay.kind === 'pfilter') { overlay = null; pFiltShow = null; screenDirty = true; }
         }
         return;
     }
