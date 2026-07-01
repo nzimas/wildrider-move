@@ -125,6 +125,8 @@ class HeadlessController:
         self._density_override = {}   # mid -> per-generator density (held-pad edits)
         self._pitch = 0.0          # knob 2: global pitch shift (-1..1, 0 = as generated)
         self._pitch_override = {}     # mid -> per-generator pitch shift (held-pad edits)
+        self._master_cut = 1.0     # knobs 3/4: global master lowpass (normalised 0..1)
+        self._master_res = 0.0
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 
@@ -754,6 +756,15 @@ class HeadlessController:
             sl["cut"], sl["res"] = cn, rn
         self.bridge.send("/atelier/sampler/filterall", self._cut_hz(cn), self._res_amt(rn))
 
+    def set_master_filter(self, cut: float, res: float) -> None:
+        """Patch-view knobs 3/4: global lowpass on the master bus (cutoff + resonance).
+        Same normalised->Hz/res mapping as the sampler filter. The master synth persists
+        across patch rebuilds, so this is set-and-forget (no re-apply needed)."""
+        cn = max(0.0, min(1.0, float(cut)))
+        rn = max(0.0, min(1.0, float(res)))
+        self._master_cut, self._master_res = cn, rn
+        self.bridge.send("/atelier/masterfilter", self._cut_hz(cn), self._res_amt(rn))
+
     def _sampler_status(self) -> dict:
         return {"states": [s["state"] for s in self._samp],
                 "vol": [round(s["vol"], 3) for s in self._samp],
@@ -952,6 +963,7 @@ class HeadlessController:
         last_densmod = None
         last_genpitch = None
         last_pitchmod = None
+        last_pfilter = None
         while not self._stop.is_set():
             time.sleep(period)
             try:
@@ -1074,6 +1086,13 @@ class HeadlessController:
                 if pmk != last_pitchmod:
                     last_pitchmod = pmk
                     self._safe(lambda a=pmk: self.set_pitch(a[1], a[0]))
+            # Knobs 3/4: global master lowpass ([cut, res], both 0..1).
+            pf = doc.get("pfilter")
+            if isinstance(pf, list) and len(pf) == 2:
+                pfk = (round(float(pf[0]), 4), round(float(pf[1]), 4))
+                if pfk != last_pfilter:
+                    last_pfilter = pfk
+                    self._safe(lambda a=pfk: self.set_master_filter(a[0], a[1]))
             # FX dry/wet balance (held step + jog): {fx, wet, n}.
             fw = doc.get("fxwet")
             if isinstance(fw, dict):

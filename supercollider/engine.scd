@@ -216,14 +216,19 @@
 		// Master makeup gain into the brickwall limiter. Tunable via \gain (the
 		// Move's main volume knob drives it). Captured output is glitch-free; the
 		// limiter is the loudness/safety stage.
-		SynthDef(("master_" ++ channels).asSymbol, { |in = 0, out = 0, gain = 6|
+		SynthDef(("master_" ++ channels).asSymbol, { |in = 0, out = 0, gain = 6, cut = 18000, res = 0|
 			/* Ceiling 0.45, NOT ~1.0: our output feeds the schwung shadow mixer
 			 * whose slot-0 gain (~1.995) would push a near-full-scale signal to
 			 * ~1.9 and hard-clip the DAC (constant clicks). Stay ~0.45 so the
 			 * post-shadow peak lands near unity. Pair w/ the lower normalize target. */
 			/* gain is LAGGED (40ms): patch swaps fade the master out->rebuild->in,
 			 * so a lagged gain makes those ramps smooth instead of a click. */
-			Out.ar(out, Limiter.ar(~killbad.(In.ar(in, channels)) * gain.lag(0.04), 0.45, 0.01));
+			/* Global master lowpass (patch-view knobs 3/4): cut = cutoff Hz (lagged to
+			 * avoid zipper), res 0..1 -> RLPF rq (1 = open, ->0.12 = resonant). Fully
+			 * open by default (18k / 0) so it is transparent until the user sweeps it. */
+			var src = ~killbad.(In.ar(in, channels));
+			var flt = RLPF.ar(src, cut.lag(0.05).clip(20, 18000), (1 - (res.clip(0, 1) * 0.88)).clip(0.12, 1));
+			Out.ar(out, Limiter.ar(flt * gain.lag(0.04), 0.45, 0.01));
 		}).add;
 		s.sync;
 		// DX7: allocate LFO wavetable buffers + load the bundled factory bank once.
@@ -697,6 +702,8 @@
 	OSCdef(\freemods, { |m| ~freeModules.value }, '/atelier/free_modules'),
 	// Master makeup gain (the Move's main volume knob when no pad is held).
 	OSCdef(\mastergain, { |m| ~masterSynth.notNil.if { ~masterSynth.set(\gain, m[1]) } }, '/atelier/mastergain'),
+		// Global master lowpass (patch-view knobs 3/4): m[1] = cutoff Hz, m[2] = res 0..1.
+		OSCdef(\masterfilter, { |m| ~masterSynth.notNil.if { ~masterSynth.set(\cut, m[1], \res, m[2]) } }, '/atelier/masterfilter'),
 	OSCdef(\spatial, { |m| /* channel changes require rebuild on next boot */ }, '/atelier/spatial'),
 	OSCdef(\reseed, { |m| /* seeds live in the controller; nothing server-side */ }, '/atelier/reseed'),
 	// Only confirm readiness once the boot block has actually finished (buses +

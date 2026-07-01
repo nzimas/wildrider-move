@@ -75,6 +75,8 @@ let genPitch = 0;                         /* knob 2 = global generator pitch shi
 let pitchCell = {};                       /* per-generator pitch (while a gen pad is held): cell -> -1..1 */
 let pendingPitchMod = null, pitchN = 0;   /* per-module pitch event {t, v, n} */
 let knob2Touched = false;                 /* knob 2 capacitive touch -> show the pitch bar while touched */
+let pFiltCut = 1.0, pFiltRes = 0.0;       /* knobs 3/4 = global master lowpass (cutoff/res, 0..1) */
+let pFiltShow = null;                      /* which master-filter bar to draw ('cut'|'res') while touched/turning */
 let shiftHeld = false;
 let masterTouched = false;     /* volume-knob capacitive touch held */
 let row2Down = 0;              /* Track 2 press time, for short/long detect */
@@ -181,6 +183,7 @@ function writeControl() {
     if (pendingDensMod) doc.densmod = pendingDensMod;   /* per-module density (held gen pad) */
     doc.pitch = genPitch;                    /* knob 2: global generator pitch shift */
     if (pendingPitchMod) doc.pitchmod = pendingPitchMod;   /* per-module pitch (held gen pad) */
+    doc.pfilter = [pFiltCut, pFiltRes];      /* knobs 3/4: global master lowpass */
     doc.filterall = [filtCut, filtRes];     /* CTRL-ALL filter cutoff/res */
     doc.pitchall = filtPit;                 /* CTRL-ALL pitch (semitones) */
     if (selSlots.length > 0 && lastSamParam) doc.samedit = { sels: selSlots, p: lastSamParam, v: lastSamValue };
@@ -513,6 +516,7 @@ function clearHeld() { if (overlay && (overlay.kind === 'name' || overlay.kind =
 function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phase + 30; screenDirty = true; }
 function showDensity(target) { overlay = { kind: 'density', target: (target === undefined ? -1 : target) }; overlayUntil = knob1Touched ? 1e12 : (phase + 30); screenDirty = true; }
 function showPitch(target) { overlay = { kind: 'pitch', target: (target === undefined ? -1 : target) }; overlayUntil = knob2Touched ? 1e12 : (phase + 30); screenDirty = true; }
+function showFilter(which) { pFiltShow = which; overlay = { kind: 'pfilter', which: which }; overlayUntil = phase + 30; screenDirty = true; }
 /* which generator (if any) a held pad targets for per-module density */
 function heldGenCell() {
     var hc = heldCell;
@@ -564,6 +568,10 @@ function drawScreen() {
             print(0, 6, plabel, 2);
             print(0, 24, psemi === 0 ? 'as generated' : ((psemi > 0 ? '+' : '') + psemi + ' st'), 1);
             bbar(pv);
+        } else if (overlay.kind === 'pfilter') {
+            print(0, 6, 'FILTER', 2);
+            if (overlay.which === 'res') { print(0, 24, 'RESONANCE ' + Math.round(pFiltRes * 100) + '%', 1); bar(pFiltRes); }
+            else { print(0, 24, 'CUTOFF ' + cutHz(pFiltCut) + ' Hz', 1); bar(pFiltCut); }
         } else {
             const i = overlay.idx;
             print(0, 6, 'M' + (i + 1), 2);
@@ -589,6 +597,7 @@ globalThis.init = function () {
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
     macroVal = new Array(8).fill(0); density = 0; densityCell = {}; pendingDensMod = null; densN = 0; knob1Touched = false;
     genPitch = 0; pitchCell = {}; pendingPitchMod = null; pitchN = 0; knob2Touched = false;
+    pFiltCut = 1.0; pFiltRes = 0.0; pFiltShow = null;
     seq = 0; deleteHeld = false; shiftHeld = false;
     playHeld = false; recHeld = false;
     masterTouched = false; row2Down = 0;
@@ -670,7 +679,7 @@ globalThis.tick = function () {
     if (levelCell >= 0 && (Date.now() - levelAt) > 350) levelCell = -1;
     if (ledDirty) renderLEDs();
     /* Expire a timed overlay (macro / volume) -> revert to the idle screen once. */
-    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action' || overlay.kind === 'density' || overlay.kind === 'pitch') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
+    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action' || overlay.kind === 'density' || overlay.kind === 'pitch' || overlay.kind === 'pfilter') && phase >= overlayUntil) { overlay = null; pFiltShow = null; screenDirty = true; }
     /* Redraw ONLY when something changed (or a macro slider is live), so the
      * SPI display isn't flushed 133x/s — that contention was XRunning audio. */
     if (screenDirty) { drawScreen(); screenDirty = false; }
@@ -708,6 +717,11 @@ globalThis.onMidiMessageInternal = function (data) {
             knob2Touched = (status === 0x90 && d2 >= 64);
             if (knob2Touched) { showPitch(heldGenCell()); }
             else if (overlay && overlay.kind === 'pitch') { overlay = null; screenDirty = true; }
+        } else if ((d1 - MoveKnob1Touch) === 2 || (d1 - MoveKnob1Touch) === 3) {  /* PATCH view: knob 3/4 touch shows the master filter bar */
+            var tf = (status === 0x90 && d2 >= 64);
+            var fw = ((d1 - MoveKnob1Touch) === 2) ? 'cut' : 'res';
+            if (tf) { showFilter(fw); }
+            else if (overlay && overlay.kind === 'pfilter' && overlay.which === fw) { overlay = null; pFiltShow = null; screenDirty = true; }
         }
         return;
     }
@@ -963,6 +977,16 @@ globalThis.onMidiMessageInternal = function (data) {
                     showPitch(-1);
                 }
                 writeControl();
+                return;
+            }
+            if (i === 2) {                    /* knob 3 = global master CUTOFF (like the sampler view) */
+                pFiltCut = clamp01(pFiltCut + delta * 0.01);
+                showFilter('cut'); writeControl();
+                return;
+            }
+            if (i === 3) {                    /* knob 4 = global master RESONANCE */
+                pFiltRes = clamp01(pFiltRes + delta * 0.01);
+                showFilter('res'); writeControl();
                 return;
             }
             macroVal[i] = clamp01(macroVal[i] + delta * 0.015);
