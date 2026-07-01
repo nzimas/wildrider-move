@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import signal
 import threading
 import time
@@ -31,7 +32,7 @@ from . import aesthetics
 from .catalog import (GATE as _GATE_SPEC, DISTORT as _DISTORT_SPEC,
                       COMB as _COMB_SPEC, CLOUDS as _CLOUDS_SPEC)
 from .osc_bridge import OSCBridge
-from .params import Curve as _Curve, RandomizePolicy as _RandPol
+from .params import Curve as _Curve, RandomizePolicy as _RandPol, Rate as _Rate
 from .snapshot import full_snapshot
 from .state import StateManager
 
@@ -127,6 +128,12 @@ class HeadlessController:
         self._pitch_override = {}     # mid -> per-generator pitch shift (held-pad edits)
         self._master_cut = 1.0     # knobs 3/4: global master lowpass (normalised 0..1)
         self._master_res = 0.0
+        self._macro5 = 0.0         # knob 5: bipolar "morph everything" macro (-1..1, 0 = baseline)
+        self._macro5_dirs = {}     # (mid,pid,node) -> +/-1 direction (persists until new patch)
+        self._macro5_base = {}     # (mid,pid,node) -> baseline value captured at gesture start
+        self._macro5_targets = []  # cached [(mid,pid,node,meta,dir,base_norm)] for the hot apply
+        self._macro5_epoch = -1    # patch epoch the current directions belong to
+        self._patch_epoch = 0      # bumped on every patch rebuild (invalidates macro-5 directions)
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 
@@ -271,6 +278,7 @@ class HeadlessController:
                     self.bridge.send("/atelier/mastergain", 0.0)   # fade out (lagged)
                     time.sleep(0.07)                                # let the ramp reach ~0
                     build()                                         # teardown + rebuild (silent)
+                    self._patch_epoch += 1                          # new patch -> fresh macro-5 directions
                     time.sleep(0.45)                                # envelopes open + meters settle
                     peak = 0.0
                     for _ in range(5):
@@ -610,6 +618,65 @@ class HeadlessController:
             if mod.type in self._CLOCKED_GENS:
                 p = self._pitch_override.get(mid, self._pitch)
                 self.bridge.set_param(mid, "pitchShift", -1, self._pitch_semis(p))
+
+    # -- Knob 5: bipolar "morph everything" macro ------------------------------ #
+    # Offsets EVERY morphable param of the current patch in normalised space by the
+    # knob position. Each param carries a random +/-1 direction that persists until a
+    # new patch is generated, so CW pushes a fixed random half up and the rest down;
+    # CCW inverts. Generator PITCH params are never touched. The baseline (knob-centre
+    # state) is captured when a gesture begins (knob touch) so centre == the state the
+    # patch is in at that moment.
+    _MACRO5_SPAN = 0.5    # normalised offset applied at full knob throw (+/-)
+
+    def _macro5_slots(self):
+        """Yield (mid, pid, node, slot) for every param eligible for the knob-5 morph:
+        unlocked + randomizable + continuous, and NOT a pitch param on a generator."""
+        for mid, m in list(self.state.patch.modules.items()):
+            gen = self._is_gen(m.spec)
+            groups = [(None, m.global_slots)]
+            for node, nd in enumerate(m.node_slots):
+                groups.append((node, nd))
+            for node, slots in groups:
+                for pid, slot in slots.items():
+                    if slot.locked or slot.meta.randomize_policy is _RandPol.OFF:
+                        continue
+                    if slot.meta.curve is _Curve.ENUM or slot.meta.rate is _Rate.DISCRETE:
+                        continue      # discrete/enum params don't morph continuously
+                    if gen and aesthetics.classify(slot.meta)[0] == aesthetics.PITCH:
+                        continue      # never modulate pitch on generators
+                    yield mid, pid, node, slot
+
+    def begin_macro5(self) -> None:
+        """Start a knob-5 gesture: re-centre the macro and snapshot the current param
+        state as the baseline. Directions are (re)assigned only when the patch changed
+        since they were last set, so they persist across gestures within a patch. The
+        resolved targets are cached so the per-tick apply skips re-classification."""
+        if self._patch_epoch != self._macro5_epoch:
+            self._macro5_dirs = {}
+            self._macro5_epoch = self._patch_epoch
+        self._macro5 = 0.0
+        self._macro5_base = {}
+        targets = []
+        for mid, pid, node, slot in self._macro5_slots():
+            key = (mid, pid, node)
+            self._macro5_base[key] = slot.base
+            if key not in self._macro5_dirs:
+                self._macro5_dirs[key] = 1.0 if random.random() < 0.5 else -1.0
+            # cache (mid, pid, node, meta, direction, baseline-in-norm-space)
+            targets.append((mid, pid, node, slot.meta,
+                            self._macro5_dirs[key], slot.meta.to_norm(slot.base)))
+        self._macro5_targets = targets
+
+    def set_macro5(self, v: float) -> None:
+        """Apply the bipolar morph at knob position v (-1..1). 0 restores the baseline."""
+        self._macro5 = max(-1.0, min(1.0, float(v)))
+        if not self._macro5_targets:   # no gesture started yet (e.g. value before a touch)
+            self.begin_macro5()
+        span = self._MACRO5_SPAN * self._macro5
+        setp = self.state.set_param
+        for mid, pid, node, meta, direction, base_norm in self._macro5_targets:
+            pos = base_norm + (direction * span)
+            setp(mid, pid, node, meta.to_value(0.0 if pos < 0.0 else 1.0 if pos > 1.0 else pos))
 
     def set_loop_range(self, start: float, end: float) -> None:
         """CTRL-ALL loop region (knob 1 = start, knob 2 = end) for ALL takes,
@@ -964,6 +1031,9 @@ class HeadlessController:
         last_genpitch = None
         last_pitchmod = None
         last_pfilter = None
+        last_macro5 = None
+        last_macro5begin = None
+        last_macro5_t = 0.0
         while not self._stop.is_set():
             time.sleep(period)
             try:
@@ -1093,6 +1163,26 @@ class HeadlessController:
                 if pfk != last_pfilter:
                     last_pfilter = pfk
                     self._safe(lambda a=pfk: self.set_master_filter(a[0], a[1]))
+            # Knob 5: bipolar morph-everything macro. A touch ({n}) snapshots the
+            # baseline; the value (-1..1) sweeps it. Throttled to ~25 Hz because each
+            # apply touches every patch param (a fast turn would otherwise flood OSC).
+            mb = doc.get("macro5begin")
+            if isinstance(mb, dict):
+                mbn = int(mb.get("n", 0))
+                if mbn != last_macro5begin:
+                    last_macro5begin = mbn
+                    self._safe(self.begin_macro5)
+            mv = doc.get("macro5")
+            if mv is not None:
+                try:
+                    mvr = round(float(mv), 4)
+                except (TypeError, ValueError):
+                    mvr = None
+                now5 = time.monotonic()
+                if mvr is not None and mvr != last_macro5 and (now5 - last_macro5_t) >= 0.04:
+                    last_macro5 = mvr
+                    last_macro5_t = now5
+                    self._safe(lambda v=mvr: self.set_macro5(v))
             # FX dry/wet balance (held step + jog): {fx, wet, n}.
             fw = doc.get("fxwet")
             if isinstance(fw, dict):

@@ -78,6 +78,9 @@ let knob2Touched = false;                 /* knob 2 capacitive touch -> show the
 let pFiltCut = 1.0, pFiltRes = 0.0;       /* knobs 3/4 = global master lowpass (cutoff/res, 0..1) */
 let pFiltShow = null;                      /* which master-filter bar to draw ('cut'|'res') while touched/turning */
 let filtTouched = false;                   /* knob 3/4 capacitive touch -> hold the filter bar while touched */
+let macro5 = 0;                           /* knob 5 = bipolar morph-everything macro, -1..1 (0 = baseline) */
+let knob5Touched = false;                  /* knob 5 capacitive touch -> hold the morph bar + snapshot baseline */
+let pendingMacro5Begin = null, macro5N = 0; /* touch event that tells the controller to re-centre {n} */
 let shiftHeld = false;
 let masterTouched = false;     /* volume-knob capacitive touch held */
 let row2Down = 0;              /* Track 2 press time, for short/long detect */
@@ -185,6 +188,8 @@ function writeControl() {
     doc.pitch = genPitch;                    /* knob 2: global generator pitch shift */
     if (pendingPitchMod) doc.pitchmod = pendingPitchMod;   /* per-module pitch (held gen pad) */
     doc.pfilter = [pFiltCut, pFiltRes];      /* knobs 3/4: global master lowpass */
+    doc.macro5 = macro5;                     /* knob 5: bipolar morph-everything macro */
+    if (pendingMacro5Begin) doc.macro5begin = pendingMacro5Begin;   /* touch -> re-centre baseline */
     doc.filterall = [filtCut, filtRes];     /* CTRL-ALL filter cutoff/res */
     doc.pitchall = filtPit;                 /* CTRL-ALL pitch (semitones) */
     if (selSlots.length > 0 && lastSamParam) doc.samedit = { sels: selSlots, p: lastSamParam, v: lastSamValue };
@@ -518,6 +523,7 @@ function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phas
 function showDensity(target) { overlay = { kind: 'density', target: (target === undefined ? -1 : target) }; overlayUntil = knob1Touched ? 1e12 : (phase + 30); screenDirty = true; }
 function showPitch(target) { overlay = { kind: 'pitch', target: (target === undefined ? -1 : target) }; overlayUntil = knob2Touched ? 1e12 : (phase + 30); screenDirty = true; }
 function showFilter(which) { pFiltShow = which; overlay = { kind: 'pfilter', which: which }; overlayUntil = filtTouched ? 1e12 : (phase + 30); screenDirty = true; }
+function showMorph() { overlay = { kind: 'macro5' }; overlayUntil = knob5Touched ? 1e12 : (phase + 30); screenDirty = true; }
 /* which generator (if any) a held pad targets for per-module density */
 function heldGenCell() {
     var hc = heldCell;
@@ -573,6 +579,10 @@ function drawScreen() {
             print(0, 6, 'FILTER', 2);
             if (overlay.which === 'res') { print(0, 24, 'RESONANCE ' + Math.round(pFiltRes * 100) + '%', 1); bar(pFiltRes); }
             else { print(0, 24, 'CUTOFF ' + cutHz(pFiltCut) + ' Hz', 1); bar(pFiltCut); }
+        } else if (overlay.kind === 'macro5') {
+            print(0, 6, 'MORPH', 2);
+            print(0, 24, macro5 === 0 ? 'centre' : ((macro5 > 0 ? '+' : '') + Math.round(macro5 * 100) + '%'), 1);
+            bbar(macro5);
         } else {
             const i = overlay.idx;
             print(0, 6, 'M' + (i + 1), 2);
@@ -599,6 +609,7 @@ globalThis.init = function () {
     macroVal = new Array(8).fill(0); density = 0; densityCell = {}; pendingDensMod = null; densN = 0; knob1Touched = false;
     genPitch = 0; pitchCell = {}; pendingPitchMod = null; pitchN = 0; knob2Touched = false;
     pFiltCut = 1.0; pFiltRes = 0.0; pFiltShow = null; filtTouched = false;
+    macro5 = 0; knob5Touched = false; pendingMacro5Begin = null; macro5N = 0;
     seq = 0; deleteHeld = false; shiftHeld = false;
     playHeld = false; recHeld = false;
     masterTouched = false; row2Down = 0;
@@ -680,7 +691,7 @@ globalThis.tick = function () {
     if (levelCell >= 0 && (Date.now() - levelAt) > 350) levelCell = -1;
     if (ledDirty) renderLEDs();
     /* Expire a timed overlay (macro / volume) -> revert to the idle screen once. */
-    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action' || overlay.kind === 'density' || overlay.kind === 'pitch' || overlay.kind === 'pfilter') && phase >= overlayUntil) { overlay = null; pFiltShow = null; screenDirty = true; }
+    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action' || overlay.kind === 'density' || overlay.kind === 'pitch' || overlay.kind === 'pfilter' || overlay.kind === 'macro5') && phase >= overlayUntil) { overlay = null; pFiltShow = null; screenDirty = true; }
     /* Redraw ONLY when something changed (or a macro slider is live), so the
      * SPI display isn't flushed 133x/s — that contention was XRunning audio. */
     if (screenDirty) { drawScreen(); screenDirty = false; }
@@ -723,6 +734,13 @@ globalThis.onMidiMessageInternal = function (data) {
             filtTouched = (status === 0x90 && d2 >= 64);
             if (filtTouched) { showFilter(fw); }
             else if (overlay && overlay.kind === 'pfilter') { overlay = null; pFiltShow = null; screenDirty = true; }
+        } else if ((d1 - MoveKnob1Touch) === 4) {   /* PATCH view: knob 5 touch re-centres the morph macro + shows its bar */
+            knob5Touched = (status === 0x90 && d2 >= 64);
+            if (knob5Touched) {
+                macro5 = 0;                          /* centre = the state the patch is in right now */
+                pendingMacro5Begin = { n: ++macro5N };   /* tell the controller to snapshot the baseline */
+                showMorph(); writeControl();
+            } else if (overlay && overlay.kind === 'macro5') { overlay = null; screenDirty = true; }
         }
         return;
     }
@@ -988,6 +1006,11 @@ globalThis.onMidiMessageInternal = function (data) {
             if (i === 3) {                    /* knob 4 = global master RESONANCE */
                 pFiltRes = clamp01(pFiltRes + delta * 0.01);
                 showFilter('res'); writeControl();
+                return;
+            }
+            if (i === 4) {                    /* knob 5 = bipolar MORPH macro (all params, all modules) */
+                macro5 = Math.max(-1, Math.min(1, macro5 + delta * 0.02));
+                showMorph(); writeControl();
                 return;
             }
             macroVal[i] = clamp01(macroVal[i] + delta * 0.015);
