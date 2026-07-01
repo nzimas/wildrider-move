@@ -71,6 +71,10 @@ let density = 0;                          /* knob 1 = global trigger density, -1
 let densityCell = {};                     /* per-generator density (while a gen pad is held): cell -> -1..1 */
 let pendingDensMod = null, densN = 0;     /* per-module density event {t, v, n} */
 let knob1Touched = false;                 /* knob 1 capacitive touch -> show the density bar while touched */
+let genPitch = 0;                         /* knob 2 = global generator pitch shift, -1..1 (0 = as generated) */
+let pitchCell = {};                       /* per-generator pitch (while a gen pad is held): cell -> -1..1 */
+let pendingPitchMod = null, pitchN = 0;   /* per-module pitch event {t, v, n} */
+let knob2Touched = false;                 /* knob 2 capacitive touch -> show the pitch bar while touched */
 let shiftHeld = false;
 let masterTouched = false;     /* volume-knob capacitive touch held */
 let row2Down = 0;              /* Track 2 press time, for short/long detect */
@@ -175,6 +179,8 @@ function writeControl() {
     doc.looprange = [loopStart, loopEnd];   /* CTRL-ALL loop region (applied on change) */
     doc.density = density;                   /* knob 1: global trigger density */
     if (pendingDensMod) doc.densmod = pendingDensMod;   /* per-module density (held gen pad) */
+    doc.pitch = genPitch;                    /* knob 2: global generator pitch shift */
+    if (pendingPitchMod) doc.pitchmod = pendingPitchMod;   /* per-module pitch (held gen pad) */
     doc.filterall = [filtCut, filtRes];     /* CTRL-ALL filter cutoff/res */
     doc.pitchall = filtPit;                 /* CTRL-ALL pitch (semitones) */
     if (selSlots.length > 0 && lastSamParam) doc.samedit = { sels: selSlots, p: lastSamParam, v: lastSamValue };
@@ -506,6 +512,7 @@ function showLevel(g, v) { overlay = { kind: 'level', type: g.type, val: v }; ov
 function clearHeld() { if (overlay && (overlay.kind === 'name' || overlay.kind === 'level')) { overlay = null; screenDirty = true; } }
 function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phase + 30; screenDirty = true; }
 function showDensity(target) { overlay = { kind: 'density', target: (target === undefined ? -1 : target) }; overlayUntil = knob1Touched ? 1e12 : (phase + 30); screenDirty = true; }
+function showPitch(target) { overlay = { kind: 'pitch', target: (target === undefined ? -1 : target) }; overlayUntil = knob2Touched ? 1e12 : (phase + 30); screenDirty = true; }
 /* which generator (if any) a held pad targets for per-module density */
 function heldGenCell() {
     var hc = heldCell;
@@ -549,6 +556,14 @@ function drawScreen() {
             print(0, 6, dlabel, 2);
             print(0, 24, dv === 0 ? 'as generated' : ((dv > 0 ? '+' : '') + Math.round(dv * 100) + '%'), 1);
             bbar(dv);
+        } else if (overlay.kind === 'pitch') {
+            var pt = overlay.target;
+            var pv = (pt >= 0) ? (pitchCell[pt] || 0) : genPitch;
+            var plabel = (pt >= 0 && cellMap[pt]) ? (cellMap[pt].type + ' PITCH') : 'PITCH';
+            var psemi = Math.round(pv * 24);   /* +/- 24 semitones full throw (matches controller) */
+            print(0, 6, plabel, 2);
+            print(0, 24, psemi === 0 ? 'as generated' : ((psemi > 0 ? '+' : '') + psemi + ' st'), 1);
+            bbar(pv);
         } else {
             const i = overlay.idx;
             print(0, 6, 'M' + (i + 1), 2);
@@ -573,6 +588,7 @@ globalThis.init = function () {
     phase = 0; launched = false; lastStatusAt = -100;
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
     macroVal = new Array(8).fill(0); density = 0; densityCell = {}; pendingDensMod = null; densN = 0; knob1Touched = false;
+    genPitch = 0; pitchCell = {}; pendingPitchMod = null; pitchN = 0; knob2Touched = false;
     seq = 0; deleteHeld = false; shiftHeld = false;
     playHeld = false; recHeld = false;
     masterTouched = false; row2Down = 0;
@@ -654,7 +670,7 @@ globalThis.tick = function () {
     if (levelCell >= 0 && (Date.now() - levelAt) > 350) levelCell = -1;
     if (ledDirty) renderLEDs();
     /* Expire a timed overlay (macro / volume) -> revert to the idle screen once. */
-    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action' || overlay.kind === 'density') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
+    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action' || overlay.kind === 'density' || overlay.kind === 'pitch') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
     /* Redraw ONLY when something changed (or a macro slider is live), so the
      * SPI display isn't flushed 133x/s — that contention was XRunning audio. */
     if (screenDirty) { drawScreen(); screenDirty = false; }
@@ -688,6 +704,10 @@ globalThis.onMidiMessageInternal = function (data) {
             knob1Touched = (status === 0x90 && d2 >= 64);
             if (knob1Touched) { showDensity(heldGenCell()); }
             else if (overlay && overlay.kind === 'density') { overlay = null; screenDirty = true; }
+        } else if ((d1 - MoveKnob1Touch) === 1) {   /* PATCH view: knob 2 touch shows the pitch bar (held while touched) */
+            knob2Touched = (status === 0x90 && d2 >= 64);
+            if (knob2Touched) { showPitch(heldGenCell()); }
+            else if (overlay && overlay.kind === 'pitch') { overlay = null; screenDirty = true; }
         }
         return;
     }
@@ -926,6 +946,21 @@ globalThis.onMidiMessageInternal = function (data) {
                 } else {                      /* global: every generator */
                     density = Math.max(-1, Math.min(1, density + delta * 0.02));
                     showDensity(-1);
+                }
+                writeControl();
+                return;
+            }
+            if (i === 1) {                    /* knob 2 = PITCH SHIFT (bipolar): transposes generators */
+                var pgc = heldGenCell();
+                if (pgc >= 0) {               /* a gen pad is held -> only that module */
+                    if (pitchCell[pgc] === undefined) pitchCell[pgc] = 0;
+                    pitchCell[pgc] = Math.max(-1, Math.min(1, pitchCell[pgc] + delta * 0.02));
+                    pendingPitchMod = { t: pgc, v: pitchCell[pgc], n: ++pitchN };
+                    heldAdjusted = true;      /* so the pad tap doesn't toggle the module */
+                    showPitch(pgc);
+                } else {                      /* global: every generator */
+                    genPitch = Math.max(-1, Math.min(1, genPitch + delta * 0.02));
+                    showPitch(-1);
                 }
                 writeControl();
                 return;

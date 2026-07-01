@@ -123,6 +123,8 @@ class HeadlessController:
         self._perf_xfade = 2.0     # seconds to crossfade between performances (gapless)
         self._density = 0.0        # knob 1: global trigger density (-1..1, 0 = as generated)
         self._density_override = {}   # mid -> per-generator density (held-pad edits)
+        self._pitch = 0.0          # knob 2: global pitch shift (-1..1, 0 = as generated)
+        self._pitch_override = {}     # mid -> per-generator pitch shift (held-pad edits)
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 
@@ -551,7 +553,7 @@ class HeadlessController:
 
     @staticmethod
     def _dens_mul(d: float) -> float:
-        return 2.0 ** (max(-1.0, min(1.0, float(d))) * 3.3)    # -1 -> ~x0.1, 0 -> x1, +1 -> ~x10
+        return 2.0 ** (max(-1.0, min(1.0, float(d))) * 5.0)    # -1 -> ~x0.03 (sparse), 0 -> x1, +1 -> ~x32 (saturated)
 
     def set_density(self, d: float, target: int = -1) -> None:
         """Trigger-density knob (bipolar; 0 = generated rate). target < 0 = GLOBAL (all
@@ -576,6 +578,36 @@ class HeadlessController:
             if mod.type in self._CLOCKED_GENS:
                 d = self._density_override.get(mid, self._density)
                 self.bridge.set_param(mid, "densityMul", -1, self._dens_mul(d))
+
+    # -- Knob 2: pitch shift (transposes every generator; floored to dodge sub gargle) -- #
+    _PITCH_RANGE = 24.0    # +/- semitones at full knob throw (2 octaves each way)
+
+    @staticmethod
+    def _pitch_semis(p: float) -> float:
+        return max(-1.0, min(1.0, float(p))) * HeadlessController._PITCH_RANGE
+
+    def set_pitch(self, p: float, target: int = -1) -> None:
+        """Pitch-shift knob (bipolar; 0 = as generated). target < 0 = GLOBAL; target = a
+        held pad cell = only that generator. Applied as a `pitchShift` (semitones) arg on
+        each generator; the synthdefs floor the resulting frequency to avoid sub gargle."""
+        p = max(-1.0, min(1.0, float(p)))
+        if int(target) < 0:
+            self._pitch = p
+        else:
+            mid = next((m for m, c in self._pad_map.items() if c == int(target)), None)
+            if mid and self.state.patch.modules.get(mid) \
+                    and self.state.patch.modules[mid].type in self._CLOCKED_GENS:
+                self._pitch_override[mid] = p
+        self._apply_pitch()
+
+    def _apply_pitch(self) -> None:
+        live = self.state.patch.modules
+        for mid in [m for m in self._pitch_override if m not in live]:
+            del self._pitch_override[mid]
+        for mid, mod in list(live.items()):
+            if mod.type in self._CLOCKED_GENS:
+                p = self._pitch_override.get(mid, self._pitch)
+                self.bridge.set_param(mid, "pitchShift", -1, self._pitch_semis(p))
 
     def set_loop_range(self, start: float, end: float) -> None:
         """CTRL-ALL loop region (knob 1 = start, knob 2 = end) for ALL takes,
@@ -918,6 +950,8 @@ class HeadlessController:
         last_fxwet = None
         last_density = None
         last_densmod = None
+        last_genpitch = None
+        last_pitchmod = None
         while not self._stop.is_set():
             time.sleep(period)
             try:
@@ -1023,6 +1057,23 @@ class HeadlessController:
                 if dmk != last_densmod:
                     last_densmod = dmk
                     self._safe(lambda a=dmk: self.set_density(a[1], a[0]))
+            # Knob 2: global pitch shift for generators (-1..1). Also re-applied after
+            # rebuilds by the snapshot loop.
+            pit = doc.get("pitch")
+            if pit is not None:
+                try:
+                    pv = round(float(pit), 4)
+                except (TypeError, ValueError):
+                    pv = None
+                if pv is not None and pv != last_genpitch:
+                    last_genpitch = pv
+                    self._safe(lambda v=pv: self.set_pitch(v, -1))
+            pm = doc.get("pitchmod")          # per-module pitch (a gen pad is held): {t, v, n}
+            if isinstance(pm, dict):
+                pmk = (int(pm.get("t", -1)), round(float(pm.get("v", 0.0)), 4), int(pm.get("n", 0)))
+                if pmk != last_pitchmod:
+                    last_pitchmod = pmk
+                    self._safe(lambda a=pmk: self.set_pitch(a[1], a[0]))
             # FX dry/wet balance (held step + jog): {fx, wet, n}.
             fw = doc.get("fxwet")
             if isinstance(fw, dict):
@@ -1097,6 +1148,8 @@ class HeadlessController:
                 self._write_full_snapshot()
             if self._density != 0.0 or self._density_override:   # keep density applied across rebuilds
                 self._safe(self._apply_density)
+            if self._pitch != 0.0 or self._pitch_override:       # keep pitch shift applied across rebuilds
+                self._safe(self._apply_pitch)
             i += 1
             time.sleep(period)
 
