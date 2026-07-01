@@ -122,6 +122,7 @@ class HeadlessController:
         self._master_gain = 6.0    # current master makeup (saved/restored per performance)
         self._perf_xfade = 2.0     # seconds to crossfade between performances (gapless)
         self._density = 0.0        # knob 1: global trigger density (-1..1, 0 = as generated)
+        self._density_override = {}   # mid -> per-generator density (held-pad edits)
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 
@@ -548,16 +549,33 @@ class HeadlessController:
     # -- Knob 1: global density (scales every generator's internal clock) -------- #
     _CLOCKED_GENS = {"FMTONE": None, "WAVIARY": None, "RINGS": None}
 
-    def set_density(self, d: float) -> None:
-        """Global trigger-density knob. Bipolar: 0 = the patch's generated rate, CW
-        (+1) up to 4x denser, CCW (-1) down to 4x sparser. Applied as a `densityMul`
-        multiplier on each generator's internal clock (orthogonal to its clock-rate
-        base, so it survives modulation and new patches)."""
-        self._density = max(-1.0, min(1.0, float(d)))
-        mul = 2.0 ** (self._density * 2.0)          # -1 -> 0.25x, 0 -> 1x, +1 -> 4x
-        for mid, mod in list(self.state.patch.modules.items()):
+    @staticmethod
+    def _dens_mul(d: float) -> float:
+        return 2.0 ** (max(-1.0, min(1.0, float(d))) * 3.3)    # -1 -> ~x0.1, 0 -> x1, +1 -> ~x10
+
+    def set_density(self, d: float, target: int = -1) -> None:
+        """Trigger-density knob (bipolar; 0 = generated rate). target < 0 = GLOBAL (all
+        generators); target = a pad cell = only the generator on that held pad. Applied
+        as a `densityMul` on each generator's internal clock (orthogonal to its rate
+        base, so it survives modulation + new patches)."""
+        d = max(-1.0, min(1.0, float(d)))
+        if int(target) < 0:
+            self._density = d
+        else:
+            mid = next((m for m, c in self._pad_map.items() if c == int(target)), None)
+            if mid and self.state.patch.modules.get(mid) \
+                    and self.state.patch.modules[mid].type in self._CLOCKED_GENS:
+                self._density_override[mid] = d      # this generator diverges from global
+        self._apply_density()
+
+    def _apply_density(self) -> None:
+        live = self.state.patch.modules
+        for mid in [m for m in self._density_override if m not in live]:
+            del self._density_override[mid]          # drop overrides for gone modules
+        for mid, mod in list(live.items()):
             if mod.type in self._CLOCKED_GENS:
-                self.bridge.set_param(mid, "densityMul", -1, mul)
+                d = self._density_override.get(mid, self._density)
+                self.bridge.set_param(mid, "densityMul", -1, self._dens_mul(d))
 
     def set_loop_range(self, start: float, end: float) -> None:
         """CTRL-ALL loop region (knob 1 = start, knob 2 = end) for ALL takes,
@@ -899,6 +917,7 @@ class HeadlessController:
         last_sync_n = None
         last_fxwet = None
         last_density = None
+        last_densmod = None
         while not self._stop.is_set():
             time.sleep(period)
             try:
@@ -997,7 +1016,13 @@ class HeadlessController:
                     dv = None
                 if dv is not None and dv != last_density:
                     last_density = dv
-                    self._safe(lambda v=dv: self.set_density(v))
+                    self._safe(lambda v=dv: self.set_density(v, -1))
+            dm = doc.get("densmod")           # per-module density (a gen pad is held): {t, v, n}
+            if isinstance(dm, dict):
+                dmk = (int(dm.get("t", -1)), round(float(dm.get("v", 0.0)), 4), int(dm.get("n", 0)))
+                if dmk != last_densmod:
+                    last_densmod = dmk
+                    self._safe(lambda a=dmk: self.set_density(a[1], a[0]))
             # FX dry/wet balance (held step + jog): {fx, wet, n}.
             fw = doc.get("fxwet")
             if isinstance(fw, dict):
@@ -1070,8 +1095,8 @@ class HeadlessController:
             self._write_status()
             if WRITE_FULL_SNAPSHOT and (i % full_every == 0):
                 self._write_full_snapshot()
-            if self._density != 0.0:          # keep density applied across rebuilds
-                self._safe(lambda: self.set_density(self._density))
+            if self._density != 0.0 or self._density_override:   # keep density applied across rebuilds
+                self._safe(self._apply_density)
             i += 1
             time.sleep(period)
 
