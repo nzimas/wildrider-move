@@ -121,6 +121,7 @@ class HeadlessController:
         self._perf_reload = 0      # bumps on performance load so the ui re-reads macros
         self._master_gain = 6.0    # current master makeup (saved/restored per performance)
         self._perf_xfade = 2.0     # seconds to crossfade between performances (gapless)
+        self._density = 0.0        # knob 1: global trigger density (-1..1, 0 = as generated)
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 
@@ -544,6 +545,20 @@ class HeadlessController:
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
 
+    # -- Knob 1: global density (scales every generator's internal clock) -------- #
+    _CLOCKED_GENS = {"FMTONE": None, "WAVIARY": None, "RINGS": None}
+
+    def set_density(self, d: float) -> None:
+        """Global trigger-density knob. Bipolar: 0 = the patch's generated rate, CW
+        (+1) up to 4x denser, CCW (-1) down to 4x sparser. Applied as a `densityMul`
+        multiplier on each generator's internal clock (orthogonal to its clock-rate
+        base, so it survives modulation and new patches)."""
+        self._density = max(-1.0, min(1.0, float(d)))
+        mul = 2.0 ** (self._density * 2.0)          # -1 -> 0.25x, 0 -> 1x, +1 -> 4x
+        for mid, mod in list(self.state.patch.modules.items()):
+            if mod.type in self._CLOCKED_GENS:
+                self.bridge.set_param(mid, "densityMul", -1, mul)
+
     def set_loop_range(self, start: float, end: float) -> None:
         """CTRL-ALL loop region (knob 1 = start, knob 2 = end) for ALL takes,
         normalised 0..1 of each take's length. Applied live to every playing slot
@@ -883,6 +898,7 @@ class HeadlessController:
         last_pitch = None
         last_sync_n = None
         last_fxwet = None
+        last_density = None
         while not self._stop.is_set():
             time.sleep(period)
             try:
@@ -971,6 +987,17 @@ class HeadlessController:
                     last_sync_n = sn
                     self._safe(lambda d=sync: self.sampler_fx_sync(
                         d["slots"], d.get("armed", []), d.get("rerand", [])))
+            # Knob 1: global trigger density (-1..1). Re-applied after rebuilds by the
+            # snapshot loop, so a new patch inherits the current density.
+            dens = doc.get("density")
+            if dens is not None:
+                try:
+                    dv = round(float(dens), 4)
+                except (TypeError, ValueError):
+                    dv = None
+                if dv is not None and dv != last_density:
+                    last_density = dv
+                    self._safe(lambda v=dv: self.set_density(v))
             # FX dry/wet balance (held step + jog): {fx, wet, n}.
             fw = doc.get("fxwet")
             if isinstance(fw, dict):
@@ -1043,6 +1070,8 @@ class HeadlessController:
             self._write_status()
             if WRITE_FULL_SNAPSHOT and (i % full_every == 0):
                 self._write_full_snapshot()
+            if self._density != 0.0:          # keep density applied across rebuilds
+                self._safe(lambda: self.set_density(self._density))
             i += 1
             time.sleep(period)
 

@@ -157,7 +157,7 @@
 		fType = 0, fFreq = 90, fReso = 20, fEnv = 0, fAtk = 0, fDec = 55, fSus = 70, fRel = 45,
 		base = 0, width = 127,
 		ampAtk = 1, ampDec = 60, ampSus = 95, ampRel = 50, drv = 0,
-		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1,
 		amp = 1, pan = 0, bypass = 0, wet = 1, enable = 1|
 		var clkR, clkBase, clkTrig, clkLenV, clkVelV, gOn, pmod, f0, fC, fA, fB1, fB2,
 			envA, envB, fbA, opB2, opB1, opA, opC, hP, hN, idx, fdA,
@@ -168,7 +168,7 @@
 		// for synth INSTANTIATION cost -> patch-rebuild XRuns).
 		var hsh = { |x, a| (x * (1 + (a * 3.5))).tanh * (1 / (1 + (a * 1.6))) };
 		// --- unstable internal clock (re-gates the voice) ---
-		clkR = (clkRate * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.05, 30);
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.05, 30);   // densityMul = global density knob
 		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
 		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
 		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
@@ -389,13 +389,13 @@
 		detune = 0.12, sub = 0.25, noise = 0.0, fold = 0.0, drive = 1.0,
 		fmRatio = 2.0, fmAmount = 0.0, sync = 0.0, syncRatio = 1.5,
 		cutoff = 2200, res = 0.4, envDepth = 0.5, attack = 0.01,
-		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.35, clkVel = 0.5,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.35, clkVel = 0.5, densityMul = 1,
 		amp = 0.5, pan = 0, bypass = 0, wet = 1, enable = 1|
 		var wtBase = ~waviaryBufs[0].bufnum, wtN = ~waviaryBufN;
 		var clkR, clkBase, clkTrig, clkLenV, clkVelV, gOn;
 		var env, fenv, pos, freqs, mod, voices, sig, fcut;
 		// unstable internal clock: drifting rate, dropped/extra hits, per-hit length+vel
-		clkR = (clkRate * (2 ** (LFNoise2.kr(LFNoise1.kr(0.2).exprange(0.05, 0.6)) * clkDrift * 1.5))).clip(0.05, 30);
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(LFNoise1.kr(0.2).exprange(0.05, 0.6)) * clkDrift * 1.5))).clip(0.05, 30);
 		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
 		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7) + Impulse.kr(0);
 		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.02, 8);
@@ -881,12 +881,13 @@
 	(\MiRings.asClass.notNil).if {
 	SynthDef(("rings" ++ suf).asSymbol, { |out = 0, in = 0, pit = 48, struct = 0.25,
 		bright = 0.5, damp = 0.7, pos = 0.25, model = 0, poly = 0, internalExc = 1,
-		easteregg = 0, trigRate = 2, trigMode = 0, amp = 0.9, bypass = 0, wet = 1, enable = 1, pan = 0|
+		easteregg = 0, trigRate = 2, trigMode = 0, densityMul = 1, amp = 0.9, bypass = 0, wet = 1, enable = 1, pan = 0|
 		var dry = In.ar(in, nchan);
 		var inL = (nchan == 1).if({ dry }, { dry[0] });
 		var inR = (nchan == 1).if({ dry }, { dry[1] });
 		var mono = (inL + inR) * 0.5;
-		var trig = Select.kr(trigMode.clip(0, 1), [Impulse.kr(trigRate), Dust.kr(trigRate)]);
+		var tr = (trigRate * densityMul).clip(0.02, 60);
+		var trig = Select.kr(trigMode.clip(0, 1), [Impulse.kr(tr), Dust.kr(tr)]);
 		var polyN = Select.kr(poly.clip(0, 2), [1, 2, 4]);
 		// MiRings: in, trig, pit, struct, bright, damp, pos, model, poly, intern_exciter, easteregg, bypass
 		var sig = MiRings.ar(mono, trig, pit, struct, bright, damp, pos, model, polyN, internalExc, easteregg, 0);

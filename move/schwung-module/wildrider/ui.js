@@ -67,6 +67,7 @@ let macrosSynced = false;
 let seq = 0, lastCmd = '', lastArg = -1;
 let deleteHeld = false;        /* the X / Delete key, held = delete-a-pad modifier */
 let playHeld = false, recHeld = false;   /* Play/Rec = force a generator on empty-pad add */
+let density = 0;                          /* knob 1 = global trigger density, -1..1 (0 = as generated) */
 let shiftHeld = false;
 let masterTouched = false;     /* volume-knob capacitive touch held */
 let row2Down = 0;              /* Track 2 press time, for short/long detect */
@@ -169,6 +170,7 @@ function writeControl() {
     const doc = { seq: seq, cmd: lastCmd, arg: lastArg, macros: macroVal };
     if (lastLevel) doc.level = lastLevel;
     doc.looprange = [loopStart, loopEnd];   /* CTRL-ALL loop region (applied on change) */
+    doc.density = density;                   /* knob 1: global trigger density */
     doc.filterall = [filtCut, filtRes];     /* CTRL-ALL filter cutoff/res */
     doc.pitchall = filtPit;                 /* CTRL-ALL pitch (semitones) */
     if (selSlots.length > 0 && lastSamParam) doc.samedit = { sels: selSlots, p: lastSamParam, v: lastSamValue };
@@ -499,6 +501,7 @@ function showName(g) { overlay = { kind: 'name', type: g.type, cat: g.cat, on: g
 function showLevel(g, v) { overlay = { kind: 'level', type: g.type, val: v }; overlayUntil = 1e12; screenDirty = true; }   /* held while pad down */
 function clearHeld() { if (overlay && (overlay.kind === 'name' || overlay.kind === 'level')) { overlay = null; screenDirty = true; } }
 function showMacro(i) { overlay = { kind: 'macro', idx: i }; overlayUntil = phase + 30; screenDirty = true; }
+function showDensity() { overlay = { kind: 'density' }; overlayUntil = phase + 30; screenDirty = true; }
 function showLfo(i, label) { overlay = { kind: 'lfo', idx: i, label: label }; overlayUntil = phase + 24; screenDirty = true; }
 function showAction(label) { overlay = { kind: 'action', label: label }; overlayUntil = phase + 24; screenDirty = true; }
 
@@ -530,6 +533,10 @@ function drawScreen() {
             print(0, 40, overlay.label, 1);
         } else if (overlay.kind === 'action') {
             print(0, 24, overlay.label, 2);
+        } else if (overlay.kind === 'density') {
+            print(0, 6, 'DENSITY', 2);
+            print(0, 24, density === 0 ? 'as generated' : ((density > 0 ? '+' : '') + Math.round(density * 100) + '%'), 1);
+            bbar(density);
         } else {
             const i = overlay.idx;
             print(0, 6, 'M' + (i + 1), 2);
@@ -553,7 +560,7 @@ globalThis.init = function () {
     if (typeof host_set_refresh_rate === 'function') host_set_refresh_rate(30);
     phase = 0; launched = false; lastStatusAt = -100;
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
-    macroVal = new Array(8).fill(0); seq = 0; deleteHeld = false; shiftHeld = false;
+    macroVal = new Array(8).fill(0); density = 0; seq = 0; deleteHeld = false; shiftHeld = false;
     playHeld = false; recHeld = false;
     masterTouched = false; row2Down = 0;
     scenesMode = false; sceneFilled = new Array(32).fill(false);
@@ -634,7 +641,7 @@ globalThis.tick = function () {
     if (levelCell >= 0 && (Date.now() - levelAt) > 350) levelCell = -1;
     if (ledDirty) renderLEDs();
     /* Expire a timed overlay (macro / volume) -> revert to the idle screen once. */
-    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
+    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action' || overlay.kind === 'density') && phase >= overlayUntil) { overlay = null; screenDirty = true; }
     /* Redraw ONLY when something changed (or a macro slider is live), so the
      * SPI display isn't flushed 133x/s — that contention was XRunning audio. */
     if (screenDirty) { drawScreen(); screenDirty = false; }
@@ -889,6 +896,12 @@ globalThis.onMidiMessageInternal = function (data) {
                 else if (i === 4) { filtPit = Math.max(-24, Math.min(24, filtPit + delta * 0.5)); sampKnobShow = 'pit'; }
                 else { return; }              /* knobs 6-8 reserved */
                 writeControl(); screenDirty = true;
+                return;
+            }
+            if (i === 0) {                    /* knob 1 = GLOBAL DENSITY (bipolar): scales every generator's clock */
+                density = Math.max(-1, Math.min(1, density + delta * 0.02));
+                writeControl();
+                showDensity();
                 return;
             }
             macroVal[i] = clamp01(macroVal[i] + delta * 0.015);
