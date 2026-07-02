@@ -319,16 +319,37 @@
 		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
 	}).add;
 
+	// 1970s string-machine phaser: a 6-stage cascade of TRUE first-order all-pass
+	// filters whose break frequency is swept logarithmically (musical) by an LFO;
+	// the phased signal is summed with the dry to form the classic moving notches,
+	// with resonant feedback for the vocal/animated character. Stereo comes from two
+	// LFOs a quarter-cycle apart (the wide swirl of an ARP/Solina + Small Stone). A
+	// fixed makeup gain compensates the notch-sum level loss so it stays ~unity loud.
 	SynthDef(("phaser" ++ suf).asSymbol, { |out = 0, in = 0, rate = 0.4, depth = 0.7,
-		feedback = 0.3, amp = 1, pan = 0, bypass = 0, wet = 1, enable = 1|
-		var dry = In.ar(in, nchan), x = Mix(dry) / nchan, c, fb, sig, y;
-		c = SinOsc.kr(rate) * depth * 0.9;             // swept all-pass coefficient
-		fb = LocalIn.ar(1);
-		sig = x + (fb * feedback.clip(0, 0.9));
-		6.do { sig = FOS.ar(sig, c, 1.0, c) };          // 6 first-order all-pass stages
-		LocalOut.ar(~killbad.(sig));
-		y = (x + sig) * 0.5;                            // notches from dry+phased sum
-		Out.ar(out, ~fxOut.(dry, y, pan, amp, enable, wet, bypass));
+		feedback = 0.3, spread = 0.8, amp = 1, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var dry = In.ar(in, nchan), x = Mix(dry) / nchan;
+		var sr = SampleRate.ir, fmin = 200, fmax = 2200, makeup = 1.2;   // ~unity loudness (the dry+notch sum measures avg +0.3 dB / min -0.8 dB)
+		var fbAmt = feedback.clip(0, 0.9), dep = depth.clip(0, 1);
+		// two swept notch positions, LFOs 90 deg * spread apart for a wide stereo image
+		var lfoL = SinOsc.kr(rate, 0) * dep;
+		var lfoR = SinOsc.kr(rate, spread.clip(0, 1) * (0.5pi)) * dep;
+		var fcL = fmin * ((fmax / fmin) ** (lfoL * 0.5 + 0.5));
+		var fcR = fmin * ((fmax / fmin) ** (lfoR * 0.5 + 0.5));
+		var tL = tan(pi * fcL.clip(40, 9000) / sr), dL = (tL - 1) / (tL + 1);
+		var tR = tan(pi * fcR.clip(40, 9000) / sr), dR = (tR - 1) / (tR + 1);
+		var fb = LocalIn.ar(2);
+		var sL = x + (fb[0] * fbAmt), sR = x + (fb[1] * fbAmt), yL, yR, w;
+		6.do { sL = FOS.ar(sL, dL, 1.0, dL.neg) };      // H(z) = (d + z^-1)/(1 + d z^-1)
+		6.do { sR = FOS.ar(sR, dR, 1.0, dR.neg) };
+		LocalOut.ar(~killbad.(LeakDC.ar([sL, sR])));
+		yL = (x + sL) * 0.5 * makeup;                   // dry+phased notch sum, level-matched
+		yR = (x + sR) * 0.5 * makeup;
+		w = (nchan == 1).if(
+			{ LeakDC.ar((yL + yR) * 0.5) * amp * enable },
+			{ (nchan == 2).if(
+				{ Balance2.ar(LeakDC.ar(yL), LeakDC.ar(yR), pan.clip(-1, 1)) * amp * enable },
+				{ PanAz.ar(nchan, LeakDC.ar((yL + yR) * 0.5), pan * 0.5 + 0.5, 1.0) * amp * enable }) });
+		Out.ar(out, ~killbad.(XFade2.ar(dry, w, (wet * 2 - 1)) * (1 - bypass) + (dry * bypass)));
 	}).add;
 
 	SynthDef(("ringmod" ++ suf).asSymbol, { |out = 0, in = 0, freq = 200,

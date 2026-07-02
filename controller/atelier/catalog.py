@@ -910,14 +910,16 @@ FLANGER = ModuleSpec(
 )
 
 PHASER = ModuleSpec(
-    type="PHASER", role="Six-stage all-pass phaser swept by an LFO, with feedback (pedalboard).",
-    node_meaning="Phaser stage.", synthdef="phaser", insert_capable=True,
+    type="PHASER", role="1970s string-machine phaser: 6-stage all-pass notch sweep with "
+                        "resonant feedback and a wide quadrature-LFO stereo swirl (ARP/Solina + Small Stone).",
+    node_meaning="Phaser voice.", synthdef="phaser", insert_capable=True,
     generative_capable=False, max_nodes=2, cpu_per_node=1.2, gestures=["phase", "sweep", "swirl"],
     node_params=[
         _fx_enable("phaser"),
-        P("phaser.rate", "Rate", unit="Hz", rmin=0.02, rmax=8.0, default=0.4, curve=Curve.EXP, formatter="float2", musical=(0.05, 2.0)),
-        P("phaser.depth", "Depth", default=0.7, musical=(0.3, 1.0)),
-        P("phaser.feedback", "Feedback", rmin=0.0, rmax=0.9, default=0.3, danger=DangerClass.FEEDBACK, musical=(0.0, 0.7)),
+        P("phaser.rate", "Rate", unit="Hz", rmin=0.02, rmax=8.0, default=0.4, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.2)),
+        P("phaser.depth", "Depth", default=0.7, musical=(0.4, 1.0)),
+        P("phaser.feedback", "Feedback", rmin=0.0, rmax=0.9, default=0.35, danger=DangerClass.FEEDBACK, musical=(0.1, 0.7)),
+        P("phaser.spread", "Stereo", default=0.8, musical=(0.5, 1.0)),
         *_fx_tail("phaser", 1.0),
     ], global_params=[],
 )
