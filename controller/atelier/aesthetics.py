@@ -450,12 +450,19 @@ def _weighted_bag(weights: dict[str, int]) -> list[str]:
 # -> XRuns. Budgeting by cost keeps worst-case patches ~40%, with headroom for LFOs,
 # morph/performance crossfades and sampler FX. Measured: 0 XRuns over 12 morphs.
 CPU_BUDGET = 13.0
+# Fraction of the budget generators may consume. Generators are the heaviest modules,
+# so without a sub-cap they exhaust CPU_BUDGET before any effect is added, producing
+# generator-heavy patches with few (or zero) processors. Reserving >half the budget
+# for effects keeps the mix processor-forward (fx > gens).
+GEN_BUDGET_FRAC = 0.55
 
 
 def pick_modules(rng, artist: str) -> list[str] | None:
-    """An artist-congruent module set: GENERATORS are the backbone (several of
-    them, repeats allowed up to each type's palette weight), then a BOUNDED handful
-    of effects — so the mix stays generator-forward instead of drowning in fx."""
+    """An artist-congruent module set: a SMALL generator backbone (1-2, low-biased),
+    then a larger chain of effects so the mix stays processor-forward (fx > gens).
+    Generators are the heaviest modules and are held to a sub-budget so they can't
+    starve the effect chain (the old code let them eat the whole CPU budget -> patches
+    with far too many gens and sometimes no processors at all)."""
     pal = MODULE_PALETTE.get(artist)
     if not pal:
         return None
@@ -465,13 +472,13 @@ def pick_modules(rng, artist: str) -> list[str] | None:
     used: dict[str, int] = {}
     total = [0.0]
 
-    def take(t: str, cap: int) -> bool:
+    def take(t: str, cap: int, budget: float = CPU_BUDGET) -> bool:
         # Budget by estimated DSP cost, not just count: the CM4's scsynth maxes out
         # (~97%) on a count-only patch, leaving no headroom for LFOs / scene-morph
         # commits / sampler FX -> XRuns. Cap the total so heavy modules (clouds,
         # fbank, plaits...) don't stack a patch past what leaves room to morph.
         c = cpu_cost.get(t, 1.0)
-        if used.get(t, 0) < cap and len(chosen) < 16 and (total[0] + c) <= CPU_BUDGET:
+        if used.get(t, 0) < cap and len(chosen) < 16 and (total[0] + c) <= budget:
             chosen.append(t)
             used[t] = used.get(t, 0) + 1
             total[0] += c
@@ -479,17 +486,24 @@ def pick_modules(rng, artist: str) -> list[str] | None:
         return False
 
     # ---- generators first (the patch backbone) ----
-    ns_lo, ns_hi = pal.get("sources_count", (3, 5))
-    n_sources = max(2, rng.randint(ns_lo, ns_hi))
+    # Generators are the HEAVIEST modules (FMTONE 3.4, WAVIARY 2.2, RINGS 1.9), so if
+    # they run against the full CPU budget they eat it whole and no effects fit -> the
+    # "too many gens, sometimes zero processors" failure. Cap generators to a fraction
+    # of the budget so effect headroom is always reserved.
+    # Low-biased generator count (mostly 2, sometimes 1 or 3) for variety; the old
+    # sources_count (3-5) always over-produced generators. The gen sub-budget is a
+    # further ceiling so three heavy generators can't blow the reserve.
+    n_sources = rng.choice((1, 2, 2, 2, 2, 3))
+    gen_budget = CPU_BUDGET * GEN_BUDGET_FRAC
     pure = {s: w for s, w in pal["sources"].items() if s in PURE_GENERATORS}
     if pure:                                          # guarantee >=1 pure generator
-        take(rng.choice(_weighted_bag(pure)), cap=99)
+        take(rng.choice(_weighted_bag(pure)), cap=99, budget=gen_budget)
     src_bag = _weighted_bag(pal["sources"])
     guard = 0
     while sum(used.get(s, 0) for s in pal["sources"]) < n_sources and guard < 200:
         guard += 1
         t = rng.choice(src_bag)
-        take(t, cap=pal["sources"][t])               # up to the palette weight per type
+        take(t, cap=pal["sources"][t], budget=gen_budget)   # up to weight per type, within gen budget
     # ---- effects: ALWAYS outnumber the generators (rule of thumb: fx > gens) ----
     n_gens = len(chosen)
     for t in pal.get("require", []):                 # defining effects (count as fx)
@@ -501,6 +515,12 @@ def pick_modules(rng, artist: str) -> list[str] | None:
         guard += 1
         t = rng.choice(fx_bag)
         take(t, cap=1 if t == "DISTORT" else 2)      # never stack distortions
+    # Safety floor: a patch must never ship with zero processors. If the effect loop
+    # somehow added none (all budget/cap-blocked), force in the cheapest palette fx.
+    if not any(not CATALOG[t].generative_capable for t in chosen):
+        for t in sorted(pal["effects"], key=lambda x: cpu_cost.get(x, 1.0)):
+            if take(t, cap=2):
+                break
     return chosen
 
 
