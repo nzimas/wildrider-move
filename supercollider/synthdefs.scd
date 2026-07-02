@@ -233,9 +233,10 @@
 		crush = 24, downsample = 1, feedback = 0, lowCut = 20, highCut = 18000,
 		amp = 0.7, pan = 0, bypass = 0, wet = 1, enable = 1|
 		var dry = In.ar(in, nchan);
-		var x = Mix(dry) / nchan;
+		var xin = Mix(dry) / nchan;                    // clean mono reference (for level-match)
+		var x = xin;
 		var fb = LocalIn.ar(1);
-		var d, shaped, folded, levels, y;
+		var d, shaped, folded, levels, y, dryAmp, wetAmp;
 		// distorted feedback into the input -> sustain / self-oscillating screams
 		x = x + (fb * feedback.clip(0, 0.98));
 		// pre-emphasis tilt: tone>0 brightens (more bite into the shaper), <0 darkens
@@ -267,6 +268,14 @@
 		y = LPF.ar(y, highCut.clip(200, 19000));
 		// feedback send (soft-limited + NaN-killed so it can never lock up)
 		LocalOut.ar(~killbad.(y.tanh) * feedback.clip(0, 0.98));
+		// OUTPUT LEVEL COMPENSATION: driving into a saturator pins the wet signal to
+		// near full-scale — ~10 dB hotter AND harmonically denser than the source — so
+		// even a sliver of wet in the dry/wet crossfade buried the input. Track both
+		// envelopes and rescale the wet to sit at the CLEAN input's level, so `drive`
+		// changes timbre (not loudness) and the wet knob is a genuine blend.
+		dryAmp = Amplitude.kr(xin, 0.01, 0.12);
+		wetAmp = Amplitude.kr(y,   0.01, 0.12);
+		y = y * (dryAmp / (wetAmp + 1e-3)).clip(0, 8);   // clamp so silence can't blow up
 		y = y * amp * enable;
 		y = ~spread.(y, nchan, pan);
 		Out.ar(out, ~killbad.(XFade2.ar(dry, y, (wet * 2 - 1)) * (1 - bypass) + (dry * bypass)));
