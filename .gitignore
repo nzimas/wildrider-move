@@ -14,3 +14,7 @@ move/dist/
 move/build/*.log
 move/build/tone.osc
 move/build/wrtone.scsyndef
+
+# CDP cross-build output (binaries deployed to device, not tracked)
+move/build/cdp-out/
+move/build/cdp-build.log

@@ -1,0 +1,47 @@
+# Cross-build a relocatable aarch64/glibc-2.35 Composers Desktop Project (CDP)
+# binary set for the Ableton Move (RPi CM4, AbletonOS, glibc 2.35). Built on the
+# Mac via `docker buildx --platform linux/arm64`; the device never sees Docker.
+#
+# Ubuntu 22.04 ships glibc 2.35 — identical to the Move — so the CDP programs
+# built here load against the device's own libc. CDP bundles its own soundfile
+# lib (portsf), so runtime deps are just libc/libm (+ libstdc++ for the few C++
+# programs). Final stage is `scratch` so buildx --output exports just the bins.
+
+# ---- Stage 1: build CDP8 -----------------------------------------------------
+FROM ubuntu:22.04 AS build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git cmake build-essential ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 https://github.com/ComposersDesktop/CDP8.git /src
+
+# CMake root is the repo ROOT (it defines my_install + project(CDP) and outputs
+# to NewRelease/). Key aarch64/GCC fixes:
+#   * USE_COMPILER_OPTIMIZATIONS=OFF  — its CompilerOptimizations.cmake injects
+#     x86-only -msse2 / -mfpmath=sse, which are fatal on ARM.
+#   * do NOT set CMAKE_BUILD_TYPE=Release — the Release flags include the
+#     Clang-only -stdlib=libc++, which GCC rejects. Pass -O2 by hand instead.
+#   * USE_LOCAL_PORTAUDIO=OFF — skip the play/record programs (paplay/pvplay/
+#     recsf/listaudevs); we only need the file-processing programs.
+WORKDIR /src/build
+RUN cmake -S /src -B /src/build \
+        -DUSE_COMPILER_OPTIMIZATIONS=OFF \
+        -DUSE_LOCAL_PORTAUDIO=OFF \
+        -DFAIL_MISSING=OFF \
+        -DCMAKE_C_FLAGS="-O2 -Wno-format" \
+        -DCMAKE_CXX_FLAGS="-O2"
+# keep-going: build as many of the ~400 programs as possible; a few stragglers
+# failing must not sink the whole set.
+RUN make -k -j"$(nproc)" 2>&1 | tail -40 ; true
+
+# Collect every built executable (ELF, executable bit) from NewRelease into
+# /bundle/bin. (NewRelease is CMAKE_RUNTIME_OUTPUT_DIRECTORY.)
+RUN mkdir -p /bundle/bin \
+    && find /src/NewRelease -maxdepth 1 -type f -perm -u+x -exec sh -c \
+        'for f; do case "$(head -c4 "$f" | od -An -tx1 | tr -d " ")" in 7f454c46) cp -n "$f" /bundle/bin/ ;; esac; done' _ {} + \
+    && echo "CDP programs built:" && ls /bundle/bin | wc -l \
+    && strip /bundle/bin/* 2>/dev/null || true
+
+# ---- Stage 2: export just the bundle ----------------------------------------
+FROM scratch AS export
+COPY --from=build /bundle /bundle
