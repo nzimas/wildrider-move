@@ -161,16 +161,35 @@ def _one_variation(ctx: _Ctx, recipe, src: Path, out: Path) -> bool:
 
 
 def generate(src_wav: str, out_dir: str, count: int = 8,
-             seed: int | None = None) -> list[str]:
+             seed: int | None = None, on_ready=None) -> list[str]:
     """Record-driven entry point: turn one source WAV into up to `count` DIVERSE CDP
     variations under out_dir (var0.wav ..). Each variation is a real CDP transform;
     on failure a DIFFERENT real recipe is tried. No fallbacks/filler — if the source
     is pathological and some recipes can't produce output, fewer than `count` are
-    returned rather than padding with copies."""
+    returned rather than padding with copies.
+
+    `on_ready(index, path)` (optional) is called the moment each variation is ready,
+    so the caller can load it into its slot immediately (progressive fill) instead of
+    waiting for the whole batch."""
     src = Path(src_wav)
     work = Path(out_dir)
     work.mkdir(parents=True, exist_ok=True)
     rng = random.Random(seed if seed is not None else int.from_bytes(os.urandom(4), "big"))
+    # Source prep. CDP's spectral (pvoc) and waveset (distort) programs are MONO-only,
+    # but the captured master bus is stereo -> fold to mono first (housekeep chans 4).
+    # Then NORMALISE: a live capture is often quiet (master bus pre-gain) and spectral
+    # transforms shed further energy, so un-normalised variations come out inaudible;
+    # `modify loudness 3` forces the peak to a target. These are real record-processing
+    # steps, not fallbacks; if they can't run (silent source) we honestly return
+    # nothing rather than process garbage.
+    c0 = _Ctx(work, rng, "src")
+    mono = work / "_source_mono.wav"
+    src_n = work / "_source_norm.wav"
+    if not (c0.run("housekeep", "chans", "4", src, mono) and _ok(mono)):
+        return []
+    if not (c0.run("modify", "loudness", "3", mono, src_n, "-l0.7") and _ok(src_n)):
+        return []
+    src = src_n
     # A shuffled pool of recipes, repeated enough to keep trying real transforms until
     # `count` succeed. Shuffling favours a diverse spread across the variations.
     pool: list = []
@@ -190,8 +209,21 @@ def generate(src_wav: str, out_dir: str, count: int = 8,
             pass
         ctx = _Ctx(work, rng, f"v{len(outs)}_{attempt}")
         attempt += 1
-        if _one_variation(ctx, recipe, src, out) and _ok(out):
+        raw = ctx.tmp("wav")     # mono recipe output
+        nrm = ctx.tmp("wav")     # normalised mono
+        # produce a real (mono) variation, normalise it to a consistent audible level,
+        # then interleave mono->stereo so it loads/plays like a normal sampler take
+        # (the sampler's BufRd is 2-channel).
+        if _one_variation(ctx, recipe, src, raw) and _ok(raw) \
+                and ctx.run("modify", "loudness", "3", raw, nrm, "-l0.5") and _ok(nrm) \
+                and ctx.run("submix", "interleave", nrm, nrm, out) and _ok(out):
+            idx = len(outs)
             outs.append(str(out))
+            if on_ready is not None:
+                try:
+                    on_ready(idx, str(out))     # progressive: load this slot now
+                except Exception:
+                    pass
     # tidy intermediates (keep only the var*.wav results)
     for f in work.glob("_*"):
         try:

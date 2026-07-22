@@ -1271,7 +1271,7 @@ class HeadlessController:
             work = cdp_dir / "work"
             work.mkdir(parents=True, exist_ok=True)
             src = work / "src.wav"
-            dur = 3.0
+            dur = 4.0     # long enough to catch triggers from sparse patches, short enough to keep pvoc fast
             # 1. engine captures the live master bus to src.wav (deletes any stale one).
             self.bridge.send("/atelier/cdp/capture", float(dur), str(src))
             # 2. poll the shared filesystem for the file to appear + settle.
@@ -1289,12 +1289,14 @@ class HeadlessController:
                         last, stable = sz, 0
             if not (src.exists() and src.stat().st_size > 2000):
                 return
-            # 3. spawn 8 diverse variations.
-            outs = _cdp.generate(str(src), str(work / "vars"), count=8)
-            # 4. load each into sampler slot i (autoplay off) and mark it filled.
-            for i, path in enumerate(outs[:8]):
-                self._samp[i]["state"] = "filled"
-                self.bridge.send("/atelier/sampler/load", i, str(path), 0)
+            # 3. spawn diverse variations; load each into its slot the moment it is
+            #    ready (progressive fill) so pads light up one-by-one instead of all
+            #    at the end of the ~30 s batch.
+            def _load(i, path):
+                if i < 8:
+                    self._samp[i]["state"] = "filled"
+                    self.bridge.send("/atelier/sampler/load", i, str(path), 0)
+            _cdp.generate(str(src), str(work / "vars"), count=8, on_ready=_load)
         except Exception:
             pass
         finally:
