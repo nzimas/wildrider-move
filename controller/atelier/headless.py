@@ -136,6 +136,8 @@ class HeadlessController:
         self._macro5_targets = []  # cached [(mid,pid,node,meta,dir,base_norm)] for the hot apply
         self._macro5_epoch = -1    # patch epoch the current directions belong to
         self._patch_epoch = 0      # bumped on every patch rebuild (invalidates macro-5 directions)
+        self._samp_patchfx = {}    # slot -> target module id (Rec+slot routes it through patch FX)
+        self._samp_patchfx_epoch = -1  # last patch epoch the wires were re-pointed for
         self._loop_start = 0.0          # CTRL-ALL loop region (0..1), applied to all slots
         self._loop_end = 1.0
 
@@ -445,6 +447,42 @@ class HeadlessController:
                            "cut": 1.0, "res": 0.0, "pit": 0.0,
                            "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {},
                            "comb_on": 0, "comb_params": {}, "clouds_on": 0, "clouds_params": {}}
+
+    # -- Rec+slot: route a sample slot THROUGH the patch's FX modules ---------- #
+    def _pick_patchfx_target(self):
+        """The processor the wired samples flow into: the first insert-capable,
+        non-generator module in the patch (its whole downstream chain colours them)."""
+        for mid, m in self.state.patch.modules.items():
+            spec = getattr(m, "spec", None)
+            if spec is not None and getattr(spec, "insert_capable", False) and not self._is_gen(spec):
+                return mid
+        return None
+
+    def sampler_wire(self, slot: int) -> None:
+        """Rec + sample-slot pad (sampler/CDP view): toggle routing that slot through
+        the patch's FX chain instead of straight to master."""
+        slot = int(slot)
+        if not (0 <= slot < 32):
+            return
+        if slot in self._samp_patchfx:                 # toggle OFF -> back to master
+            del self._samp_patchfx[slot]
+            self.bridge.send("/atelier/sampler/patchfx", slot, "")
+        else:
+            tgt = self._pick_patchfx_target()
+            if tgt:
+                self._samp_patchfx[slot] = tgt
+                self.bridge.send("/atelier/sampler/patchfx", slot, tgt)
+
+    def _apply_samp_patchfx(self) -> None:
+        """Re-point every wired slot at a live processor (module ids change on rebuild)."""
+        tgt = self._pick_patchfx_target()
+        for slot in list(self._samp_patchfx):
+            if tgt:
+                self._samp_patchfx[slot] = tgt
+                self.bridge.send("/atelier/sampler/patchfx", slot, tgt)
+            else:                                       # no processor left -> unwire
+                del self._samp_patchfx[slot]
+                self.bridge.send("/atelier/sampler/patchfx", slot, "")
 
     # -- Performances: top-tier project = patch + scenes + modulation + samples - #
     def _perf_dir(self, pad: int):
@@ -1241,6 +1279,8 @@ class HeadlessController:
             self._safe(lambda: self.sampler_pad(arg))
         elif cmd == "sampdel":              # sampler view: X + slot = delete
             self._safe(lambda: self.sampler_del(arg))
+        elif cmd == "sampwire":             # Rec + slot: route slot through the patch FX
+            self._safe(lambda: self.sampler_wire(arg))
         elif cmd == "playtoggle":           # Play tap: silence / un-silence the whole patch
             self._safe(self.toggle_mute)
         elif cmd == "cdpgen":               # CDP view: capture a snippet + spawn 8 variations
@@ -1319,6 +1359,9 @@ class HeadlessController:
                 self._safe(self._apply_density)
             if self._pitch != 0.0 or self._pitch_override:       # keep pitch shift applied across rebuilds
                 self._safe(self._apply_pitch)
+            if self._samp_patchfx and self._samp_patchfx_epoch != self._patch_epoch:
+                self._samp_patchfx_epoch = self._patch_epoch     # a rebuild changed module ids -> re-point wires
+                self._safe(self._apply_samp_patchfx)
             i += 1
             time.sleep(period)
 

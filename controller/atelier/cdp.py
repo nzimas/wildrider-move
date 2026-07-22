@@ -100,8 +100,24 @@ def rc_stretch_time(ctx, src, out):                # phase-vocoder time stretch 
     ana = _anal(ctx, src)
     if not ana: return False
     b = ctx.tmp("ana")
-    ratio = ctx.rng.choice([2.0, 3.0, 4.0, 6.0])
+    ratio = ctx.rng.choice([2.0, 3.0, 4.0, 6.0, 8.0])
     return ctx.run("stretch", "time", "1", ana, b, ratio) and _synth(ctx, b, out)
+
+def rc_dist_interpolate(ctx, src, out):            # interpolate wavesets -> smeared pitch glide
+    return ctx.run("distort", "interpolate", src, out, ctx.rng.randint(2, 10)) and _ok(out)
+
+def rc_dist_pitch(ctx, src, out):                  # per-waveset octave jitter -> warbling pitch
+    return ctx.run("distort", "pitch", src, out, round(ctx.rng.uniform(0.1, 0.9), 2)) and _ok(out)
+
+def rc_modify_radical(ctx, src, out):              # radical time-domain mangles
+    if ctx.rng.random() < 0.5:
+        return ctx.run("modify", "radical", "1", src, out) and _ok(out)
+    return ctx.run("modify", "radical", "3", src, out, ctx.rng.randint(2, 6)) and _ok(out)
+
+def rc_extend_zigzag(ctx, src, out):               # zig-zag back and forth through the sound
+    dur = ctx.rng.choice([3.0, 4.0, 5.0, 7.0])
+    return ctx.run("extend", "zigzag", "1", src, out, "0", "1.4", dur,
+                   round(ctx.rng.uniform(0.05, 0.25), 2)) and _ok(out)
 
 
 # ---- spectral (phase vocoder: anal -> transform -> synth) ------------------ #
@@ -137,27 +153,52 @@ def rc_hilite_trace(ctx, src, out):                # keep the N loudest partials
     b = ctx.tmp("ana")
     return ctx.run("hilite", "trace", "1", ana, b, ctx.rng.randint(4, 24)) and _synth(ctx, b, out)
 
+def rc_blur_avrg(ctx, src, out):                   # average spectral energy over N channels -> smeared
+    ana = _anal(ctx, src)
+    if not ana: return False
+    b = ctx.tmp("ana")
+    return ctx.run("blur", "avrg", ana, b, ctx.rng.randint(2, 24)) and _synth(ctx, b, out)
 
-# Time-domain recipes are safe to chain (fast, WAV->WAV). Spectral ones stand alone.
+def rc_blur_noise(ctx, src, out):                  # push partials toward noise -> breathy/airy
+    ana = _anal(ctx, src)
+    if not ana: return False
+    b = ctx.tmp("ana")
+    return ctx.run("blur", "noise", ana, b, round(ctx.rng.uniform(0.2, 0.9), 2)) and _synth(ctx, b, out)
+
+def rc_blur_scatter(ctx, src, out):                # randomly drop/scatter spectral channels -> sparse glitter
+    ana = _anal(ctx, src)
+    if not ana: return False
+    b = ctx.tmp("ana")
+    return ctx.run("blur", "scatter", ana, b, ctx.rng.randint(2, 12)) and _synth(ctx, b, out)
+
+
+# Time-domain recipes are safe to chain (fast, WAV->WAV). Spectral ones (pvoc) are
+# slower, so they seed a chain but extra stages are drawn from the time-domain set.
 _TD_RECIPES = [rc_speed, rc_dist_multiply, rc_dist_divide, rc_dist_telescope,
-               rc_dist_reform, rc_dist_repeat]
+               rc_dist_reform, rc_dist_repeat, rc_dist_interpolate, rc_dist_pitch,
+               rc_modify_radical, rc_extend_zigzag]
 _SPEC_RECIPES = [rc_blur, rc_blur_chorus, rc_blur_spread, rc_focus_exag,
-                 rc_hilite_trace, rc_stretch_time]
+                 rc_hilite_trace, rc_stretch_time, rc_blur_avrg, rc_blur_noise,
+                 rc_blur_scatter]
 _ALL_RECIPES = _TD_RECIPES + _SPEC_RECIPES
 
 
 def _one_variation(ctx: _Ctx, recipe, src: Path, out: Path) -> bool:
-    """Produce one variation with `recipe`; ~40% of the time chain a second
-    time-domain transform on top for compound diversity. Every result is a GENUINE
-    CDP transform — if any stage fails this returns False (the caller retries with a
-    different real recipe). No copies, no filler."""
-    if ctx.rng.random() < 0.4:
-        mid = ctx.tmp("wav")
-        if not (recipe(ctx, src, mid) and _ok(mid)):
+    """Produce one variation: seed with `recipe`, then chain 0-2 extra time-domain
+    transforms on top for compound, far-more-diverse results. Every stage is a
+    GENUINE CDP transform — if any stage fails this returns False (the caller retries
+    with a different real recipe). No copies, no filler."""
+    extra = ctx.rng.choices([0, 1, 2], weights=[30, 42, 28])[0]
+    if extra == 0:
+        return recipe(ctx, src, out) and _ok(out)
+    stages = [recipe] + [ctx.rng.choice(_TD_RECIPES) for _ in range(extra)]
+    cur = src
+    for i, stg in enumerate(stages):
+        dst = out if i == len(stages) - 1 else ctx.tmp("wav")
+        if not (stg(ctx, cur, dst) and _ok(dst)):
             return False
-        second = ctx.rng.choice(_TD_RECIPES)
-        return second(ctx, mid, out) and _ok(out)
-    return recipe(ctx, src, out) and _ok(out)
+        cur = dst
+    return _ok(out)
 
 
 def generate(src_wav: str, out_dir: str, count: int = 8,

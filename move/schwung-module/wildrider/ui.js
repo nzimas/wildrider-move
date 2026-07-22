@@ -23,10 +23,11 @@
 import {
     Black, BrightGreen, ForestGreen, AzureBlue, RoyalBlue,
     ElectricViolet, Violet, VividYellow, Mustard, White, Red, Purple, DarkGrey, BrightRed,
+    WhiteLedBright, WhiteLedDim,
     MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveKnob1Touch, MoveKnob8Touch, MoveMasterTouch, MoveDelete,
     MovePlay, MoveRec, MoveMainKnob, MoveMainButton, MoveMenu, MoveRow1, MoveRow2, MoveRow3, MoveRow4
 } from '/data/UserData/move-anything/shared/constants.mjs';
-import { setLED, decodeDelta } from '/data/UserData/move-anything/shared/input_filter.mjs';
+import { setLED, setButtonLED, decodeDelta } from '/data/UserData/move-anything/shared/input_filter.mjs';
 
 const WR = '/data/UserData/wildrider';
 const MODULE_DIR = '/data/UserData/schwung/modules/overtake/wildrider';
@@ -132,6 +133,7 @@ let cdpMode = false;
 let cdpBusy = false;             /* controller is capturing / running the CDP job */
 const CDP_GEN_CELL = 24;         /* bottom-left pad = record+process trigger */
 let sampStates = new Array(32).fill('empty');   /* per slot from status.json */
+let sampPatchFx = new Array(32).fill(false);    /* Rec+slot: routed through the patch FX chain */
 let sampFlashOn = false;       /* red-flash phase for recording slots */
 /* CTRL-ALL loop region (knob 1 = start, knob 2 = end), 0..1 of each take. */
 let loopStart = 0.0, loopEnd = 1.0;
@@ -471,8 +473,8 @@ function renderSamplerLEDs(flashOn) {
         var st = sampStates[c], color = Black;
         if (st === 'recording') color = flashOn ? Red : Black;   /* recording wins */
         else if (selSlots.indexOf(c) >= 0) color = VividYellow;  /* selected slot(s) */
-        else if (st === 'playing') color = Purple;
-        else if (st === 'filled') color = White;
+        else if (st === 'playing') color = sampPatchFx[c] ? AzureBlue : Purple;
+        else if (st === 'filled') color = sampPatchFx[c] ? AzureBlue : White;   /* blue = routed through patch FX */
         setLED(PAD_NOTES[c], color);
     }
     /* step buttons (1..4) show the ARMED FX set; armed FX are stamped onto slots as
@@ -494,8 +496,8 @@ function renderCdpLEDs(flashOn) {
         } else if (c < 8) {                          /* top row = the 8 variation players */
             var st = sampStates[c];
             if (selSlots.indexOf(c) >= 0) color = VividYellow;   /* selected */
-            else if (st === 'playing') color = Purple;
-            else if (st === 'filled') color = White;
+            else if (st === 'playing') color = sampPatchFx[c] ? AzureBlue : Purple;
+            else if (st === 'filled') color = sampPatchFx[c] ? AzureBlue : White;   /* blue = through patch FX */
             /* empty variation slot stays on the DarkGrey dim base */
         }
         setLED(PAD_NOTES[c], color);
@@ -572,6 +574,8 @@ function showDensity(target) { overlay = { kind: 'density', target: (target === 
 function showPitch(target) { overlay = { kind: 'pitch', target: (target === undefined ? -1 : target) }; overlayUntil = knob2Touched ? 1e12 : (phase + 30); screenDirty = true; }
 function showFilter(which) { pFiltShow = which; overlay = { kind: 'pfilter', which: which }; overlayUntil = filtTouched ? 1e12 : (phase + 30); screenDirty = true; }
 function showMorph() { overlay = { kind: 'macro5' }; overlayUntil = knob5Touched ? 1e12 : (phase + 30); screenDirty = true; }
+/* Play button LED reflects the play/silence toggle: bright while playing, dim when silenced. */
+function updatePlayLed() { setButtonLED(MovePlay, patchMuted ? WhiteLedDim : WhiteLedBright); }
 /* which generator (if any) a held pad targets for per-module density */
 function heldGenCell() {
     var hc = heldCell;
@@ -666,6 +670,7 @@ globalThis.init = function () {
     sceneActive = -1; sceneMorphTo = -1; lastSceneActive = -1; lastMorphTo = -1;
     morphEdit = false; morphTime = 10;
     samplerMode = false; sampStates = new Array(32).fill('empty'); sampFlashOn = false;
+    sampPatchFx = new Array(32).fill(false);
     cdpMode = false; cdpBusy = false;
     loopStart = 0.0; loopEnd = 1.0;
     selSlots = []; selPrimary = -1; selVol = 1.0; selPan = 0.0; selLs = 0.0; selLe = 1.0;
@@ -700,6 +705,7 @@ globalThis.tick = function () {
         if (typeof clear_screen === 'function') { clear_screen(); print(0, 12, 'WILDRIDER', 2); print(0, 38, 'starting engine...', 1); }
         sys('sh -c "sh ' + WR + '/run-stack.sh &"');
         launched = true;
+        updatePlayLed();                        /* Play LED bright = playing (default un-silenced) */
     }
     if (!launched) return;
 
@@ -869,6 +875,13 @@ globalThis.onMidiMessageInternal = function (data) {
                 sampKnobShow = null; ledDirty = true; screenDirty = true;
                 return;
             }
+            if (recHeld) {                           /* Rec + slot = (un)wire this slot THROUGH the patch FX chain */
+                sampPatchFx[cell] = !sampPatchFx[cell];
+                sendCmd('sampwire', cell);
+                showAction('SLOT ' + (cell + 1) + (sampPatchFx[cell] ? ' -> PATCH FX' : ' -> DRY'));
+                ledDirty = true; screenDirty = true;
+                return;
+            }
             if (deleteHeld) { sampStates[cell] = 'empty'; var di = selSlots.indexOf(cell); if (di >= 0) selSlots.splice(di, 1); if (selPrimary === cell) selPrimary = selSlots.length ? selSlots[selSlots.length - 1] : -1; sendCmd('sampdel', cell); }
             else { sendCmd('samppad', cell); }       /* controller resolves rec/play/stop by state */
             ledDirty = true; screenDirty = true;
@@ -970,7 +983,7 @@ globalThis.onMidiMessageInternal = function (data) {
             else {
                 playHeld = false;
                 if (!playUsedModifier && (Date.now() - playDownTime) < LONG_PRESS_MS) {
-                    sendCmd('playtoggle', 0); patchMuted = !patchMuted; showAction(patchMuted ? 'SILENCE' : 'PLAY');
+                    sendCmd('playtoggle', 0); patchMuted = !patchMuted; updatePlayLed(); showAction(patchMuted ? 'SILENCE' : 'PLAY');
                 }
             }
             return;
