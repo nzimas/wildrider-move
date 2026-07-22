@@ -1,135 +1,124 @@
-# Wildrider — Electroacoustic Instrument
+# Wildrider for Move
 
-A dockerized, semi-modular sound-design workbench in the spirit of **INA-GRM
-Tools Wildrider**, implementing the *SuperCollider Modular Sound-Design Synthesizer
-Blueprint*. SuperCollider carries the DSP; a Python control layer holds the
-authoritative patch state and serves a web control surface on
-**http://localhost:8099**. Audio is streamed from the engine to the browser.
+A standalone **electroacoustic / experimental instrument that runs entirely on the
+Ableton Move**. Wildrider takes over the Move as a **Schwung** *overtake*
+runner: a SuperCollider engine and a headless Python control layer run
+**on the device itself** (the Move is a Raspberry Pi CM4 / ARM64), and the Move's
+8×4 pad grid, nine endless encoders, screen, transport buttons and built-in
+speaker become the whole interface. No browser, no Docker, no host computer.
 
-This is not a clone of any proprietary product. It reproduces the *experience*
-described in the blueprint: modular real-time manipulation, multi-node generators
-and processors, a polyadic modulation model, scenes/morphing, multichannel
-spatialisation, and deterministic patch recall.
+> This is **not** the desktop Wildrider. It was forked from it (see
+> [`HANDOFF.md`](HANDOFF.md) for provenance) and shares the engine/catalog/
+> modulation heritage, but the web UI and container stack are gone — the surface
+> is now Move hardware. The old desktop/Docker instructions do not apply here.
 
 ---
 
-## Architecture — five planes
+## How it runs on the Move
 
-The blueprint insists the system be separated into five planes; they are separate
-modules here even though one UI exposes them (`controller/atelier/`):
-
-| Plane | Responsibility | Module |
-|-------|----------------|--------|
-| **DSP graph** | audio-rate execution, busses, groups, recorders | `supercollider/` (`engine.scd`, `synthdefs.scd`) |
-| **Parameter graph** | canonical values + metadata, scaling, clamps, randomize | `params.py`, `catalog.py` |
-| **Modulation graph** | polyadic sources/routes, per-node decorrelation, seeds | `modulation.py` |
-| **Scene graph** | snapshots, morph, exclusions, constrained mutation | `scenes.py` |
-| **Control graph** | macros, pages, MIDI/OSC learn, accessibility | `control.py`, `server.py`, `web/` |
-
-Ordering principle: **the DSP graph is disposable; the patch data model is
-authoritative.** On load the engine is built from patch state (`state.build_graph`);
-on edit, state updates first, then a graph diff is sent over OSC.
+The chosen architecture is an **on-device full stack**:
 
 ```
- browser ──ws/http──► controller (FastAPI :8099)
-                          │  authoritative state, modulation control loop @60Hz
-                          │  ──OSC──► supercollider engine (sclang :57120)
-                          │  ◄─OSC── meters / analysis / cpu  (:57140)
-                          ▼
-                      patch JSON (/data/patches)
- browser ◄──MP3 stream── controller ◄──proxy── supercollider ffmpeg (:8200)
+  Move pads / 9 encoders / screen / transport
+                 │
+                 ▼
+  ui.js  (Schwung JS sandbox: draws the screen, reads pads/encoders, lights LEDs)
+                 │  share/control.json  ◄─►  share/status.json     (file IPC — the
+                 │                                                  sandbox has no UDP)
+                 ▼
+  headless controller  (Python: authoritative patch/scene/perf state,
+                 │       60 Hz modulation loop, macro logic)
+                 │  ──OSC──►  sclang :57120   ◄─OSC──  meters / analysis / CPU
+                 ▼
+  SuperCollider engine  (scsynth :57110)
+                 │
+                 ▼
+  shadow JACK (jackd -R, realtime)  ──►  Schwung shadow mixer  ──►  DAC / speaker
+                                          44.1 kHz · 128-sample block
 ```
 
-## The eight modules (catalog-driven)
+- **`ui.js`** is the hardware UI, running in the Schwung overtake sandbox. It can't
+  open a socket, so it exchanges state with the controller through JSON files under
+  `share/` that the controller polls.
+- The **controller** holds all state and drives the engine over OSC, exactly as the
+  desktop version did — but headless (no FastAPI/Postgres/web).
+- Audio is realtime-scheduled (`jackd -R`) into the Move's shadow-JACK mixer, which
+  is the fix for the clicks/pops that a non-RT chain produced. The engine outputs a
+  conservative peak so the shadow mixer's post-gain doesn't clip the DAC.
 
-`PLAY` sampler/looper/resampler · `GEN` generator bank · `BAND` spectral/band
-sculpting · `PITCH` pitch-granular delay · `TIME` multi-tap delay lab · `COMB`
-resonator/waveguide · `GAIN` movement & presence · `VIZ` metering/scopes. Every
-module supports multiple **nodes** (voices/bands/taps/comb lines…). All
-parameters are declared once, with full metadata, in `catalog.py`; the UI,
-randomizer, modulation targets, save format and validation all derive from it.
+## The control surface
 
-## Polyadic modulation (the core idea)
+| Control | Role |
+|---|---|
+| **32 pads** | The module canvas — generators in rows 1 & 3, processors in rows 2 & 4. Also scene launch and the 32-slot sampler. |
+| **Encoder 1** | **Density** — scales every generator's internal clock (bipolar; hold a generator pad to scope it to that module). |
+| **Encoder 2** | **Pitch shift** — transposes the generators (bipolar, low end floored to avoid sub gargle; per-module when a pad is held). |
+| **Encoders 3 / 4** | **Global master filter** — cutoff / resonance. |
+| **Encoder 5** | **Morph macro** — bipolar "morph everything": nudges every patch param up/down by a random-but-persistent direction (generator pitch excluded). |
+| **Encoders 6–8** | Macro bank (each drives many destinations). |
+| **Master encoder** | Main volume. |
+| **Step buttons** | The 16-slot global LFO bank; in the sampler view, arm the step-button insert FX. |
+| **Transport / track / Shift / Rec** | Scene + performance launch/capture, sampler record, morph-time and page gestures. |
+| **Screen** | Bipolar parameter bars, module names, live CPU, the morph editor and the Performances browser. |
 
-A connection is not a wire — it is a *derived instance* of a source. One source
-feeding many destinations (and many nodes) yields independent, decorrelated,
-**reproducible** streams via seed derivation:
+Every on-screen bar activates the moment its encoder is touched.
 
-```
-derivedSeed = hash(rootSeed, sourceID, routeID, destinationParamID, nodeID)
-```
+## What's inside
 
-so reloading a patch reproduces the exact motion. Node scopes (`allDecorrelated`,
-`allSame`, `alternating`, `spatiallyWeighted`, …) and depth (−200%…+200% in
-normalised parameter space) match the GRM modulation semantics. Modulators sum at
-a destination; safety clamps prevent modulation pushing feedback/loudness into
-unsafe ranges unless an expert override is armed.
+- **Generators** (unstable-clock voices): **FMTONE** (a bespoke Digitone-style
+  4-operator FM voice), **WAVIARY** (morphing-wavetable), **RINGS** (modal /
+  sympathetic-string resonator). Each runs its own drifting internal clock.
+- **Processors** (21): PITCH, TIME, COMB, GAIN, SDLY, VERB, CLOUDS, GRAINS, ENV,
+  GATE, DISTORT (level-compensated so its wet/dry actually blends), OVERDRIVE,
+  AMPSIM, EQUALIZER, FLANGER, **PHASER** (an authentic 1970s string-machine
+  phaser), RINGMOD, BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER.
+- **Guided generative patches** — artist-profile randomization with a CPU budget so
+  a generated patch always leaves DSP headroom (and stays processor-forward rather
+  than drowning in generators).
+- **Scenes** with gapless structural morphing; **Performances** (full project
+  save / recall / delete — patch, scenes, samples, macros, master level).
+- **Sampler** — 32 slots with per-slot pitch, multi-select, and step-button insert
+  FX that reuse the real GATE / DISTORT / COMB / CLOUDS modules.
+- **Modulation** — per-module and global LFO banks over a deterministic,
+  catalog-driven parameter model.
 
-## Run it
+## Repository layout
+
+| Path | What |
+|---|---|
+| `supercollider/` | The DSP — `engine.scd`, `synthdefs.scd`, `boot.scd`, `dx7.scd`, `DX7.afx`. |
+| `controller/atelier/` | Headless controller: `headless.py` (daemon + control loop), `state.py` (StateManager), `catalog.py` (module specs), `aesthetics.py` (guided randomization), `params.py`, `modulation.py`, `scenes.py`, `seq.py`. |
+| `move/schwung-module/wildrider/` | The overtake module: `ui.js` (hardware UI), `module.json` (manifest), `exit-hook.sh`. |
+| `move/` | Deploy + run scripts (`deploy-controller.sh`, `deploy-module.sh`, `run-stack.sh`, `run-engine.sh`, `run-controller.sh`), vendored `pythonosc`, and `build/` (the cross-build recipe for the ARM `scsynth` + Mutable-Instruments UGens). |
+| `HANDOFF.md` | Original fork / provenance notes. |
+
+## Deploy to a Move
+
+The device must already have the cross-built `scsynth` + UGens + `sclang` installed
+under `/data/UserData/wildrider` (see `move/build/`). Access is over SSH as `root`;
+the default host is `move.local`.
 
 ```bash
-docker compose up -d --build      # detached; build first time only
-docker compose logs -f            # follow logs (optional)
-# open http://localhost:8099  — click "▶ audio" for the live stream
-docker compose down               # stop the stack
+# push the engine (.scd), the controller, and the run scripts
+move/deploy-controller.sh [host]
+
+# push the Schwung overtake module (ui.js / module.json / exit-hook)
+move/deploy-module.sh [host]
 ```
 
-Use `-d` so the stack runs in the background; `docker compose up --build`
-without it stays attached to your terminal. After the first build, plain
-`docker compose up -d` is enough (rebuild only when source changes).
+Then launch **Wildrider** from the Move's Schwung menu (overtake runners). The menu
+runs `run-stack.sh`, which brings up realtime `jackd`, the SuperCollider engine
+(`run-engine.sh`), and the headless controller (`run-controller.sh`). The stack
+daemonizes on the device — it is meant to be launched from the menu, not held open
+over an SSH session.
 
-- **Multichannel:** set `ATELIER_CHANNELS` (2 / 4 / 8 / N) on the `supercollider`
-  service in `docker-compose.yml`. SynthDefs rebuild for the configured count and
-  signals spread via `PanAz` for N > 2.
-- **Patches** persist to `./data/patches`. Save/load is deterministic; version
-  migration is in `persistence.py`.
+## Notes
 
-### Audio on macOS
-
-Docker on macOS cannot reach CoreAudio, so the engine renders against a **JACK
-dummy backend** and ffmpeg streams the result as MP3 to the browser (some
-latency). The control layer and UI are fully functional regardless of the audio
-path — if you want true low-latency monitoring, run SuperCollider natively on the
-host and point the controller's `SC_HOST`/`SC_PORT` at it.
-
-## Develop / test the control layer locally
-
-```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -r controller/requirements.txt pytest
-cd controller
-pytest -q                       # 21 tests, blueprint section-13 matrix
-uvicorn atelier.server:app --port 8099   # runs UI even with no SC engine
-```
-
-The control layer degrades gracefully when SuperCollider is unreachable: OSC
-sends become no-ops, so the data model, modulation, scenes and UI all run
-headless (useful for CI and design work).
-
-## Test matrix coverage (section 13)
-
-Implemented as automated tests (`controller/tests/test_atelier.py`): patch
-determinism & transport-reset reproducibility, safety clamps / expert override,
-parameter scaling round-trips & formatters, constrained randomization, scene
-morph (numeric + discrete + locks + exclusions), persistence round-trip &
-migration, polyadic decorrelation, macro routing, panic. Routing, click-free hot
-edits, controller soft-takeover, audio stability and the live audio stream
-require the running engine and are verified in-container / on hardware.
-
-## Status vs. the blueprint's MVP path
-
-- **MVP 1 (core audio):** ✔ PLAY/GEN/COMB/GAIN + BAND/PITCH/TIME SynthDefs,
-  lanes, macros, deterministic save/load.
-- **MVP 2 (modulation):** ✔ all seven modulator types, polyadic per-node seeds,
-  gesture/analysis plumbing.
-- **MVP 3 (sound-design processors):** ✔ first-version BAND (IIR)/PITCH/TIME;
-  FFT/`PV_*` BAND quality modes are a documented refinement.
-- **MVP 4 (scene system):** ✔ capture/morph/exclusions/locks/constrained mutation.
-- **MVP 5 (viz/control polish):** ✔ meters/analysis, CPU watchdog telemetry,
-  high-contrast accessibility, OSC status, MIDI/OSC-learn with soft takeover.
-
-Known first-version simplifications (called out in code comments): serial lane
-busing is realized as ordered per-module busses summed to master; BAND uses an
-IIR realization rather than full linear-phase FFT; the JACK→MP3 stream chain needs
-on-hardware tuning. These do not affect the authoritative data model, which the
-blueprint requires to be stable first.
+- **Runtime env:** engine on `:57110` (scsynth) / `:57120` (sclang), controller
+  telemetry `:57140`, control channel `:57150`; 44.1 kHz, 128-sample block, stereo.
+  `HOME` is pointed at an Ableton-writable dir so sclang boots from the menu.
+- **CPU:** the Move is a shared, load-heavy CM4. Generated patches are DSP-budgeted
+  and the audio chain is pinned to SCHED_FIFO to keep XRuns at zero.
+- **Recovery:** a Move OS auto-update can wipe the Schwung shim hook — re-run the
+  post-update step as root and restart the Move service if the overtake stops
+  appearing.
