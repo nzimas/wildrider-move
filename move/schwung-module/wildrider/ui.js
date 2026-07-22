@@ -22,7 +22,7 @@
 
 import {
     Black, BrightGreen, ForestGreen, AzureBlue, RoyalBlue,
-    ElectricViolet, Violet, VividYellow, Mustard, White, Red, Purple,
+    ElectricViolet, Violet, VividYellow, Mustard, White, Red, Purple, DarkGrey, BrightRed,
     MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveKnob1Touch, MoveKnob8Touch, MoveMasterTouch, MoveDelete,
     MovePlay, MoveRec, MoveMainKnob, MoveMainButton, MoveMenu, MoveRow1, MoveRow2, MoveRow3, MoveRow4
 } from '/data/UserData/move-anything/shared/constants.mjs';
@@ -67,6 +67,7 @@ let macrosSynced = false;
 let seq = 0, lastCmd = '', lastArg = -1;
 let deleteHeld = false;        /* the X / Delete key, held = delete-a-pad modifier */
 let playHeld = false, recHeld = false;   /* Play/Rec = force a generator on empty-pad add */
+let playDownTime = 0, playUsedModifier = false, patchMuted = false;   /* Play tap = play/silence toggle */
 let density = 0;                          /* knob 1 = global trigger density, -1..1 (0 = as generated) */
 let densityCell = {};                     /* per-generator density (while a gen pad is held): cell -> -1..1 */
 let pendingDensMod = null, densN = 0;     /* per-module density event {t, v, n} */
@@ -122,6 +123,14 @@ let morphTime = 10;            /* seconds, 1..99, default 10 */
  * Short-press a filled slot = loop playback; press again = stop. X+pad deletes.
  * LEDs: empty=unlit, recording=red(flashing), filled idle=white, playing=purple. */
 let samplerMode = false;
+/* ---- CDP view (Shift + Track 4) ---------------------------------------------
+ * Bottom-left pad (cell 24) = the GENERATOR: capture a live snippet + spawn 8 CDP
+ * variations into the top row (cells 0-7). Those 8 pads are sample players, just
+ * like the sampler slots (they ARE sampler slots 0-7). Every pad except the
+ * generator is painted DIM so the performer always knows they're in the CDP view. */
+let cdpMode = false;
+let cdpBusy = false;             /* controller is capturing / running the CDP job */
+const CDP_GEN_CELL = 24;         /* bottom-left pad = record+process trigger */
 let sampStates = new Array(32).fill('empty');   /* per slot from status.json */
 let sampFlashOn = false;       /* red-flash phase for recording slots */
 /* CTRL-ALL loop region (knob 1 = start, knob 2 = end), 0..1 of each take. */
@@ -350,12 +359,14 @@ function readStatus() {
             if (s.sampler.clouds) sampCloudsOn[qi] = s.sampler.clouds[qi];
         }
     }
+    var newCdpBusy = !!s.cdpBusy;             /* CDP capture/process running */
+    if (newCdpBusy !== cdpBusy) { cdpBusy = newCdpBusy; if (cdpMode) { ledDirty = true; screenDirty = true; } }
     /* Only mark dirty when the VISIBLE state changed (not cpu/meter jitter), so
      * an idle patch causes ZERO LED/SPI traffic — that traffic XRuns audio. */
     var sceneSig = scenesMode ? ('S' + sceneActive + '/' + sceneMorphTo + '/' +
         sceneFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
     var perfSig = perfMode ? ('P' + perfActive + '/' + perfFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
-    var sampSig = samplerMode ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',') + '|' + fxArmed.join('') + sampGateOn.join('') + sampDistOn.join('') + sampCombOn.join('') + sampCloudsOn.join('')) : '';
+    var sampSig = (samplerMode || cdpMode) ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',') + '|' + fxArmed.join('') + sampGateOn.join('') + sampDistOn.join('') + sampCombOn.join('') + sampCloudsOn.join('')) : '';
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
         return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig + '|' + sampSig + '|' + perfSig;
     if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
@@ -472,6 +483,29 @@ function renderSamplerLEDs(flashOn) {
     }
     ledDirty = false;
 }
+/* CDP view: a DIM wash over the whole grid (so the performer always knows they're
+ * here), the generator pad lit bright (flashing while a job runs), and the 8 top-row
+ * pads showing sampler-slot state (they hold the CDP variations) over the dim base. */
+function renderCdpLEDs(flashOn) {
+    for (var c = 0; c < 32; c++) {
+        var color = DarkGrey;                        /* dim base everywhere */
+        if (c === CDP_GEN_CELL) {                    /* the generator / record+process pad */
+            color = cdpBusy ? (flashOn ? BrightRed : Black) : Red;
+        } else if (c < 8) {                          /* top row = the 8 variation players */
+            var st = sampStates[c];
+            if (selSlots.indexOf(c) >= 0) color = VividYellow;   /* selected */
+            else if (st === 'playing') color = Purple;
+            else if (st === 'filled') color = White;
+            /* empty variation slot stays on the DarkGrey dim base */
+        }
+        setLED(PAD_NOTES[c], color);
+    }
+    for (var i = 0; i < 16; i++) {                   /* steps 1..4 = armed FX (as in the sampler) */
+        var on = (i < FX_STEPS.length) && !!fxArmed[i];
+        setLED(STEP_BASE + i, on ? FX_ON_COLOR : Black);
+    }
+    ledDirty = false;
+}
 function cutHz(n) { return Math.round(20 * Math.pow(900, n)); }   /* normalised -> Hz */
 function panLbl(p) { return p === 0 ? 'C' : (p > 0 ? 'R' + Math.round(p * 100) : 'L' + Math.round(-p * 100)); }
 function drawSampler() {
@@ -511,6 +545,20 @@ function drawSampler() {
     if (selSlots.length > 0) print(0, 44, selSlots.length + ' sel: k8vol k7pan k5pit k3/4filt k1/2loop', 1);
     else print(0, 44, 'CTRL-ALL k1/2loop k3/4filt k5pit  shift+pad', 1);
     print(0, 56, 'tap=rec/play  X+pad=del', 1);
+}
+function drawCdp() {
+    if (typeof clear_screen !== 'function' || typeof print !== 'function') return;
+    if (fxHeld >= 0 || sampKnobShow) { drawSampler(); return; }   /* shared encoder/FX bars */
+    clear_screen();
+    print(0, 6, 'CDP', 2);
+    if (cdpBusy) { print(0, 24, 'PROCESSING...', 1); }
+    else {
+        var fill = 0, play = 0;
+        for (var i = 0; i < 8; i++) { var s = sampStates[i]; if (s === 'playing') play++; else if (s === 'filled') fill++; }
+        print(0, 24, (fill + play) + '/8 variations', 1);
+    }
+    print(0, 44, 'gen pad = capture + process', 1);
+    print(0, 56, 'pad=play  X+pad=del  shift+pad=sel', 1);
 }
 
 /* ---- screen ----
@@ -611,13 +659,14 @@ globalThis.init = function () {
     pFiltCut = 1.0; pFiltRes = 0.0; pFiltShow = null; filtTouched = false;
     macro5 = 0; knob5Touched = false; pendingMacro5Begin = null; macro5N = 0;
     seq = 0; deleteHeld = false; shiftHeld = false;
-    playHeld = false; recHeld = false;
+    playHeld = false; recHeld = false; playDownTime = 0; playUsedModifier = false; patchMuted = false;
     masterTouched = false; row2Down = 0;
     scenesMode = false; sceneFilled = new Array(32).fill(false);
     perfMode = false; perfFilled = new Array(32).fill(false); perfActive = -1;
     sceneActive = -1; sceneMorphTo = -1; lastSceneActive = -1; lastMorphTo = -1;
     morphEdit = false; morphTime = 10;
     samplerMode = false; sampStates = new Array(32).fill('empty'); sampFlashOn = false;
+    cdpMode = false; cdpBusy = false;
     loopStart = 0.0; loopEnd = 1.0;
     selSlots = []; selPrimary = -1; selVol = 1.0; selPan = 0.0; selLs = 0.0; selLe = 1.0;
     selCut = 1.0; selRes = 0.0; selPit = 0.0; filtCut = 1.0; filtRes = 0.0; filtPit = 0.0;
@@ -662,6 +711,13 @@ globalThis.tick = function () {
     if (phase - lastStatusAt >= 6) { readStatus(); lastStatusAt = phase; }   /* ~5Hz at 30Hz refresh */
     if (morphEdit) {                        /* morph-time editor owns the screen */
         if (screenDirty) { drawMorphEdit(); screenDirty = false; }
+        return;
+    }
+    if (cdpMode) {                          /* CDP view owns the grid + screen */
+        var cOn = (Math.floor(phase / 4) % 2) === 0;   /* blink the generator pad while busy */
+        if (cdpBusy && cOn !== sampFlashOn) { sampFlashOn = cOn; ledDirty = true; }
+        if (ledDirty) renderCdpLEDs(sampFlashOn);
+        if (screenDirty) { drawCdp(); screenDirty = false; }
         return;
     }
     if (samplerMode) {                      /* SAMPLER view owns the grid + screen */
@@ -713,7 +769,7 @@ globalThis.onMidiMessageInternal = function (data) {
     /* Encoder capacitive touch (notes 0..7 = knob 1..8). In the sampler slot view,
      * TOUCHING a control knob shows its bar (not only on rotation). */
     if (d1 >= MoveKnob1Touch && d1 <= MoveKnob8Touch && (status === 0x90 || status === 0x80)) {
-        if (samplerMode) {
+        if (samplerMode || cdpMode) {
             var touched = (status === 0x90 && d2 >= 64);
             var ki = d1 - MoveKnob1Touch;    /* 0..7 = knob 1..8 */
             var sel = selSlots.length > 0;
@@ -749,12 +805,12 @@ globalThis.onMidiMessageInternal = function (data) {
      * Shift+press re-randomizes that one LFO (keeping its on/off state). */
     if (status === 0x90 && d2 > 0 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {
         const i = d1 - STEP_BASE;
-        if (samplerMode && i < FX_STEPS.length) {  /* SAMPLER: press starts a hold; decide tap-vs-adjust on release */
+        if ((samplerMode || cdpMode) && i < FX_STEPS.length) {  /* SAMPLER/CDP: press starts a hold; decide tap-vs-adjust on release */
             fxHeld = i; fxHeldShift = shiftHeld; fxHeldAdjusted = false;
             screenDirty = true;                  /* show the dry/wet bar while held */
             return;
         }
-        if (samplerMode) return;                 /* steps 5-16 unused in the sampler view */
+        if (samplerMode || cdpMode) return;      /* steps 5-16 unused in the sampler/CDP views */
         if (shiftHeld && masterTouched && i === 0) {   /* shift + vol-touch + step1 = randomize ALL */
             sendCmd('lforandall', -1);
             showAction('RND ALL LFOS');
@@ -772,7 +828,7 @@ globalThis.onMidiMessageInternal = function (data) {
     }
     if ((status === 0x80 || (status === 0x90 && d2 === 0)) && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {  /* step release (either note-off form) */
         const ri = d1 - STEP_BASE;
-        if (samplerMode && ri < FX_STEPS.length && fxHeld === ri) {
+        if ((samplerMode || cdpMode) && ri < FX_STEPS.length && fxHeld === ri) {
             if (!fxHeldAdjusted) {               /* a tap (no jog) = arm/toggle, or re-randomize with shift */
                 if (fxHeldShift && fxArmed[ri]) {
                     var rr = [0, 0, 0, 0]; rr[ri] = 1; queueFxSync(selSlots, rr);
@@ -795,7 +851,12 @@ globalThis.onMidiMessageInternal = function (data) {
      * (revealed in tick() once it crosses the threshold) and does NOT toggle. */
     if (status === 0x90 && d2 > 0 && d1 >= 68 && d1 <= 99) {
         const cell = NOTE_TO_CELL[d1];
-        if (samplerMode) {                           /* SAMPLER: tap=rec/play/stop, shift=select, X=delete */
+        if (cdpMode) {                               /* CDP: generator pad + top-row sample players */
+            if (cell === CDP_GEN_CELL) { if (!cdpBusy) { sendCmd('cdpgen', 0); showAction('CDP GENERATE'); } return; }
+            if (cell >= 8) return;                   /* only the top row (0-7) are players; the rest are inert */
+            /* cells 0-7 fall through to the sampler slot handling (they ARE slots 0-7) */
+        }
+        if (samplerMode || (cdpMode && cell < 8)) {  /* SAMPLER slot ops (shared by the CDP top row) */
             if (shiftHeld) {                         /* Shift+pad toggles this slot in/out of the selection (multi-select) */
                 var si = selSlots.indexOf(cell);
                 if (si >= 0) { selSlots.splice(si, 1); }      /* deselect */
@@ -831,6 +892,7 @@ globalThis.onMidiMessageInternal = function (data) {
             if (!shiftHeld && !deleteHeld) {
                 /* Play/Rec force a specific generator; else random by row. */
                 var mt = (playHeld && recHeld) ? 'WAVIARY' : playHeld ? 'RINGS' : recHeld ? 'FMTONE' : '';
+                if (playHeld) playUsedModifier = true;   /* Play was used to add -> its release must NOT toggle */
                 sendAddmod(cell, mt);
                 showAction(mt ? ('ADD ' + mt) : ((Math.floor(cell / 8) % 2 === 0) ? 'ADD GEN' : 'ADD FX'));
             }
@@ -867,7 +929,7 @@ globalThis.onMidiMessageInternal = function (data) {
         }
         if (d1 === MoveShift) { shiftHeld = d2 > 0; return; }
         if (d1 === MoveMenu && d2 > 0) {                        /* Menu (3 lines) = PERFORMANCES view */
-            perfMode = !perfMode; if (perfMode) { samplerMode = false; scenesMode = false; fxHeld = -1; }
+            perfMode = !perfMode; if (perfMode) { samplerMode = false; scenesMode = false; cdpMode = false; fxHeld = -1; }
             ledDirty = true; screenDirty = true; showAction(perfMode ? 'PERFORMANCES' : 'PATCH');
             return;
         }
@@ -886,16 +948,33 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveRow3) {                                  /* Track 3 = SCENES view; Shift+Track 3 = morph-time editor */
             if (d2 > 0) {
                 if (shiftHeld) { morphEdit = true; screenDirty = true; }
-                else { scenesMode = !scenesMode; if (scenesMode) { samplerMode = false; perfMode = false; } ledDirty = true; screenDirty = true; showAction(scenesMode ? 'SCENES' : 'PATCH'); }
+                else { scenesMode = !scenesMode; if (scenesMode) { samplerMode = false; perfMode = false; cdpMode = false; } ledDirty = true; screenDirty = true; showAction(scenesMode ? 'SCENES' : 'PATCH'); }
             }
             return;
         }
-        if (d1 === MoveRow4) {                                  /* Track 4 = toggle SAMPLER view */
-            if (d2 > 0) { samplerMode = !samplerMode; if (samplerMode) { scenesMode = false; perfMode = false; } fxHeld = -1; ledDirty = true; screenDirty = true; showAction(samplerMode ? 'SAMPLER' : 'PATCH'); }
+        if (d1 === MoveRow4) {                                  /* Track 4 = SAMPLER view; Shift+Track 4 = CDP view */
+            if (d2 > 0) {
+                if (shiftHeld) {
+                    cdpMode = !cdpMode; if (cdpMode) { samplerMode = false; scenesMode = false; perfMode = false; } fxHeld = -1;
+                    ledDirty = true; screenDirty = true; showAction(cdpMode ? 'CDP' : 'PATCH');
+                } else {
+                    samplerMode = !samplerMode; if (samplerMode) { scenesMode = false; perfMode = false; cdpMode = false; } fxHeld = -1;
+                    ledDirty = true; screenDirty = true; showAction(samplerMode ? 'SAMPLER' : 'PATCH');
+                }
+            }
             return;
         }
         if (d1 === MoveDelete) { deleteHeld = d2 > 0; return; }   /* X key held = delete modifier */
-        if (d1 === MovePlay) { playHeld = d2 > 0; return; }       /* Play+empty pad = add RINGS */
+        if (d1 === MovePlay) {                                    /* Play: hold = add-RINGS modifier; short tap = play/silence toggle */
+            if (d2 > 0) { playHeld = true; playDownTime = Date.now(); playUsedModifier = false; }
+            else {
+                playHeld = false;
+                if (!playUsedModifier && (Date.now() - playDownTime) < LONG_PRESS_MS) {
+                    sendCmd('playtoggle', 0); patchMuted = !patchMuted; showAction(patchMuted ? 'SILENCE' : 'PLAY');
+                }
+            }
+            return;
+        }
         if (d1 === MoveRec) { recHeld = d2 > 0; return; }         /* Rec+empty pad = add FMTONE; Play+Rec = WAVIARY */
         /* The master knob (CC 79) is the Move's NATIVE host master volume — the
          * host owns it, so we never touch it (intercepting would fight the host
@@ -903,7 +982,7 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveMainKnob) {       /* hold a pad + jog wheel -> that module's level (amp) */
             const delta = decodeDelta(d2);
             if (delta === 0) return;
-            if (samplerMode && fxHeld >= 0) {            /* hold an FX step + jog -> that FX's dry/wet */
+            if ((samplerMode || cdpMode) && fxHeld >= 0) {   /* hold an FX step + jog -> that FX's dry/wet */
                 fxWet[fxHeld] = Math.max(0, Math.min(1, fxWet[fxHeld] + delta * 0.02));
                 fxHeldAdjusted = true;
                 pendingFxWet = { fx: fxHeld, wet: fxWet[fxHeld], n: ++fxN };
@@ -928,7 +1007,7 @@ globalThis.onMidiMessageInternal = function (data) {
             const i = d1 - MoveKnob1;
             const delta = decodeDelta(d2);
             if (delta === 0) return;
-            if (samplerMode) {
+            if (samplerMode || cdpMode) {
                 var step = 0.0025;            /* fine loop step: ~400 detents across the take */
                 if (selSlots.length > 0) {    /* selected (1 or many): per-slot vol/pan/pitch/filter/loop */
                     var pp = null, pv = 0;

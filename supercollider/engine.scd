@@ -493,6 +493,29 @@
 		~sampFrames[slot] = frames.asInteger.clip(0, ~sampMaxFrames);
 	};
 };
+// CDP source capture: record the live master bus for `dur` seconds into a scratch
+// buffer, then write it to `path` as a WAV. The headless controller polls for the
+// file to appear + settle (shared filesystem), then runs the CDP job — so no
+// engine->controller reply is needed. Deletes the file first so the poll can't see
+// a stale one from the previous capture.
+~cdpSrcBuf = nil; ~cdpRecSyn = nil;
+~cdpCapture = { |dur, path|
+	var frames, p = path.asString, srate = (s.sampleRate ? s.options.sampleRate ? 44100);
+	dur = dur.asFloat.clip(0.5, 10.0);
+	frames = (dur * srate).asInteger;
+	File.delete(p);
+	~cdpRecSyn.notNil.if { ~cdpRecSyn.free; ~cdpRecSyn = nil };
+	~cdpSrcBuf.notNil.if { ~cdpSrcBuf.free; ~cdpSrcBuf = nil };
+	~cdpSrcBuf = Buffer.alloc(s, frames, ~nchan, { |b|
+		~cdpRecSyn = Synth.tail(~gRec, ("samplerRec_" ++ ~nchan).asSymbol,
+			[\buf, b.bufnum, \in, ~masterBus.index]);
+		SystemClock.sched(dur + 0.05, {
+			~cdpRecSyn.notNil.if { ~cdpRecSyn.free; ~cdpRecSyn = nil };
+			~cdpSrcBuf.write(p, "wav", "float", frames, 0);
+			nil;   // one-shot
+		});
+	});
+};
 // Tear down a slot's whole chain (group frees play + FX + clears + cord; busses
 // freed explicitly). Leaves the per-slot FX on/param state intact for a re-play.
 ~sampFreeChain = { |slot|
@@ -666,6 +689,7 @@
 	OSCdef(\boot, { |m| ~boot.(m[1], m[2], m[3]) }, '/atelier/boot'),
 	OSCdef(\sampSave, { |m| ~sampSaveBuf.(m[1].asInteger, m[2]) }, '/atelier/sampler/save'),
 	OSCdef(\sampLoad, { |m| ~sampLoadBuf.(m[1].asInteger, m[2], m[3].asInteger) }, '/atelier/sampler/load'),
+	OSCdef(\cdpCapture, { |m| ~cdpCapture.(m[1].asFloat, m[2]) }, '/atelier/cdp/capture'),
 	OSCdef(\sampRec, { |m| ~sampRecStart.(m[1].asInteger) }, '/atelier/sampler/rec'),
 	OSCdef(\sampRecStop, { |m| ~sampRecStop.(m[1].asInteger, m[2].asInteger) }, '/atelier/sampler/recstop'),
 	OSCdef(\sampPlay, { |m| ~sampPlayStart.(m[1].asInteger) }, '/atelier/sampler/play'),

@@ -121,6 +121,8 @@ class HeadlessController:
         self._fx_wet = [0.5, 0.1, 0.5, 0.5]
         self._perf_reload = 0      # bumps on performance load so the ui re-reads macros
         self._master_gain = 6.0    # current master makeup (saved/restored per performance)
+        self._muted = False        # Play-button toggle: master output silenced?
+        self._cdp_busy = False     # CDP view: a capture+process job is running
         self._perf_xfade = 2.0     # seconds to crossfade between performances (gapless)
         self._density = 0.0        # knob 1: global trigger density (-1..1, 0 = as generated)
         self._density_override = {}   # mid -> per-generator density (held-pad edits)
@@ -1239,8 +1241,64 @@ class HeadlessController:
             self._safe(lambda: self.sampler_pad(arg))
         elif cmd == "sampdel":              # sampler view: X + slot = delete
             self._safe(lambda: self.sampler_del(arg))
+        elif cmd == "playtoggle":           # Play tap: silence / un-silence the whole patch
+            self._safe(self.toggle_mute)
+        elif cmd == "cdpgen":               # CDP view: capture a snippet + spawn 8 variations
+            self._safe(self.cdp_generate)
         elif cmd == "panic":
             self._safe(getattr(self.state, "panic", None) or self.bridge.panic)
+
+    def toggle_mute(self) -> None:
+        """Play-button toggle: fade the master output out (silence) or back in at the
+        current makeup. The engine's \\gain is lagged, so this is click-free."""
+        self._muted = not self._muted
+        self.bridge.send("/atelier/mastergain", 0.0 if self._muted else self._master_gain)
+
+    # -- CDP: capture a live snippet -> 8 diverse CDP variations -> slots 0..7 --- #
+    def cdp_generate(self) -> None:
+        """CDP-view generator pad: fire the capture+process job in a worker so the
+        control loop never blocks (the CDP chains take a couple of seconds)."""
+        if self._cdp_busy:
+            return
+        self._cdp_busy = True
+        threading.Thread(target=self._cdp_worker, daemon=True).start()
+
+    def _cdp_worker(self) -> None:
+        import time as _t
+        from . import cdp as _cdp
+        try:
+            cdp_dir = SHARE.parent / "cdp"          # /data/UserData/wildrider/cdp
+            work = cdp_dir / "work"
+            work.mkdir(parents=True, exist_ok=True)
+            src = work / "src.wav"
+            dur = 3.0
+            # 1. engine captures the live master bus to src.wav (deletes any stale one).
+            self.bridge.send("/atelier/cdp/capture", float(dur), str(src))
+            # 2. poll the shared filesystem for the file to appear + settle.
+            deadline = _t.monotonic() + dur + 8.0
+            last, stable = -1, 0
+            while _t.monotonic() < deadline:
+                _t.sleep(0.2)
+                if src.exists():
+                    sz = src.stat().st_size
+                    if sz == last and sz > 2000:
+                        stable += 1
+                        if stable >= 3:
+                            break
+                    else:
+                        last, stable = sz, 0
+            if not (src.exists() and src.stat().st_size > 2000):
+                return
+            # 3. spawn 8 diverse variations.
+            outs = _cdp.generate(str(src), str(work / "vars"), count=8)
+            # 4. load each into sampler slot i (autoplay off) and mark it filled.
+            for i, path in enumerate(outs[:8]):
+                self._samp[i]["state"] = "filled"
+                self.bridge.send("/atelier/sampler/load", i, str(path), 0)
+        except Exception:
+            pass
+        finally:
+            self._cdp_busy = False
 
     # -- snapshot (controller -> ui.js screen) ----------------------------- #
     def _snapshot_loop(self) -> None:
@@ -1280,6 +1338,7 @@ class HeadlessController:
                 "performances": self._perf_status(),  # {filled[32]}
                 "perfReload": self._perf_reload,
                 "sampler": self._sampler_status(),  # {states[32]}
+                "cdpBusy": self._cdp_busy,          # CDP view: capture+process in progress
             }
             tmp = STATUS_FILE.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(status, separators=(",", ":")))
