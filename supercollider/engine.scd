@@ -560,30 +560,42 @@
 		~sampFxNodes[slot] = nodes; ~sampFxBus[slot] = buses;
 		oldBuses.do { |b| b.free };                // release old bus indices after new allocated
 	};
-	~sampSyncPatchCord.(slot);                      // (re)establish the patch-FX send if wired
 };
-// Rec+slot: PARALLEL FX send. The sample keeps its normal (dry) path to master AND is
-// additionally sent into the patch's FX chain for colour — so it is NEVER silenced,
-// whatever the target FX does. A cord placed BEFORE the target module's group sums the
-// sample into its input (after the per-block inBus clear, before the module reads); it
-// then flows through the patch chain to master. Read one block late (inaudible). The
-// send is boosted +6 dB to sit under the dry, and the slot volume is the fine control.
-~sampSyncPatchCord = { |slot|
-	var tgt = ~sampPatchFx[slot], info = tgt.notNil.if({ ~modules[tgt] }, { nil }), pb = ~sampPlayBus[slot];
+// Rec+slot: make the sample a SOURCE inside the patch graph, exactly like a generator.
+// A generator lives in ~gModules and its output is cord-summed into an FX's input, in the
+// same block. Sample playback normally lives in ~gSampPlay (AFTER the modules), so it can
+// never feed them. When wired we therefore MOVE the slot's play group into ~gModules
+// (head) so the sample is generated before the FX read, then cord its playBus into the
+// target module's input (gain 1, like a generator edge) — no separate dry path. When
+// unwired we move it back to ~gSampPlay and restore the normal dry -> master routing.
+~sampSyncPatchRoute = { |slot|
+	var tgt = ~sampPatchFx[slot], info = tgt.notNil.if({ ~modules[tgt] }, { nil });
+	var pb = ~sampPlayBus[slot], grp = ~sampSlotGrp[slot];
 	~sampPatchCord[slot].notNil.if { ~sampPatchCord[slot].free; ~sampPatchCord[slot] = nil };
-	(info.notNil and: { pb.notNil }).if {
-		~sampPatchCord[slot] = Synth.before(info[\group], ("cord_" ++ ~nchan).asSymbol,
-			[\inb, pb.index, \outb, info[\inBus].index, \gain, 2]);
+	(grp.notNil and: { pb.notNil }).if {
+		(info.notNil).if({
+			// WIRED: sample is a graph source. Drop the dry/master routing, run the play
+			// group among the modules (head), and edge it into the target module's input.
+			(~sampFxNodes[slot] ? []).do { |n| n.free };
+			~sampFxNodes[slot] = []; ~sampFxActiveSyn[slot] = Array.newClear(~sampNfx);
+			grp.moveToHead(~gModules);
+			~sampPatchCord[slot] = Synth.before(info[\group], ("cord_" ++ ~nchan).asSymbol,
+				[\inb, pb.index, \outb, info[\inBus].index]);
+		}, {
+			// UNWIRED: back to a normal sampler take (play group after the patch mix).
+			grp.moveToHead(~gSampPlay);
+			~sampRebuildFx.(slot);
+		});
 	};
 };
-// Rec+slot: (un)wire a sample slot's PARALLEL send into the patch FX. midStr = target
-// module id ("" = off). Re-sent by the controller after every patch rebuild so the cord
-// always points at a live module.
+// Rec+slot: (un)wire a sample slot INTO the patch graph. midStr = target module id
+// ("" = off). Re-sent by the controller after every patch rebuild so it points at a live
+// module.
 ~sampWirePatch = { |slot, midStr|
 	var m = midStr.asString;
 	(slot >= 0 and: { slot < 32 }).if {
 		~sampPatchFx[slot] = (m.size > 0).if({ m.asSymbol }, { nil });
-		~sampSyncPatchCord.(slot);   // add/remove the parallel FX send (dry path untouched)
+		~sampSyncPatchRoute.(slot);
 	};
 };
 ~sampPlayStart = { |slot|
@@ -603,6 +615,7 @@
 				 \amp, ~sampVol[slot], \pan, ~sampPan[slot],
 				 \cutoff, ~sampCut[slot], \res, ~sampRes[slot], \pitch, ~sampPit[slot]]);
 			~sampRebuildFx.(slot);                  // wire up whatever FX are enabled
+			~sampSyncPatchRoute.(slot);             // if this slot is wired into the patch, route it there
 		};
 	};
 };

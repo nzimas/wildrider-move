@@ -878,7 +878,7 @@ globalThis.onMidiMessageInternal = function (data) {
             if (recHeld) {                           /* Rec + slot = (un)wire this slot THROUGH the patch FX chain */
                 sampPatchFx[cell] = !sampPatchFx[cell];
                 sendCmd('sampwire', cell);
-                showAction('SLOT ' + (cell + 1) + (sampPatchFx[cell] ? ' + PATCH FX' : ' DRY'));
+                showAction('SLOT ' + (cell + 1) + (sampPatchFx[cell] ? ' -> PATCH FX' : ' DRY'));
                 ledDirty = true; screenDirty = true;
                 return;
             }
