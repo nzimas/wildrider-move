@@ -68,6 +68,7 @@ let macrosSynced = false;
 let seq = 0, lastCmd = '', lastArg = -1;
 let deleteHeld = false;        /* the X / Delete key, held = delete-a-pad modifier */
 let playHeld = false, recHeld = false;   /* Play/Rec = force a generator on empty-pad add */
+let exitPending = false;                  /* Back armed the exit; a jog-wheel push confirms it */
 let playDownTime = 0, playUsedModifier = false, patchMuted = false;   /* Play tap = play/silence toggle */
 let density = 0;                          /* knob 1 = global trigger density, -1..1 (0 = as generated) */
 let densityCell = {};                     /* per-generator density (while a gen pad is held): cell -> -1..1 */
@@ -663,7 +664,7 @@ globalThis.init = function () {
     pFiltCut = 1.0; pFiltRes = 0.0; pFiltShow = null; filtTouched = false;
     macro5 = 0; knob5Touched = false; pendingMacro5Begin = null; macro5N = 0;
     seq = 0; deleteHeld = false; shiftHeld = false;
-    playHeld = false; recHeld = false; playDownTime = 0; playUsedModifier = false; patchMuted = false;
+    playHeld = false; recHeld = false; playDownTime = 0; playUsedModifier = false; patchMuted = false; exitPending = false;
     masterTouched = false; row2Down = 0;
     scenesMode = false; sceneFilled = new Array(32).fill(false);
     perfMode = false; perfFilled = new Array(32).fill(false); perfActive = -1;
@@ -709,6 +710,14 @@ globalThis.tick = function () {
     }
     if (!launched) return;
 
+    if (exitPending) {                      /* exit confirmation owns the screen in any view */
+        if (phase >= overlayUntil) { exitPending = false; overlay = null; screenDirty = true; }
+        else if (screenDirty && typeof clear_screen === 'function') {
+            clear_screen(); print(0, 20, 'EXIT  YES?', 2);
+            screenDirty = false;
+        }
+        if (exitPending) return;
+    }
     if (chainsMode) {                       /* CHAINS builder owns the screen + LEDs */
         if (ledDirty) renderChainsLEDs();
         if (screenDirty) { drawChains(); screenDirty = false; }
@@ -753,7 +762,7 @@ globalThis.tick = function () {
     if (levelCell >= 0 && (Date.now() - levelAt) > 350) levelCell = -1;
     if (ledDirty) renderLEDs();
     /* Expire a timed overlay (macro / volume) -> revert to the idle screen once. */
-    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action' || overlay.kind === 'density' || overlay.kind === 'pitch' || overlay.kind === 'pfilter' || overlay.kind === 'macro5') && phase >= overlayUntil) { overlay = null; pFiltShow = null; screenDirty = true; }
+    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action' || overlay.kind === 'density' || overlay.kind === 'pitch' || overlay.kind === 'pfilter' || overlay.kind === 'macro5' || overlay.kind === 'exit') && phase >= overlayUntil) { if (overlay.kind === 'exit') exitPending = false; overlay = null; pFiltShow = null; screenDirty = true; }
     /* Redraw ONLY when something changed (or a macro slider is live), so the
      * SPI display isn't flushed 133x/s — that contention was XRunning audio. */
     if (screenDirty) { drawScreen(); screenDirty = false; }
@@ -935,7 +944,12 @@ globalThis.onMidiMessageInternal = function (data) {
     }
 
     if (status === 0xB0) {
-        if (d1 === MoveBack && d2 > 0) {
+        if (d1 === MoveBack && d2 > 0) {          /* Back: ARM the exit (confirm with a jog push); press again to cancel */
+            if (exitPending) { exitPending = false; screenDirty = true; }
+            else { exitPending = true; overlay = null; overlayUntil = phase + 150; screenDirty = true; }
+            return;
+        }
+        if (d1 === MoveMainButton && d2 > 0 && exitPending) {   /* jog-wheel push confirms the exit */
             sys('sh ' + WR + '/stop-stack.sh');   /* kill engine+controller so the next launch is fresh */
             if (typeof host_exit_module === 'function') host_exit_module();
             return;
