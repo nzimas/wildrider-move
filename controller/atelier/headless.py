@@ -45,7 +45,7 @@ _SAMP_FX_ORDER = ["gate", "dist", "comb", "clouds"]
 
 
 def _fresh_samp_slot() -> dict:
-    return {"state": "empty", "t0": 0.0, "frames": 0,
+    return {"state": "empty", "t0": 0.0, "frames": 0, "fresh": False,
             "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
             "cut": 1.0, "res": 0.0, "pit": 0.0,
             "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {},
@@ -121,7 +121,7 @@ class HeadlessController:
         self._swap_lock = threading.Lock()   # serialize click-free patch swaps
         # Sampler: 32 slots. Each has playback state + per-slot params (loop region,
         # volume, pan). loop ls/le default full take; vol unity; pan centre.
-        self._samp = [{"state": "empty", "t0": 0.0, "frames": 0,
+        self._samp = [{"state": "empty", "t0": 0.0, "frames": 0, "fresh": False,
                        "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
                        "cut": 1.0, "res": 0.0, "pit": 0.0,         # cut/res 0..1, pit semis
                        # per-slot insert FX (step buttons): real modules, on + params each
@@ -452,6 +452,7 @@ class HeadlessController:
         elif st == "filled":
             self.bridge.send("/atelier/sampler/play", pad)
             sl["state"] = "playing"
+            sl["fresh"] = False   # first audition clears the "freshly generated" marker
         elif st == "playing":
             self.bridge.send("/atelier/sampler/stop", pad)
             sl["state"] = "filled"
@@ -461,11 +462,7 @@ class HeadlessController:
         if not (0 <= pad < 32):
             return
         self.bridge.send("/atelier/sampler/free", pad)
-        self._samp[pad] = {"state": "empty", "t0": 0.0, "frames": 0,
-                           "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
-                           "cut": 1.0, "res": 0.0, "pit": 0.0,
-                           "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {},
-                           "comb_on": 0, "comb_params": {}, "clouds_on": 0, "clouds_params": {}}
+        self._samp[pad] = _fresh_samp_slot()
 
     # -- Rec+slot: route a sample slot THROUGH the patch's FX modules ---------- #
     def _pick_patchfx_target(self):
@@ -894,6 +891,7 @@ class HeadlessController:
 
     def _sampler_status(self) -> dict:
         return {"states": [s["state"] for s in self._samp],
+                "fresh": [1 if s.get("fresh") else 0 for s in self._samp],
                 "vol": [round(s["vol"], 3) for s in self._samp],
                 "pan": [round(s["pan"], 3) for s in self._samp],
                 "ls": [round(s["ls"], 4) for s in self._samp],
@@ -1407,14 +1405,22 @@ class HeadlessController:
                         last, stable = sz, 0
             if not (src.exists() and src.stat().st_size > 2000):
                 return
-            # 3. spawn diverse variations; load each into its slot the moment it is
-            #    ready (progressive fill) so pads light up one-by-one instead of all
-            #    at the end of the ~30 s batch.
-            def _load(i, path):
-                if i < 8:
+            # 3. spawn diverse variations, ONE per currently-FREE CDP slot (0-7), so a
+            #    re-generate fills only the empties the performer left after deleting the
+            #    variations they didn't want — occupied slots are never overwritten.
+            free = [i for i in range(8) if self._samp[i]["state"] == "empty"]
+            if not free:
+                return
+            # load each into the next free slot the moment it is ready (progressive fill),
+            # marking it FRESH so the ui paints newly-generated content a distinct colour
+            # until it is auditioned/toggled for the first time.
+            def _load(k, path):
+                if k < len(free):
+                    i = free[k]
                     self._samp[i]["state"] = "filled"
+                    self._samp[i]["fresh"] = True
                     self.bridge.send("/atelier/sampler/load", i, str(path), 0)
-            _cdp.generate(str(src), str(work / "vars"), count=8, on_ready=_load)
+            _cdp.generate(str(src), str(work / "vars"), count=len(free), on_ready=_load)
         except Exception:
             pass
         finally:

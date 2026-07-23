@@ -158,6 +158,7 @@ let cdpMode = false;
 let cdpBusy = false;             /* controller is capturing / running the CDP job */
 const CDP_GEN_CELL = 24;         /* bottom-left pad = record+process trigger */
 let sampStates = new Array(32).fill('empty');   /* per slot from status.json */
+let sampFresh = new Array(32).fill(0);          /* 1 = freshly CDP-generated, not yet auditioned */
 let sampPatchFx = new Array(32).fill(false);    /* Rec+slot: routed through the patch FX chain */
 let sampFlashOn = false;       /* red-flash phase for recording slots */
 /* CTRL-ALL loop region (knob 1 = start, knob 2 = end), 0..1 of each take. */
@@ -385,6 +386,7 @@ function readStatus() {
     if (s.sampler && Array.isArray(s.sampler.states)) {
         for (var qi = 0; qi < 32; qi++) {
             sampStates[qi] = s.sampler.states[qi] || 'empty';
+            sampFresh[qi] = (s.sampler.fresh && s.sampler.fresh[qi]) ? 1 : 0;
             if (s.sampler.vol) sampVol[qi] = s.sampler.vol[qi];
             if (s.sampler.pan) sampPan[qi] = s.sampler.pan[qi];
             if (s.sampler.ls) sampLs[qi] = s.sampler.ls[qi];
@@ -405,7 +407,7 @@ function readStatus() {
     var sceneSig = scenesMode ? ('S' + sceneActive + '/' + sceneMorphTo + '/' +
         sceneFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
     var perfSig = perfMode ? ('P' + perfActive + '/' + perfFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
-    var sampSig = (samplerMode || cdpMode) ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',') + '|' + fxArmed.join('') + sampGateOn.join('') + sampDistOn.join('') + sampCombOn.join('') + sampCloudsOn.join('')) : '';
+    var sampSig = (samplerMode || cdpMode) ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',') + '/' + sampFresh.join('') + '|' + fxArmed.join('') + sampGateOn.join('') + sampDistOn.join('') + sampCombOn.join('') + sampCloudsOn.join('')) : '';
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
         return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig + '|' + sampSig + '|' + perfSig;
     if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
@@ -551,6 +553,8 @@ function renderCdpLEDs(flashOn) {
             var st = sampStates[c];
             if (selSlots.indexOf(c) >= 0) color = VividYellow;   /* selected */
             else if (st === 'playing') color = sampPatchFx[c] ? AzureBlue : Purple;
+            /* freshly generated + not yet auditioned = distinct green until first play */
+            else if (st === 'filled' && sampFresh[c]) color = BrightGreen;
             else if (st === 'filled') color = sampPatchFx[c] ? AzureBlue : White;   /* blue = through patch FX */
             /* empty variation slot stays on the DarkGrey dim base */
         }
@@ -724,7 +728,7 @@ globalThis.init = function () {
     perfMode = false; perfFilled = new Array(32).fill(false); perfActive = -1;
     sceneActive = -1; sceneMorphTo = -1; lastSceneActive = -1; lastMorphTo = -1;
     morphEdit = false; morphTime = 10;
-    samplerMode = false; sampStates = new Array(32).fill('empty'); sampFlashOn = false;
+    samplerMode = false; sampStates = new Array(32).fill('empty'); sampFresh = new Array(32).fill(0); sampFlashOn = false;
     sampPatchFx = new Array(32).fill(false);
     cdpMode = false; cdpBusy = false;
     loopStart = 0.0; loopEnd = 1.0;
