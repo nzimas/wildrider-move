@@ -47,6 +47,11 @@ class _Ctx:
         self.rng = rng
         self.tag = tag
         self._n = 0
+        # CDP programs write scratch to $TMPDIR, which defaults to /tmp — on the Move
+        # that is the ROOT partition (~470MB, chronically ~96% full), so pvoc/spectral
+        # jobs fail (or silently produce nothing) when it fills. `work` lives on the big
+        # /data partition (tens of GB), so pin every CDP subprocess's TMPDIR there.
+        self._env = dict(os.environ, TMPDIR=str(work))
 
     def tmp(self, ext: str) -> Path:
         self._n += 1
@@ -65,10 +70,20 @@ class _Ctx:
         try:
             r = subprocess.run([str(exe), *[str(a) for a in args]],
                                cwd=str(self.work), capture_output=True,
-                               timeout=_PROG_TIMEOUT)
+                               env=self._env, timeout=_PROG_TIMEOUT)
             return r.returncode == 0
         except (subprocess.TimeoutExpired, OSError):
             return False
+
+    def sweep(self) -> None:
+        """Delete this recipe's intermediate files (pvoc analyses can be several MB
+        each). Called after every variation so peak disk stays tiny — the Move root
+        has only a few MB free, and a full batch would otherwise overflow it."""
+        for f in self.work.glob(f"_{self.tag}_*"):
+            try:
+                f.unlink()
+            except OSError:
+                pass
 
 
 def _ok(path: Path) -> bool:
@@ -499,9 +514,11 @@ def generate(src_wav: str, out_dir: str, count: int = 8,
             nrm = ctx.tmp("wav")     # normalised mono
             # real (mono) variation -> normalise to a consistent audible level ->
             # interleave mono->stereo so it loads like a normal sampler take.
-            if _one_variation(ctx, recipe, src, raw) and _ok(raw) \
+            ok = _one_variation(ctx, recipe, src, raw) and _ok(raw) \
                     and ctx.run("modify", "loudness", "3", raw, nrm, "-l0.5") and _ok(nrm) \
-                    and ctx.run("submix", "interleave", nrm, nrm, out) and _ok(out):
+                    and ctx.run("submix", "interleave", nrm, nrm, out) and _ok(out)
+            ctx.sweep()             # drop THIS recipe's intermediates before the next
+            if ok:
                 idx = len(outs)
                 outs.append(str(out))
                 if on_ready is not None:

@@ -1381,11 +1381,22 @@ class HeadlessController:
 
     def _cdp_worker(self) -> None:
         import time as _t
+        import shutil as _sh
         from . import cdp as _cdp
         try:
             cdp_dir = SHARE.parent / "cdp"          # /data/UserData/wildrider/cdp
             work = cdp_dir / "work"
+            vars_dir = work / "vars"
             work.mkdir(parents=True, exist_ok=True)
+            # The Move root has only a few MB free, so the CDP work dir must NOT
+            # accumulate. Wipe last run's leftovers up front: every kept slot already
+            # lives in an engine RAM buffer (~sampBufs), so the WAVs on disk are
+            # transient and safe to delete.
+            _sh.rmtree(vars_dir, ignore_errors=True)
+            vars_dir.mkdir(parents=True, exist_ok=True)
+            for f in work.glob("_*"):
+                try: f.unlink()
+                except OSError: pass
             src = work / "src.wav"
             dur = 4.0     # long enough to catch triggers from sparse patches, short enough to keep pvoc fast
             # 1. engine captures the live master bus to src.wav (deletes any stale one).
@@ -1414,14 +1425,29 @@ class HeadlessController:
                 return
             # load each into the next free slot the moment it is ready (progressive fill),
             # marking it FRESH so the ui paints newly-generated content a distinct colour
-            # until it is auditioned/toggled for the first time.
+            # until it is auditioned/toggled for the first time. The engine reads the WAV
+            # into a RAM buffer (async, quick); once loaded the file is disposable, so we
+            # delete each variation a step behind the newest to keep peak disk tiny.
+            loaded: list = []
             def _load(k, path):
                 if k < len(free):
                     i = free[k]
                     self._samp[i]["state"] = "filled"
                     self._samp[i]["fresh"] = True
                     self.bridge.send("/atelier/sampler/load", i, str(path), 0)
-            _cdp.generate(str(src), str(work / "vars"), count=len(free), on_ready=_load)
+                    loaded.append(path)
+                    while len(loaded) > 2:          # keep the 2 most-recent; the rest are in RAM now
+                        try: Path(loaded.pop(0)).unlink()
+                        except OSError: pass
+            _cdp.generate(str(src), str(vars_dir), count=len(free), on_ready=_load)
+            # everything is loaded into engine buffers now — reclaim the disk.
+            _t.sleep(1.5)
+            _sh.rmtree(vars_dir, ignore_errors=True)
+            for f in work.glob("_*"):
+                try: f.unlink()
+                except OSError: pass
+            try: src.unlink()
+            except OSError: pass
         except Exception:
             pass
         finally:
