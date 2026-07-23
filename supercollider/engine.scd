@@ -221,6 +221,12 @@
 			var sig = (Saw.ar(pit) * env) + (LFSaw.ar(82.5) * 0.12) + (SinOsc.ar(165) * 0.1);
 			Out.ar(out, (~killbad.(sig) * amp) ! channels);
 		}).add;
+		// audition output: sums a module's out bus straight to the hardware out (bus 0)
+		// through its own limiter — BYPASSING the master synth's gain/mute, so audition
+		// is heard even when the live patch is silenced by the Play toggle.
+		SynthDef(("audout_" ++ channels).asSymbol, { |in = 0|
+			Out.ar(0, Limiter.ar(~killbad.(In.ar(in, channels)), 0.45, 0.01));
+		}).add;
 		// master loudness guard: NaN/Inf kill + brickwall limiter so runaway
 		// feedback can never clip the output (blueprint panic/loudness policy).
 		// Master makeup gain into the brickwall limiter. Tunable via \gain (the
@@ -514,9 +520,9 @@
 // Build a throwaway module (id \_aud) with ~moduleNew (so FMTONE's LFO buses etc. are
 // set up correctly), route its output to master, and — for a processor — feed a test
 // tone through its input with sensible defaults (enable/wet on). Frees on stop/switch.
-~audTone = nil; ~audCord = nil;
+~audTone = nil; ~audOut = nil;
 ~auditionStop = {
-	~audCord.notNil.if { ~audCord.free; ~audCord = nil };
+	~audOut.notNil.if { ~audOut.free; ~audOut = nil };
 	~audTone.notNil.if { ~audTone.free; ~audTone = nil };
 	~modules[\_aud].notNil.if { ~moduleFree.(\_aud) };
 };
@@ -524,10 +530,12 @@
 	~auditionStop.value;
 	~moduleNew.(\_aud, type, ~nchan, 1, 0);
 	~modules[\_aud].notNil.if {
-		~audCord = Synth.tail(~gMix, ("cord_" ++ ~nchan).asSymbol,
-			[\inb, ~modules[\_aud][\outBus].index, \outb, ~masterBus.index]);
+		// straight to the hardware out via audout (bypasses the master mute)
+		~audOut = Synth.tail(~gRec, ("audout_" ++ ~nchan).asSymbol,
+			[\in, ~modules[\_aud][\outBus].index]);
 	};
 };
+// (processor audition is now spoken by the host TTS in ui.js; kept for completeness)
 ~auditionFx = { |type|
 	~auditionStop.value;
 	~moduleNew.(\_aud, type, ~nchan, 1, 0);
@@ -535,8 +543,8 @@
 		~audTone = Synth.head(~modules[\_aud][\group], ("audtone_" ++ ~nchan).asSymbol,
 			[\out, ~modules[\_aud][\inBus].index]);
 		~modules[\_aud][\nodes].do { |n| n.set(\enable, 1, \wet, 1, \bypass, 0) };
-		~audCord = Synth.tail(~gMix, ("cord_" ++ ~nchan).asSymbol,
-			[\inb, ~modules[\_aud][\outBus].index, \outb, ~masterBus.index]);
+		~audOut = Synth.tail(~gRec, ("audout_" ++ ~nchan).asSymbol,
+			[\in, ~modules[\_aud][\outBus].index]);
 	};
 };
 

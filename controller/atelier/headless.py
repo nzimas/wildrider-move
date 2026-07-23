@@ -121,7 +121,7 @@ class HeadlessController:
         self._fx_wet = [0.5, 0.1, 0.5, 0.5]
         self._perf_reload = 0      # bumps on performance load so the ui re-reads macros
         self._master_gain = 6.0    # current master makeup (saved/restored per performance)
-        self._muted = False        # Play-button toggle: master output silenced?
+        self._muted = True         # Play-button toggle: master output silenced (patch starts SILENT — audible only when Play is pressed)
         self._cdp_busy = False     # CDP view: a capture+process job is running
         self._auditioning = None   # module type currently being auditioned in the palette
         self._perf_xfade = 2.0     # seconds to crossfade between performances (gapless)
@@ -295,7 +295,7 @@ class HeadlessController:
                     # max 6 lifts quiet ambient ones.
                     gain = 6.0 if peak < 1e-3 else max(0.4, min(6.0, 0.3 / peak))
                     self._master_gain = round(gain, 2)
-                    self.bridge.send("/atelier/mastergain", self._master_gain)  # fade in at level
+                    self._apply_mastergain()          # fade in at level — unless Play is muted
                 except Exception:
                     pass
         threading.Thread(target=worker, daemon=True).start()
@@ -569,7 +569,7 @@ class HeadlessController:
         mg = samp.get("master_gain")
         if isinstance(mg, (int, float)):
             self._master_gain = float(mg)
-            self.bridge.send("/atelier/mastergain", round(self._master_gain, 2))
+            self._apply_mastergain()          # honour the Play-toggle mute
 
         # --- SAMPLER: crossfade old takes -> new ----------------------------- #
         wet = samp.get("fx_wet") or [0.5, 0.1, 0.5, 0.5]
@@ -1326,11 +1326,16 @@ class HeadlessController:
         elif cmd == "panic":
             self._safe(getattr(self.state, "panic", None) or self.bridge.panic)
 
+    def _apply_mastergain(self) -> None:
+        """Push the master makeup, honouring the Play-toggle mute (0 while silenced)."""
+        self.bridge.send("/atelier/mastergain", 0.0 if self._muted else self._master_gain)
+
     def toggle_mute(self) -> None:
         """Play-button toggle: fade the master output out (silence) or back in at the
-        current makeup. The engine's \\gain is lagged, so this is click-free."""
+        current makeup. The engine's \\gain is lagged, so this is click-free. Audition
+        is on a separate path and stays audible regardless."""
         self._muted = not self._muted
-        self.bridge.send("/atelier/mastergain", 0.0 if self._muted else self._master_gain)
+        self._apply_mastergain()
 
     # -- CDP: capture a live snippet -> 8 diverse CDP variations -> slots 0..7 --- #
     def cdp_generate(self) -> None:

@@ -23,7 +23,7 @@
 import {
     Black, BrightGreen, ForestGreen, AzureBlue, RoyalBlue,
     ElectricViolet, Violet, VividYellow, Mustard, White, Red, Purple, DarkGrey, BrightRed,
-    WhiteLedBright, WhiteLedDim,
+    WhiteLedBright, WhiteLedDim, DullGreen, DeepBlue, Cyan,
     MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveKnob1Touch, MoveKnob8Touch, MoveMasterTouch, MoveDelete,
     MovePlay, MoveRec, MoveMainKnob, MoveMainButton, MoveMenu, MoveRow1, MoveRow2, MoveRow3, MoveRow4, MoveLeft, MoveRight
 } from '/data/UserData/move-anything/shared/constants.mjs';
@@ -84,7 +84,7 @@ let seq = 0, lastCmd = '', lastArg = -1;
 let deleteHeld = false;        /* the X / Delete key, held = delete-a-pad modifier */
 let playHeld = false, recHeld = false;   /* Play/Rec = force a generator on empty-pad add */
 let exitPending = false;                  /* Back armed the exit; a jog-wheel push confirms it */
-let playDownTime = 0, playUsedModifier = false, patchMuted = false;   /* Play tap = play/silence toggle */
+let playDownTime = 0, playUsedModifier = false, patchMuted = true;   /* Play tap = play/silence toggle; patch starts SILENT */
 let density = 0;                          /* knob 1 = global trigger density, -1..1 (0 = as generated) */
 let densityCell = {};                     /* per-generator density (while a gen pad is held): cell -> -1..1 */
 let pendingDensMod = null, densN = 0;     /* per-module density event {t, v, n} */
@@ -236,6 +236,11 @@ function sendAudStop() {
     auditioningType = ''; seq++;
     if (typeof host_write_file === 'function')
         host_write_file(CONTROL_FILE, JSON.stringify({ seq: seq, cmd: 'audstop' }));
+}
+/* processor audition = the host TTS speaks the module name (on a path that bypasses
+ * our master mute). Intelligible even if robotic. */
+function speakName(type) {
+    if (typeof host_send_screenreader === 'function') host_send_screenreader(String(type).toLowerCase());
 }
 /* addmod carries an optional forced module type (Play/Rec gestures). */
 function sendAddmod(cell, mtype) {
@@ -411,13 +416,16 @@ function renderLEDs() {
         if (g) color = g.on ? (CAT_ON[g.cat] || CAT_ON.fx) : OFF_COLOR;
         setLED(PAD_NOTES[cell], color);
     }
-    /* row 3 (16-23) = generator PALETTE, row 4 (24-31) = processor PALETTE (scrollable);
-     * the item currently being auditioned glows bright. */
+    /* row 3 (16-23) = generator PALETTE, row 4 (24-31) = processor PALETTE (scrollable).
+     * An edge pad with MORE items hidden beyond it is tinted Cyan so the scroll motion
+     * (and that the list continues) is visible; the auditioning item glows bright. */
     for (let i = 0; i < 8; i++) {
         var gt = palGens[palGenScroll + i];
-        setLED(PAD_NOTES[16 + i], gt ? (gt === auditioningType ? BrightGreen : ForestGreen) : Black);
+        var gEdge = (i === 0 && palGenScroll > 0) || (i === 7 && palGenScroll + 8 < palGens.length);
+        setLED(PAD_NOTES[16 + i], gt ? (gt === auditioningType ? BrightGreen : (gEdge ? Cyan : ForestGreen)) : Black);
         var ft = palFx[palFxScroll + i];
-        setLED(PAD_NOTES[24 + i], ft ? (ft === auditioningType ? AzureBlue : RoyalBlue) : Black);
+        var fEdge = (i === 0 && palFxScroll > 0) || (i === 7 && palFxScroll + 8 < palFx.length);
+        setLED(PAD_NOTES[24 + i], ft ? (ft === auditioningType ? AzureBlue : (fEdge ? Cyan : RoyalBlue)) : Black);
     }
     /* 16 step buttons (notes 16..31) = global LFO toggles: lit when enabled. */
     for (let i = 0; i < 16; i++) {
@@ -701,7 +709,7 @@ globalThis.init = function () {
     pFiltCut = 1.0; pFiltRes = 0.0; pFiltShow = null; filtTouched = false;
     macro5 = 0; knob5Touched = false; pendingMacro5Begin = null; macro5N = 0;
     seq = 0; deleteHeld = false; shiftHeld = false;
-    playHeld = false; recHeld = false; playDownTime = 0; playUsedModifier = false; patchMuted = false; exitPending = false;
+    playHeld = false; recHeld = false; playDownTime = 0; playUsedModifier = false; patchMuted = true; exitPending = false;
     masterTouched = false; row2Down = 0;
     scenesMode = false; sceneFilled = new Array(32).fill(false);
     perfMode = false; perfFilled = new Array(32).fill(false); perfActive = -1;
@@ -985,9 +993,14 @@ globalThis.onMidiMessageInternal = function (data) {
             const cell = NOTE_TO_CELL[d1];
             if (heldPalette >= 0 && cell === heldPalette) {   /* palette release: tap = audition (unless it assigned) */
                 if (!palAssignUsed && heldPaletteType) {
-                    auditioningType = (auditioningType === heldPaletteType) ? '' : heldPaletteType;
-                    sendAudition(heldPaletteType, heldPaletteKind);
-                    showAction((auditioningType ? 'AUDITION ' : 'STOP ') + heldPaletteType);
+                    if (heldPaletteKind === 'gen') {          /* generator: self-sounding audio audition (toggle) */
+                        auditioningType = (auditioningType === heldPaletteType) ? '' : heldPaletteType;
+                        sendAudition(heldPaletteType, 'gen');
+                        showAction((auditioningType ? 'AUDITION ' : 'STOP ') + heldPaletteType);
+                    } else {                                  /* processor: the host TTS speaks its name */
+                        speakName(heldPaletteType);
+                        showAction('SAY ' + heldPaletteType);
+                    }
                     ledDirty = true;
                 }
                 heldPalette = -1; screenDirty = true;
