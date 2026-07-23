@@ -1405,10 +1405,11 @@ class HeadlessController:
                         last, stable = sz, 0
             if not (src.exists() and src.stat().st_size > 2000):
                 return
-            # 3. spawn diverse variations, ONE per currently-FREE CDP slot (0-7), so a
-            #    re-generate fills only the empties the performer left after deleting the
-            #    variations they didn't want — occupied slots are never overwritten.
-            free = [i for i in range(8) if self._samp[i]["state"] == "empty"]
+            # 3. spawn diverse variations, ONE per currently-FREE CDP slot (0-23, rows
+            #    1-3 of the CDP view), so a re-generate fills only the empties the
+            #    performer left after deleting the variations they didn't want —
+            #    occupied slots are never overwritten.
+            free = [i for i in range(24) if self._samp[i]["state"] == "empty"]
             if not free:
                 return
             # load each into the next free slot the moment it is ready (progressive fill),

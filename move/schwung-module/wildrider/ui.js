@@ -150,10 +150,11 @@ let morphTime = 10;            /* seconds, 1..99, default 10 */
  * LEDs: empty=unlit, recording=red(flashing), filled idle=white, playing=purple. */
 let samplerMode = false;
 /* ---- CDP view (Shift + Track 4) ---------------------------------------------
- * Bottom-left pad (cell 24) = the GENERATOR: capture a live snippet + spawn 8 CDP
- * variations into the top row (cells 0-7). Those 8 pads are sample players, just
- * like the sampler slots (they ARE sampler slots 0-7). Every pad except the
- * generator is painted DIM so the performer always knows they're in the CDP view. */
+ * Bottom-left pad (cell 24) = the GENERATOR: capture a live snippet + spawn CDP
+ * variations into every FREE slot of rows 1-3 (cells 0-23, 24 slots). Those pads
+ * are sample players, just like the sampler slots (they ARE sampler slots 0-23).
+ * Freshly generated content is green until first played; the rest of row 4 is
+ * painted DIM so the performer always knows they're in the CDP view. */
 let cdpMode = false;
 let cdpBusy = false;             /* controller is capturing / running the CDP job */
 const CDP_GEN_CELL = 24;         /* bottom-left pad = record+process trigger */
@@ -542,14 +543,14 @@ function renderSamplerLEDs(flashOn) {
     ledDirty = false;
 }
 /* CDP view: a DIM wash over the whole grid (so the performer always knows they're
- * here), the generator pad lit bright (flashing while a job runs), and the 8 top-row
- * pads showing sampler-slot state (they hold the CDP variations) over the dim base. */
+ * here), the generator pad lit bright (flashing while a job runs), and rows 1-3
+ * (24 pads) showing sampler-slot state (they hold the CDP variations) over the dim base. */
 function renderCdpLEDs(flashOn) {
     for (var c = 0; c < 32; c++) {
         var color = DarkGrey;                        /* dim base everywhere */
         if (c === CDP_GEN_CELL) {                    /* the generator / record+process pad */
             color = cdpBusy ? (flashOn ? BrightRed : Black) : Red;
-        } else if (c < 8) {                          /* top row = the 8 variation players */
+        } else if (c < 24) {                         /* rows 1-3 = the 24 variation players */
             var st = sampStates[c];
             if (selSlots.indexOf(c) >= 0) color = VividYellow;   /* selected */
             else if (st === 'playing') color = sampPatchFx[c] ? AzureBlue : Purple;
@@ -614,8 +615,8 @@ function drawCdp() {
     if (cdpBusy) { print(0, 24, 'PROCESSING...', 1); }
     else {
         var fill = 0, play = 0;
-        for (var i = 0; i < 8; i++) { var s = sampStates[i]; if (s === 'playing') play++; else if (s === 'filled') fill++; }
-        print(0, 24, (fill + play) + '/8 variations', 1);
+        for (var i = 0; i < 24; i++) { var s = sampStates[i]; if (s === 'playing') play++; else if (s === 'filled') fill++; }
+        print(0, 24, (fill + play) + '/24 variations', 1);
     }
     print(0, 44, 'gen pad = capture + process', 1);
     print(0, 56, 'pad=play  X+pad=del  shift+pad=sel', 1);
@@ -925,12 +926,12 @@ globalThis.onMidiMessageInternal = function (data) {
      * (revealed in tick() once it crosses the threshold) and does NOT toggle. */
     if (status === 0x90 && d2 > 0 && d1 >= 68 && d1 <= 99) {
         const cell = NOTE_TO_CELL[d1];
-        if (cdpMode) {                               /* CDP: generator pad + top-row sample players */
+        if (cdpMode) {                               /* CDP: generator pad + 24 sample players (rows 1-3) */
             if (cell === CDP_GEN_CELL) { if (!cdpBusy) { sendCmd('cdpgen', 0); showAction('CDP GENERATE'); } return; }
-            if (cell >= 8) return;                   /* only the top row (0-7) are players; the rest are inert */
-            /* cells 0-7 fall through to the sampler slot handling (they ARE slots 0-7) */
+            if (cell >= 24) return;                  /* rows 1-3 (0-23) are players; the rest of row 4 is inert */
+            /* cells 0-23 fall through to the sampler slot handling (they ARE slots 0-23) */
         }
-        if (samplerMode || (cdpMode && cell < 8)) {  /* SAMPLER slot ops (shared by the CDP top row) */
+        if (samplerMode || (cdpMode && cell < 24)) { /* SAMPLER slot ops (shared by the CDP rows 1-3) */
             if (shiftHeld) {                         /* Shift+pad toggles this slot in/out of the selection (multi-select) */
                 var si = selSlots.indexOf(cell);
                 if (si >= 0) { selSlots.splice(si, 1); }      /* deselect */
