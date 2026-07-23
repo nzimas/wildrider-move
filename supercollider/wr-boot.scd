@@ -12,12 +12,16 @@
 (
 var dir = "/data/UserData/wildrider";
 var threads = "ATELIER_THREADS".getenv;
+// ~wrSupernova gates server-specific synthdef bodies (e.g. VERB uses GVerb under
+// supernova, JPverb under scsynth). Set BEFORE boot.scd loads synthdefs.scd.
 (threads.notNil and: { threads.asString.size > 0 }).if({
+	~wrSupernova = true;
 	Server.program = dir +/+ "bin/supernova";
 	Server.default.options.threads = threads.asInteger.max(1);
 	Server.default.options.useSystemClock = true;   // supernova: drive scheduling off the JACK clock
 	("[wr-boot] SUPERNOVA — " ++ threads.asInteger.max(1) ++ " DSP threads").postln;
 }, {
+	~wrSupernova = false;
 	Server.program = dir +/+ "bin/scsynth";
 	"[wr-boot] scsynth (single-threaded)".postln;
 });

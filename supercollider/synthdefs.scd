@@ -1238,8 +1238,28 @@
 		var inL = (nchan == 1).if({ dry }, { dry[0] });
 		var inR = (nchan == 1).if({ dry }, { dry[1] });
 		var t60 = Select.kr(freeze, [decay, 240]);   // freeze -> very long tail
-		var rev = JPverb.ar([inL, inR], t60, damp, size, earlyDiff, modDepth, modFreq,
-			1.0, 1.0, 1.0, lowCut, highCut) * enable;
+		// JPverb's DEIND UGen won't register under supernova, so on that server
+		// route VERB through GVerb (a supernova-safe algorithmic reverb) mapped to
+		// the same knobs. scsynth keeps the original JPverb sound untouched.
+		var rev = (~wrSupernova == true).if({
+			var mono = (inL + inR) * 0.5;
+			// GVerb allocates its delay lines from maxroomsize at init, so that
+			// stays a fixed constant; roomsize tracks `size` but is clipped below it.
+			var g = GVerb.ar(mono,
+				size.linlin(0.5, 5, 8, 120).clip(1, 295),   // roomsize (m)
+				t60.clip(0.1, 240),                          // revtime (t60)
+				damp.clip(0, 1),                             // damping (HF)
+				earlyDiff.clip(0, 1),                        // input bandwidth
+				15,                                          // spread
+				0,                                           // drylevel (we mix wet ourselves)
+				0.7,                                         // early-reflection level
+				0.6,                                         // tail level
+				300);                                        // maxroomsize (const >= roomsize)
+			LPF.ar(HPF.ar(g, lowCut), highCut) * enable;     // match JPverb's band-limit
+		}, {
+			JPverb.ar([inL, inR], t60, damp, size, earlyDiff, modDepth, modFreq,
+				1.0, 1.0, 1.0, lowCut, highCut) * enable;
+		});
 		var wL = rev[0], wR = rev[1];
 		var mid = (wL + wR) * 0.5, side = (wL - wR) * 0.5 * width;
 		var wetL = (mid + side) * amp, wetR = (mid - side) * amp, outSig;
