@@ -135,6 +135,8 @@ class HeadlessController:
         self._master_gain = 6.0    # current master makeup (saved/restored per performance)
         self._muted = True         # Play-button toggle: master output silenced (patch starts SILENT — audible only when Play is pressed)
         self._cdp_busy = False     # CDP view: a capture+process job is running
+        self._cpu_blocked = False  # live CPU guard tripped (new DSP refused; ui shows warning)
+        self._cpu_hi = 0           # consecutive hi-CPU ticks (debounce the guard on/off)
         self._auditioning = None   # module type currently being auditioned in the palette
         self._perf_xfade = 2.0     # seconds to crossfade between performances (gapless)
         self._density = 0.0        # knob 1: global trigger density (-1..1, 0 = as generated)
@@ -450,6 +452,11 @@ class HeadlessController:
             self.bridge.send("/atelier/sampler/recstop", pad, frames)
             sl["state"] = "filled"; sl["frames"] = frames
         elif st == "filled":
+            # starting a slot adds a playback synth + its insert-FX chain — refuse while
+            # the audio core is saturated so a workout can't XRun by piling on loops.
+            # (Stopping a playing slot is always allowed — it frees DSP.)
+            if self._cpu_would_overrun():
+                return
             self.bridge.send("/atelier/sampler/play", pad)
             sl["state"] = "playing"
             sl["fresh"] = False   # first audition clears the "freshly generated" marker
@@ -613,6 +620,37 @@ class HeadlessController:
         d = self._perf_dir(int(pad))
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
+
+    # -- Live CPU guard ---------------------------------------------------------- #
+    # scsynth is single-threaded, so its ONE core saturates long before the 4-core
+    # chip does — that's what produces XRuns under a heavy workout. The engine streams
+    # avg/peakCPU (both already %); peak predicts the block-deadline miss. When peak is
+    # in the danger zone we refuse to spawn NEW dsp (modules, sample playback) so a
+    # workout hits a soft ceiling instead of the XRun cliff — existing audio is never
+    # touched (no shedding, no glitches). Debounced so it doesn't chatter on transients.
+    # Measured on-device: JACK XRuns begin around peak ~85-88% / avg ~78-80%, so the
+    # ceilings sit a few points below that to stop new DSP just BEFORE the cliff.
+    _CPU_PEAK_CEIL = 82.0      # peak % above which new DSP is refused
+    _CPU_AVG_CEIL = 74.0       # sustained avg % that also trips the guard
+    _CPU_HI_ON = 2             # ticks over the ceiling before blocking (debounce transients)
+    _CPU_HI_OFF = 4            # ticks under it before clearing (hysteresis, no chatter)
+
+    def _update_cpu_guard(self) -> None:
+        """Called each control tick: fold the live avg/peak into a debounced block flag."""
+        c = self.bridge.cpu
+        over = (c.get("peak", 0.0) >= self._CPU_PEAK_CEIL) or (c.get("avg", 0.0) >= self._CPU_AVG_CEIL)
+        if over:
+            self._cpu_hi = min(self._CPU_HI_OFF, self._cpu_hi + 1)
+        else:
+            self._cpu_hi = max(0, self._cpu_hi - 1)
+        if not self._cpu_blocked and self._cpu_hi >= self._CPU_HI_ON:
+            self._cpu_blocked = True
+        elif self._cpu_blocked and self._cpu_hi <= 0:
+            self._cpu_blocked = False
+
+    def _cpu_would_overrun(self) -> bool:
+        """True when the audio core is saturated enough that adding DSP risks an XRun."""
+        return self._cpu_blocked
 
     # -- Knob 1: global density (scales every generator's internal clock) -------- #
     # Density/pitch apply to any self-sounding generator (via _is_gen) — every ported
@@ -974,6 +1012,12 @@ class HeadlessController:
         if not (0 <= cell < 32):
             return
         occupant = next((mid for mid, c in self._pad_map.items() if c == cell), None)
+        # Live CPU guard: adding a voice-producing module is the main way a workout
+        # tips the single-threaded audio core into XRuns. Refuse the ADD while the core
+        # is saturated (a REPLACE frees the occupant first, so its net cost is ~0 and is
+        # allowed). Existing audio is untouched; the ui flashes a CPU warning.
+        if occupant is None and self._cpu_would_overrun():
+            return
         if occupant is not None:
             if not mtype:
                 return                                  # random grow onto an occupied pad: ignore
@@ -1463,6 +1507,7 @@ class HeadlessController:
         full_every = max(1, int(round(SNAP_HZ * FULL_SNAPSHOT_EVERY_S)))
         i = 0
         while not self._stop.is_set():
+            self._update_cpu_guard()          # fold live avg/peak CPU into the debounced block flag
             self._write_status()
             if WRITE_FULL_SNAPSHOT and (i % full_every == 0):
                 self._write_full_snapshot()
@@ -1484,6 +1529,8 @@ class HeadlessController:
                 "ready": self._built.is_set(),
                 "engine": self.bridge.connected,
                 "cpu": round(self.bridge.cpu.get("avg", 0.0), 1),  # SC avgCPU is already %
+                "cpuPeak": round(self.bridge.cpu.get("peak", 0.0), 1),
+                "cpuHigh": self._cpu_blocked,   # live guard: audio core near saturation, new DSP refused
                 "nodes": self.bridge.cpu.get("nodes", 0),
                 "modules": len(self.state.patch.modules),
                 "meters": [round(m, 3) for m in (self.bridge.meters or [])[:2]],

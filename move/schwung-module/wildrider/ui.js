@@ -86,7 +86,7 @@ function loadPalette() {
     if (raw) { try { var p = JSON.parse(raw); palGens = p.gens || []; palFx = p.fx || []; paletteLoaded = true; ledDirty = true; } catch (e) {} }
 }
 let ready = false;
-let cpu = 0, nodes = 0;
+let cpu = 0, nodes = 0, cpuPeak = 0, cpuHigh = false;
 let macroVal = new Array(8).fill(0);
 let macrosSynced = false;
 let seq = 0, lastCmd = '', lastArg = -1;
@@ -345,6 +345,9 @@ function readStatus() {
     ready = !!(s.ready && s.engine);
     cpu = s.cpu != null ? s.cpu : 0;
     nodes = s.nodes != null ? s.nodes : 0;
+    cpuPeak = s.cpuPeak != null ? s.cpuPeak : 0;
+    var newCpuHigh = !!s.cpuHigh;
+    if (newCpuHigh !== cpuHigh) { cpuHigh = newCpuHigh; screenDirty = true; ledDirty = true; }
     grid = Array.isArray(s.grid) ? s.grid : [];
     cellMap = {};
     for (const g of grid) cellMap[g.pad] = g;
@@ -705,7 +708,11 @@ function drawScreen() {
     print(0, 6, 'WILDRIDER', 2);
     if (!ready) { print(0, 38, 'booting engine...', 1); return; }
     print(0, 34, grid.length + ' modules', 1);
-    print(0, 48, 'cpu ' + cpu + '%  nodes ' + nodes, 1);
+    /* CPU LIMIT while the audio core is saturated — new modules/sample playback are
+     * refused until something is removed (the single-threaded engine can't use the
+     * other cores). Flash it so the performer sees why an add did nothing. */
+    if (cpuHigh) print(0, 48, ((phase % 16 < 8) ? 'CPU LIMIT - free a slot' : 'CPU LIMIT'), 1);
+    else print(0, 48, 'cpu ' + cpu + '%  pk ' + cpuPeak + '  nd ' + nodes, 1);
 }
 
 /* ================= host entry points ================= */
@@ -952,6 +959,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 return;
             }
             if (deleteHeld) { sampStates[cell] = 'empty'; var di = selSlots.indexOf(cell); if (di >= 0) selSlots.splice(di, 1); if (selPrimary === cell) selPrimary = selSlots.length ? selSlots[selSlots.length - 1] : -1; sendCmd('sampdel', cell); }
+            else if (cpuHigh && sampStates[cell] === 'filled') { showAction('CPU LIMIT'); return; }  /* starting playback refused while core saturated */
             else { sendCmd('samppad', cell); }       /* controller resolves rec/play/stop by state */
             ledDirty = true; screenDirty = true;
             return;
@@ -987,6 +995,7 @@ globalThis.onMidiMessageInternal = function (data) {
         const g = cellMap[cell];
         if (g === undefined || g === null) {         /* empty pad -> grow the patch */
             if (!shiftHeld && !deleteHeld) {
+                if (cpuHigh) { showAction('CPU LIMIT'); return; }   /* audio core saturated: controller refuses the add */
                 /* Play/Rec force a specific generator; else random by row. */
                 var mt = (playHeld && recHeld) ? 'WAVIARY' : playHeld ? 'RINGS' : recHeld ? 'FMTONE' : '';
                 if (playHeld) playUsedModifier = true;   /* Play was used to add -> its release must NOT toggle */

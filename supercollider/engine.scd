@@ -922,7 +922,7 @@
 ~cpuTask = Routine({
 	loop {
 		~built.if { ~ctrl.value.sendMsg('/atelier/cpu', s.avgCPU, s.peakCPU, s.numSynths) };  // avg/peak are already percent
-		1.0.wait;
+		0.3.wait;   // fast enough for the live CPU guard to catch a runaway workout
 	}
 }).play(SystemClock);
 
