@@ -25,7 +25,7 @@ import {
     ElectricViolet, Violet, VividYellow, Mustard, White, Red, Purple, DarkGrey, BrightRed,
     WhiteLedBright, WhiteLedDim,
     MoveShift, MoveBack, MoveKnob1, MoveKnob8, MoveKnob1Touch, MoveKnob8Touch, MoveMasterTouch, MoveDelete,
-    MovePlay, MoveRec, MoveMainKnob, MoveMainButton, MoveMenu, MoveRow1, MoveRow2, MoveRow3, MoveRow4
+    MovePlay, MoveRec, MoveMainKnob, MoveMainButton, MoveMenu, MoveRow1, MoveRow2, MoveRow3, MoveRow4, MoveLeft, MoveRight
 } from '/data/UserData/move-anything/shared/constants.mjs';
 import { setLED, setButtonLED, decodeDelta } from '/data/UserData/move-anything/shared/input_filter.mjs';
 
@@ -61,6 +61,21 @@ let launched = false;
 let lastStatusAt = -100;
 let grid = [];                 /* [{pad,type,cat,on}] from status.json */
 let cellMap = {};              /* cell -> module info */
+/* ---- patch-view module BROWSER: row 3 = generators, row 4 = processors ----
+ * Tap a palette pad to audition it; hold one and tap a slot (row 1 gens / row 2
+ * processors) to assign it. Left/Right cursor keys scroll the palettes. */
+let palGens = [], palFx = [];  /* available module types, from palette.json */
+let palGenScroll = 0, palFxScroll = 0;
+let heldPalette = -1;          /* a palette pad being held (assign modifier) */
+let heldPaletteType = '', heldPaletteKind = '';
+let palAssignUsed = false;     /* the held palette was used to assign -> release must NOT audition */
+let auditioningType = '';      /* module type currently auditioning (for the bright LED) */
+let paletteLoaded = false;
+function loadPalette() {
+    if (paletteLoaded || typeof host_read_file !== 'function') return;
+    var raw = host_read_file(WR + '/share/palette.json');
+    if (raw) { try { var p = JSON.parse(raw); palGens = p.gens || []; palFx = p.fx || []; paletteLoaded = true; ledDirty = true; } catch (e) {} }
+}
 let ready = false;
 let cpu = 0, nodes = 0;
 let macroVal = new Array(8).fill(0);
@@ -210,6 +225,18 @@ function writeControl() {
     host_write_file(CONTROL_FILE, JSON.stringify(doc));
 }
 function sendCmd(cmd, arg) { seq++; lastCmd = cmd; lastArg = arg; writeControl(); }
+/* palette audition: the controller toggles (same type again = stop). */
+function sendAudition(mtype, kind) {
+    seq++; lastCmd = 'audition';
+    if (typeof host_write_file === 'function')
+        host_write_file(CONTROL_FILE, JSON.stringify({ seq: seq, cmd: 'audition', mtype: mtype, kind: kind }));
+}
+function sendAudStop() {
+    if (!auditioningType) return;
+    auditioningType = ''; seq++;
+    if (typeof host_write_file === 'function')
+        host_write_file(CONTROL_FILE, JSON.stringify({ seq: seq, cmd: 'audstop' }));
+}
 /* addmod carries an optional forced module type (Play/Rec gestures). */
 function sendAddmod(cell, mtype) {
     seq++; lastCmd = 'addmod'; lastArg = cell;
@@ -377,11 +404,20 @@ function readStatus() {
 
 /* ---- LEDs ---- */
 function renderLEDs() {
-    for (let cell = 0; cell < 32; cell++) {
+    /* rows 1-2 (cells 0-15) = the module CANVAS (row1 generators, row2 processors). */
+    for (let cell = 0; cell < 16; cell++) {
         const g = cellMap[cell];
-        let color = Black;                          /* empty pad = UNLIT */
+        let color = Black;                          /* empty slot = UNLIT */
         if (g) color = g.on ? (CAT_ON[g.cat] || CAT_ON.fx) : OFF_COLOR;
         setLED(PAD_NOTES[cell], color);
+    }
+    /* row 3 (16-23) = generator PALETTE, row 4 (24-31) = processor PALETTE (scrollable);
+     * the item currently being auditioned glows bright. */
+    for (let i = 0; i < 8; i++) {
+        var gt = palGens[palGenScroll + i];
+        setLED(PAD_NOTES[16 + i], gt ? (gt === auditioningType ? BrightGreen : ForestGreen) : Black);
+        var ft = palFx[palFxScroll + i];
+        setLED(PAD_NOTES[24 + i], ft ? (ft === auditioningType ? AzureBlue : RoyalBlue) : Black);
     }
     /* 16 step buttons (notes 16..31) = global LFO toggles: lit when enabled. */
     for (let i = 0; i < 16; i++) {
@@ -659,6 +695,7 @@ globalThis.init = function () {
     if (typeof host_set_refresh_rate === 'function') host_set_refresh_rate(30);
     phase = 0; launched = false; lastStatusAt = -100;
     grid = []; cellMap = {}; ready = false; macrosSynced = false;
+    heldPalette = -1; palAssignUsed = false; auditioningType = ''; palGenScroll = 0; palFxScroll = 0;
     macroVal = new Array(8).fill(0); density = 0; densityCell = {}; pendingDensMod = null; densN = 0; knob1Touched = false;
     genPitch = 0; pitchCell = {}; pendingPitchMod = null; pitchN = 0; knob2Touched = false;
     pFiltCut = 1.0; pFiltRes = 0.0; pFiltShow = null; filtTouched = false;
@@ -760,6 +797,7 @@ globalThis.tick = function () {
     }
     /* Release the level-latch once the jog goes idle, so the next hold re-targets. */
     if (levelCell >= 0 && (Date.now() - levelAt) > 350) levelCell = -1;
+    loadPalette();                          /* one-shot: fetch the module browser lists */
     if (ledDirty) renderLEDs();
     /* Expire a timed overlay (macro / volume) -> revert to the idle screen once. */
     if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action' || overlay.kind === 'density' || overlay.kind === 'pitch' || overlay.kind === 'pfilter' || overlay.kind === 'macro5' || overlay.kind === 'exit') && phase >= overlayUntil) { if (overlay.kind === 'exit') exitPending = false; overlay = null; pFiltShow = null; screenDirty = true; }
@@ -909,6 +947,21 @@ globalThis.onMidiMessageInternal = function (data) {
             ledDirty = true; screenDirty = true;
             return;
         }
+        /* ---- module BROWSER (rows 3 & 4) + assign (hold a palette pad + tap a slot) ---- */
+        if (cell >= 16) {                            /* palette pad: arm it (holding = assign modifier) */
+            var isGenPal = (cell < 24);
+            var pType = isGenPal ? palGens[palGenScroll + (cell - 16)] : palFx[palFxScroll + (cell - 24)];
+            if (pType) { heldPalette = cell; heldPaletteType = pType; heldPaletteKind = isGenPal ? 'gen' : 'fx'; palAssignUsed = false; screenDirty = true; }
+            return;
+        }
+        if (heldPalette >= 0) {                       /* a palette pad is held + a slot tapped = ASSIGN */
+            var wantGen = (heldPaletteKind === 'gen');
+            if ((wantGen && cell < 8) || (!wantGen && cell >= 8 && cell < 16)) {
+                sendAddmod(cell, heldPaletteType);
+                showAction('SET ' + heldPaletteType); palAssignUsed = true; ledDirty = true; screenDirty = true;
+            } else { showAction(wantGen ? 'GENS -> ROW 1' : 'FX -> ROW 2'); }
+            return;
+        }
         const g = cellMap[cell];
         if (g === undefined || g === null) {         /* empty pad -> grow the patch */
             if (!shiftHeld && !deleteHeld) {
@@ -930,6 +983,16 @@ globalThis.onMidiMessageInternal = function (data) {
     if (status === 0x80 || (status === 0x90 && d2 === 0)) {
         if (d1 >= 68 && d1 <= 99) {
             const cell = NOTE_TO_CELL[d1];
+            if (heldPalette >= 0 && cell === heldPalette) {   /* palette release: tap = audition (unless it assigned) */
+                if (!palAssignUsed && heldPaletteType) {
+                    auditioningType = (auditioningType === heldPaletteType) ? '' : heldPaletteType;
+                    sendAudition(heldPaletteType, heldPaletteKind);
+                    showAction((auditioningType ? 'AUDITION ' : 'STOP ') + heldPaletteType);
+                    ledDirty = true;
+                }
+                heldPalette = -1; screenDirty = true;
+                return;
+            }
             if (heldCell === cell) {
                 const shortTap = (Date.now() - heldStart) < LONG_PRESS_MS;
                 if (shortTap && !heldNameShown && !heldAdjusted) {
@@ -954,9 +1017,19 @@ globalThis.onMidiMessageInternal = function (data) {
             if (typeof host_exit_module === 'function') host_exit_module();
             return;
         }
+        if (d1 === MoveRight && d2 > 0) {                       /* scroll the module-browser palettes -> */
+            if (palGens.length > 8) palGenScroll = Math.min(palGenScroll + 1, palGens.length - 8);
+            if (palFx.length > 8) palFxScroll = Math.min(palFxScroll + 1, palFx.length - 8);
+            ledDirty = true; return;
+        }
+        if (d1 === MoveLeft && d2 > 0) {                        /* scroll the palettes <- */
+            palGenScroll = Math.max(0, palGenScroll - 1);
+            palFxScroll = Math.max(0, palFxScroll - 1);
+            ledDirty = true; return;
+        }
         if (d1 === MoveShift) { shiftHeld = d2 > 0; return; }
         if (d1 === MoveMenu && d2 > 0) {                        /* Menu (3 lines) = PERFORMANCES view */
-            perfMode = !perfMode; if (perfMode) { samplerMode = false; scenesMode = false; cdpMode = false; fxHeld = -1; }
+            perfMode = !perfMode; if (perfMode) { samplerMode = false; scenesMode = false; cdpMode = false; fxHeld = -1; sendAudStop(); }
             ledDirty = true; screenDirty = true; showAction(perfMode ? 'PERFORMANCES' : 'PATCH');
             return;
         }
@@ -975,17 +1048,17 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveRow3) {                                  /* Track 3 = SCENES view; Shift+Track 3 = morph-time editor */
             if (d2 > 0) {
                 if (shiftHeld) { morphEdit = true; screenDirty = true; }
-                else { scenesMode = !scenesMode; if (scenesMode) { samplerMode = false; perfMode = false; cdpMode = false; } ledDirty = true; screenDirty = true; showAction(scenesMode ? 'SCENES' : 'PATCH'); }
+                else { scenesMode = !scenesMode; if (scenesMode) { samplerMode = false; perfMode = false; cdpMode = false; sendAudStop(); } ledDirty = true; screenDirty = true; showAction(scenesMode ? 'SCENES' : 'PATCH'); }
             }
             return;
         }
         if (d1 === MoveRow4) {                                  /* Track 4 = SAMPLER view; Shift+Track 4 = CDP view */
             if (d2 > 0) {
                 if (shiftHeld) {
-                    cdpMode = !cdpMode; if (cdpMode) { samplerMode = false; scenesMode = false; perfMode = false; } fxHeld = -1;
+                    cdpMode = !cdpMode; if (cdpMode) { samplerMode = false; scenesMode = false; perfMode = false; sendAudStop(); } fxHeld = -1;
                     ledDirty = true; screenDirty = true; showAction(cdpMode ? 'CDP' : 'PATCH');
                 } else {
-                    samplerMode = !samplerMode; if (samplerMode) { scenesMode = false; perfMode = false; cdpMode = false; } fxHeld = -1;
+                    samplerMode = !samplerMode; if (samplerMode) { scenesMode = false; perfMode = false; cdpMode = false; sendAudStop(); } fxHeld = -1;
                     ledDirty = true; screenDirty = true; showAction(samplerMode ? 'SAMPLER' : 'PATCH');
                 }
             }

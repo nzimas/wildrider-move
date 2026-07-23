@@ -123,6 +123,7 @@ class HeadlessController:
         self._master_gain = 6.0    # current master makeup (saved/restored per performance)
         self._muted = False        # Play-button toggle: master output silenced?
         self._cdp_busy = False     # CDP view: a capture+process job is running
+        self._auditioning = None   # module type currently being auditioned in the palette
         self._perf_xfade = 2.0     # seconds to crossfade between performances (gapless)
         self._density = 0.0        # knob 1: global trigger density (-1..1, 0 = as generated)
         self._density_override = {}   # mid -> per-generator density (held-pad edits)
@@ -300,11 +301,17 @@ class HeadlessController:
         threading.Thread(target=worker, daemon=True).start()
 
     def _write_modules_list(self) -> None:
-        """Static list of selectable module types for the CHAINS picker ui.js."""
+        """Selectable module types for ui.js: a flat list for the CHAINS picker, and a
+        categorised palette for the patch-view browser (row 3 = generators, row 4 =
+        processors). RINGS/FBANK ('both') appear in BOTH palettes on purpose."""
         try:
             from .catalog import CATALOG
             types = [t for t in CATALOG if CATALOG[t].is_audio]
             (SHARE / "modules.json").write_text(json.dumps(types))
+            gens = [t for t in CATALOG if CATALOG[t].is_audio and CATALOG[t].generative_capable]
+            fx = [t for t in CATALOG if CATALOG[t].is_audio and CATALOG[t].insert_capable
+                  and CATALOG[t].type != "SEQ"]
+            (SHARE / "palette.json").write_text(json.dumps({"gens": gens, "fx": fx}))
         except Exception:
             pass
 
@@ -953,10 +960,16 @@ class HeadlessController:
         gestures load RINGS/DX7/WAVIARY); otherwise a random module of that row's class
         (GEN row -> generator/hybrid, FX row -> processor)."""
         from .catalog import CATALOG
-        if not (0 <= cell < 32) or cell in self._pad_map.values():
-            return                                      # occupied / out of range
+        if not (0 <= cell < 32):
+            return
+        occupant = next((mid for mid, c in self._pad_map.items() if c == cell), None)
+        if occupant is not None:
+            if not mtype:
+                return                                  # random grow onto an occupied pad: ignore
+            self.state.remove_module(occupant)          # palette assign REPLACES the slot's module
+            self._pad_map.pop(occupant, None)
         if mtype and mtype in CATALOG and CATALOG[mtype].is_audio:
-            t = mtype                                   # forced (Play/Rec + empty pad)
+            t = mtype                                   # forced (Play/Rec + empty pad, or palette assign)
         else:
             gen_row = cell in self.GEN_CELLS
             pool = [tt for tt, s in CATALOG.items()
@@ -974,6 +987,25 @@ class HeadlessController:
         self.state.wire_in_module(m.id, sync=False)
         self.state._sync_graph(grow_mid=m.id)
         self.state.retarget_lfos(self._style)           # give dead/empty LFOs a live target
+
+    # -- Module-browser audition (patch-view palette, rows 3 & 4) -------------- #
+    def audition(self, mtype: str, kind: str) -> None:
+        """Tap a palette module: hear it. Generators self-sound; processors get a test
+        oscillator run through them (with their defaults) so their character is obvious.
+        Tapping the same type again stops it (toggle); tapping another switches."""
+        from .catalog import CATALOG
+        if not mtype or mtype not in CATALOG:
+            return
+        if self._auditioning == mtype:
+            self.audition_stop()
+            return
+        self._auditioning = mtype
+        path = "/atelier/audition/fx" if kind == "fx" else "/atelier/audition/gen"
+        self.bridge.send(path, mtype)
+
+    def audition_stop(self) -> None:
+        self._auditioning = None
+        self.bridge.send("/atelier/audition/stop")
 
     def delete_pad(self, pad: int) -> None:
         """Track3 + pad: remove the module at that pad; its cell clears."""
@@ -997,8 +1029,10 @@ class HeadlessController:
     # Canvas contract: generators + hybrids live in the GEN rows (1 & 3),
     # processors in the FX rows (2 & 4). Pads top->bottom are cells 0-7, 8-15,
     # 16-23, 24-31. Layout only — it never affects wiring.
-    GEN_CELLS = [0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23]
-    FX_CELLS = [8, 9, 10, 11, 12, 13, 14, 15, 24, 25, 26, 27, 28, 29, 30, 31]
+    # Canvas = the top two rows only: row 1 (0-7) generators, row 2 (8-15) processors.
+    # Rows 3 & 4 (16-31) are the module-browser palettes (drawn by ui.js), not slots.
+    GEN_CELLS = [0, 1, 2, 3, 4, 5, 6, 7]
+    FX_CELLS = [8, 9, 10, 11, 12, 13, 14, 15]
 
     def _is_gen(self, spec) -> bool:
         return self._category(spec) in ("gen", "both")   # generator OR hybrid (RINGS)
@@ -1240,6 +1274,10 @@ class HeadlessController:
                     a = doc.get("arg", -1)
                     self._safe(lambda: self.add_module_at(
                         int(a) if isinstance(a, (int, float)) else -1, str(doc.get("mtype", ""))))
+                elif cmd == "audition":         # palette tap: audition a module type (mtype + kind)
+                    self._safe(lambda: self.audition(str(doc.get("mtype", "")), str(doc.get("kind", ""))))
+                elif cmd == "audstop":
+                    self._safe(self.audition_stop)
                 else:
                     arg = doc.get("arg", -1)
                     self._dispatch_cmd(str(cmd), int(arg) if isinstance(arg, (int, float)) else -1)

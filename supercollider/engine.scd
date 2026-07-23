@@ -211,6 +211,16 @@
 		SynthDef(("busClear_" ++ channels).asSymbol, { |bus = 0|
 			ReplaceOut.ar(bus, Silent.ar(channels));
 		}).add;
+		// audition test source (patch-view processor audition): a repeating plucked saw
+		// (2/sec, varying pitch) over a low drone -> transients + sustain so ANY processor's
+		// character is obvious (reverb tails, delay repeats, gate chopping, filter sweeps...).
+		SynthDef(("audtone_" ++ channels).asSymbol, { |out = 0, amp = 0.32|
+			var trig = Impulse.kr(2);
+			var env = EnvGen.kr(Env.perc(0.004, 0.42), trig);
+			var pit = TIRand.kr(0, 5, trig).linexp(0, 5, 165, 660);
+			var sig = (Saw.ar(pit) * env) + (LFSaw.ar(82.5) * 0.12) + (SinOsc.ar(165) * 0.1);
+			Out.ar(out, (~killbad.(sig) * amp) ! channels);
+		}).add;
 		// master loudness guard: NaN/Inf kill + brickwall limiter so runaway
 		// feedback can never clip the output (blueprint panic/loudness policy).
 		// Master makeup gain into the brickwall limiter. Tunable via \gain (the
@@ -500,6 +510,36 @@
 // file to appear + settle (shared filesystem), then runs the CDP job — so no
 // engine->controller reply is needed. Deletes the file first so the poll can't see
 // a stale one from the previous capture.
+// ---- patch-view palette audition -----------------------------------------
+// Build a throwaway module (id \_aud) with ~moduleNew (so FMTONE's LFO buses etc. are
+// set up correctly), route its output to master, and — for a processor — feed a test
+// tone through its input with sensible defaults (enable/wet on). Frees on stop/switch.
+~audTone = nil; ~audCord = nil;
+~auditionStop = {
+	~audCord.notNil.if { ~audCord.free; ~audCord = nil };
+	~audTone.notNil.if { ~audTone.free; ~audTone = nil };
+	~modules[\_aud].notNil.if { ~moduleFree.(\_aud) };
+};
+~auditionGen = { |type|
+	~auditionStop.value;
+	~moduleNew.(\_aud, type, ~nchan, 1, 0);
+	~modules[\_aud].notNil.if {
+		~audCord = Synth.tail(~gMix, ("cord_" ++ ~nchan).asSymbol,
+			[\inb, ~modules[\_aud][\outBus].index, \outb, ~masterBus.index]);
+	};
+};
+~auditionFx = { |type|
+	~auditionStop.value;
+	~moduleNew.(\_aud, type, ~nchan, 1, 0);
+	~modules[\_aud].notNil.if {
+		~audTone = Synth.head(~modules[\_aud][\group], ("audtone_" ++ ~nchan).asSymbol,
+			[\out, ~modules[\_aud][\inBus].index]);
+		~modules[\_aud][\nodes].do { |n| n.set(\enable, 1, \wet, 1, \bypass, 0) };
+		~audCord = Synth.tail(~gMix, ("cord_" ++ ~nchan).asSymbol,
+			[\inb, ~modules[\_aud][\outBus].index, \outb, ~masterBus.index]);
+	};
+};
+
 ~cdpSrcBuf = nil; ~cdpRecSyn = nil;
 ~cdpCapture = { |dur, path|
 	var frames, p = path.asString, srate = (s.sampleRate ? s.options.sampleRate ? 44100);
@@ -732,6 +772,9 @@
 	OSCdef(\sampLoad, { |m| ~sampLoadBuf.(m[1].asInteger, m[2], m[3].asInteger) }, '/atelier/sampler/load'),
 	OSCdef(\cdpCapture, { |m| ~cdpCapture.(m[1].asFloat, m[2]) }, '/atelier/cdp/capture'),
 	OSCdef(\sampPatchFx, { |m| ~sampWirePatch.(m[1].asInteger, m[2]) }, '/atelier/sampler/patchfx'),
+	OSCdef(\audGen, { |m| ~auditionGen.(m[1]) }, '/atelier/audition/gen'),
+	OSCdef(\audFx, { |m| ~auditionFx.(m[1]) }, '/atelier/audition/fx'),
+	OSCdef(\audStop, { |m| ~auditionStop.value }, '/atelier/audition/stop'),
 	OSCdef(\sampRec, { |m| ~sampRecStart.(m[1].asInteger) }, '/atelier/sampler/rec'),
 	OSCdef(\sampRecStop, { |m| ~sampRecStop.(m[1].asInteger, m[2].asInteger) }, '/atelier/sampler/recstop'),
 	OSCdef(\sampPlay, { |m| ~sampPlayStart.(m[1].asInteger) }, '/atelier/sampler/play'),
