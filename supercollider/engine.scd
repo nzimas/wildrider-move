@@ -42,34 +42,82 @@
 	~gRec      = Group.after(~gMaster);
 };
 
+// --- multicore layering (supernova) ------------------------------------------
+// The graph is a DAG of module chains. supernova only runs sibling nodes of a
+// ParGroup in parallel, and only when they have NO ordering dependency on each
+// other. So we assign each module a topological LAYER:
+//   layer(m) = 0                         if m has no incoming edge (a source)
+//            = 1 + max(layer(src) ...)   over m's incoming edges
+// Every edge then runs strictly low-layer -> high-layer. Modules that share a
+// layer are mutually independent, so a ParGroup per layer parallelizes them; the
+// layer ParGroups themselves sit in creation order inside the serial ~gModules,
+// and inter-layer cords go in that serial parent (before the destination layer),
+// so data dependencies stay same-block correct. On scsynth ParGroup == a plain
+// serial group, so this is behaviourally identical to the old single ordered
+// group; on supernova each layer spreads across the idle cores.
+//
+// Only module groups run in parallel, and each touches only its own private in/
+// outBus — no shared-bus writes inside a layer — so there are no cross-thread
+// races. The bus-summing cords live in the serial parent, never in a ParGroup.
+~graphLayers = {
+	// returns (layerOf: mid->Int, max: Int) computed over ~graphOrder/~graphEdges.
+	// ~graphOrder is already sources-first (Kahn), so each node's predecessors are
+	// resolved before it; residual-cycle nodes (appended last) default preds to 0.
+	var layerOf = IdentityDictionary.new, maxL = 0;
+	(~graphOrder ? []).do { |mid|
+		var lyr = 0;
+		(~graphEdges ? []).clump(2).do { |pair|
+			(pair[1] == mid).if { lyr = max(lyr, (layerOf[pair[0].asSymbol] ? 0) + 1) };
+		};
+		layerOf[mid.asSymbol] = lyr;
+		maxL = max(maxL, lyr);
+	};
+	(layerOf: layerOf, max: maxL);
+};
+// (Re)create the layer ParGroups fresh inside ~gModules and reparent every module
+// group into its layer. Reparenting a live group is glitch-free (no synth restart).
+// Old layer groups are freed AFTER their children moved out, so nothing is dropped.
+// Returns the layerOf dict so callers can place cords before the right layer.
+~applyLayers = {
+	var lay = ~graphLayers.value, layerOf = lay[\layerOf], newGroups;
+	newGroups = Array.fill(lay[\max] + 1, { ParGroup.tail(~gModules) });
+	(~graphOrder ? []).do { |mid|
+		var info = ~modules[mid.asSymbol];
+		info.notNil.if { info[\group].moveToTail(newGroups[layerOf[mid.asSymbol]]) };
+	};
+	(~layerGroups ? []).do(_.free);   // old groups now empty
+	~layerGroups = newGroups;
+	~layerOf = layerOf;               // remembered for the incremental grow path
+	layerOf;
+};
+
 // Rebuild the entire routing from the free-form connection graph. The controller
 // sends the topo order, edges and terminals; we realize it with:
 //   * a clear synth per module inBus + master (private busses are not auto-zeroed)
-//   * module groups ordered topologically (sources first)
-//   * a patch-cord synth per edge, placed after src / before dst so it reads a
-//     fresh src.outBus and sums into dst.inBus
+//   * one ParGroup per topological layer, module groups reparented into theirs
+//   * a patch-cord synth per edge, placed before the destination LAYER so it reads
+//     a fresh src.outBus (its whole layer has finished) and sums into dst.inBus
 //   * terminal cords (no outgoing edge) summed into the master bus
 ~rebuildGraph = {
+	var layerOf;
 	(~clears ? []).do(_.free);
 	(~cords ? []).do(_.free);
 	~clears = []; ~cords = [];
-	// clear every module input bus (head of ~gModules) and the master bus (head of ~gMix)
+	// clear every module input bus (head of ~gModules, before all layers) and master
 	~modules.do { |info|
 		~clears = ~clears.add(Synth.head(~gModules, ("busClear_" ++ ~nchan).asSymbol,
 			[\bus, info[\inBus].index]));
 	};
 	~clears = ~clears.add(Synth.head(~gMix, ("busClear_" ++ ~nchan).asSymbol,
 		[\bus, ~masterBus.index]));
-	// order module groups topologically (after the clears)
-	(~graphOrder ? []).do { |mid|
-		var info = ~modules[mid.asSymbol];
-		info.notNil.if { info[\group].moveToTail(~gModules) };
-	};
-	// inter-module cords: place each right before its destination group
+	// layer the modules into ParGroups
+	layerOf = ~applyLayers.value;
+	// inter-module cords: place each right before its destination's layer ParGroup
 	(~graphEdges ? []).clump(2).do { |pair|
 		var s = ~modules[pair[0].asSymbol], d = ~modules[pair[1].asSymbol];
 		(s.notNil and: { d.notNil }).if {
-			~cords = ~cords.add(Synth.before(d[\group], ("cord_" ++ ~nchan).asSymbol,
+			~cords = ~cords.add(Synth.before(~layerGroups[layerOf[pair[1].asSymbol]],
+				("cord_" ++ ~nchan).asSymbol,
 				[\inb, s[\outBus].index, \outb, d[\inBus].index]));
 		};
 	};
@@ -91,14 +139,30 @@
 ~growGraph = { |mid, dur = 0.2|
 	var info = ~modules[mid.asSymbol];
 	info.notNil.if {
+		var lyr = 0;
+		~layerOf = ~layerOf ? IdentityDictionary.new;
+		~layerGroups = ~layerGroups ? [];
 		~clears = ~clears.add(Synth.head(~gModules, ("busClear_" ++ ~nchan).asSymbol,
 			[\bus, info[\inBus].index]));
-		info[\group].moveToTail(~gModules);
+		// A freshly added module is a terminal (no outgoing edge yet), so only its
+		// incoming edges — from modules already layered — set its layer.
+		(~graphEdges ? []).clump(2).do { |pair|
+			(pair[1] == mid).if { lyr = max(lyr, (~layerOf[pair[0].asSymbol] ? 0) + 1) };
+		};
+		// grow (don't rebuild) the layer stack if this module needs a deeper layer,
+		// then drop its group into that layer ParGroup — existing layers untouched.
+		while { ~layerGroups.size <= lyr } {
+			~layerGroups = ~layerGroups.add(ParGroup.tail(~gModules));
+		};
+		info[\group].moveToTail(~layerGroups[lyr]);
+		~layerOf[mid.asSymbol] = lyr;
+		// its cords, faded in, each before its destination layer
 		(~graphEdges ? []).clump(2).do { |pair|
 			((pair[0] == mid) or: { pair[1] == mid }).if {
 				var s = ~modules[pair[0].asSymbol], d = ~modules[pair[1].asSymbol];
 				(s.notNil and: { d.notNil }).if {
-					~cords = ~cords.add(Synth.before(d[\group], ("cord_" ++ ~nchan).asSymbol,
+					var dl = min((~layerOf[pair[1].asSymbol] ? lyr), ~layerGroups.size - 1);
+					~cords = ~cords.add(Synth.before(~layerGroups[dl], ("cord_" ++ ~nchan).asSymbol,
 						[\inb, s[\outBus].index, \outb, d[\inBus].index, \gain, 1, \fade, dur]));
 				};
 			};
@@ -116,17 +180,19 @@
 // up front so the new cords are same-block correct; the old (fading) cords may run
 // a block late on changed edges, which is inaudible as they fade.
 ~morphGraph = { |dur = 2.0|
-	var oldCords = ~cords;
+	var oldCords = ~cords, layerOf;
 	oldCords.do { |c| c.set(\lagTime, dur, \xf, 0) };     // fade old routing out
 	~cords = [];
-	(~graphOrder ? []).do { |mid|
-		var info = ~modules[mid.asSymbol];
-		info.notNil.if { info[\group].moveToTail(~gModules) };
-	};
+	// re-layer into fresh ParGroups (reparenting live groups is glitch-free). The
+	// old cords keep pointing at the same per-module buses, so they still carry
+	// audio while they fade — any block-lateness from their now-earlier position is
+	// inaudible under the crossfade, exactly as before.
+	layerOf = ~applyLayers.value;
 	(~graphEdges ? []).clump(2).do { |pair|
 		var s = ~modules[pair[0].asSymbol], d = ~modules[pair[1].asSymbol];
 		(s.notNil and: { d.notNil }).if {
-			~cords = ~cords.add(Synth.before(d[\group], ("cord_" ++ ~nchan).asSymbol,  // fade new routing in
+			~cords = ~cords.add(Synth.before(~layerGroups[layerOf[pair[1].asSymbol]],  // fade new routing in
+				("cord_" ++ ~nchan).asSymbol,
 				[\inb, s[\outBus].index, \outb, d[\inBus].index, \gain, 1, \fade, dur]));
 		};
 	};
@@ -144,7 +210,8 @@
 	~modules.do { |info| info[\group].free; info[\outBus].free; info[\inBus].free };
 	~modules = IdentityDictionary.new;
 	(~clears ? []).do(_.free); (~cords ? []).do(_.free);
-	~clears = []; ~cords = [];
+	(~layerGroups ? []).do(_.free);
+	~clears = []; ~cords = []; ~layerGroups = []; ~layerOf = IdentityDictionary.new;
 	~analysisSynth.notNil.if { ~analysisSynth.free };
 };
 
@@ -157,7 +224,8 @@
 	~modules = IdentityDictionary.new;
 	~dx7mods = IdentityDictionary.new;
 	(~clears ? []).do(_.free); (~cords ? []).do(_.free);
-	~clears = []; ~cords = [];
+	(~layerGroups ? []).do(_.free);
+	~clears = []; ~cords = []; ~layerGroups = []; ~layerOf = IdentityDictionary.new;
 };
 
 ~boot = { |sr, block, channels|
@@ -283,7 +351,7 @@
 		~ensureGroups.value;
 		~inBus = Bus.audio(s, channels);
 		~masterBus = Bus.audio(s, channels);
-		~clears = []; ~cords = [];
+		~clears = []; ~cords = []; ~layerGroups = []; ~layerOf = IdentityDictionary.new;
 		~graphOrder = []; ~graphEdges = []; ~graphTerminals = [];
 		// live input into inBus
 		SynthDef(\atelierInput, { |out = 0| ReplaceOut.ar(out, SoundIn.ar((0..channels-1))) }).add;
@@ -687,11 +755,21 @@
 		(info.notNil).if({
 			// WIRED: sample is a graph source. Drop the dry/master routing, run the play
 			// group among the modules (head), and edge it into the target module's input.
+			// playBus -> target module inBus. The play group runs at ~gModules head
+			// (before every layer), so place the cord before the TARGET'S LAYER
+			// ParGroup in the serial parent — never inside a ParGroup, where its
+			// order vs the module would be undefined under supernova.
+			var tl = (~layerOf ? IdentityDictionary.new)[tgt], lg = ~layerGroups ? [];
 			(~sampFxNodes[slot] ? []).do { |n| n.free };
 			~sampFxNodes[slot] = []; ~sampFxActiveSyn[slot] = Array.newClear(~sampNfx);
 			grp.moveToHead(~gModules);
-			~sampPatchCord[slot] = Synth.before(info[\group], ("cord_" ++ ~nchan).asSymbol,
-				[\inb, pb.index, \outb, info[\inBus].index]);
+			~sampPatchCord[slot] = (tl.notNil and: { tl < lg.size }).if({
+				Synth.before(lg[tl], ("cord_" ++ ~nchan).asSymbol,
+					[\inb, pb.index, \outb, info[\inBus].index]);
+			}, {
+				Synth.before(info[\group], ("cord_" ++ ~nchan).asSymbol,   // pre-layer fallback
+					[\inb, pb.index, \outb, info[\inBus].index]);
+			});
 		}, {
 			// UNWIRED: back to a normal sampler take (play group after the patch mix).
 			grp.moveToHead(~gSampPlay);
@@ -874,7 +952,8 @@
 	OSCdef(\panic, { |m|
 		~feedback.do { |fb| fb.notNil.if { fb.free } };
 		~feedback = IdentityDictionary.new;
-		s.freeAll(~gModules.nodeID);
+		s.freeAll(~gModules.nodeID);   // nukes layer ParGroups + module groups wholesale
+		~layerGroups = []; ~layerOf = IdentityDictionary.new;
 		~modules.do { |info| info[\nodes].do { |syn| syn.set(\amp, 0) } };
 		"PANIC".postln;
 	}, '/atelier/panic'),
