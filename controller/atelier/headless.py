@@ -618,7 +618,8 @@ class HeadlessController:
             shutil.rmtree(d, ignore_errors=True)
 
     # -- Knob 1: global density (scales every generator's internal clock) -------- #
-    _CLOCKED_GENS = {"FMTONE": None, "WAVIARY": None, "RINGS": None}
+    # Density/pitch apply to any self-sounding generator (via _is_gen) — every ported
+    # voice carries a densityMul/pitchShift clock arg, so the whole fleet responds.
 
     @staticmethod
     def _dens_mul(d: float) -> float:
@@ -635,7 +636,7 @@ class HeadlessController:
         else:
             mid = next((m for m, c in self._pad_map.items() if c == int(target)), None)
             if mid and self.state.patch.modules.get(mid) \
-                    and self.state.patch.modules[mid].type in self._CLOCKED_GENS:
+                    and self._is_gen(self.state.patch.modules[mid].spec):
                 self._density_override[mid] = d      # this generator diverges from global
         self._apply_density()
 
@@ -644,7 +645,7 @@ class HeadlessController:
         for mid in [m for m in self._density_override if m not in live]:
             del self._density_override[mid]          # drop overrides for gone modules
         for mid, mod in list(live.items()):
-            if mod.type in self._CLOCKED_GENS:
+            if self._is_gen(mod.spec):
                 d = self._density_override.get(mid, self._density)
                 self.bridge.set_param(mid, "densityMul", -1, self._dens_mul(d))
 
@@ -665,7 +666,7 @@ class HeadlessController:
         else:
             mid = next((m for m, c in self._pad_map.items() if c == int(target)), None)
             if mid and self.state.patch.modules.get(mid) \
-                    and self.state.patch.modules[mid].type in self._CLOCKED_GENS:
+                    and self._is_gen(self.state.patch.modules[mid].spec):
                 self._pitch_override[mid] = p
         self._apply_pitch()
 
@@ -674,7 +675,7 @@ class HeadlessController:
         for mid in [m for m in self._pitch_override if m not in live]:
             del self._pitch_override[mid]
         for mid, mod in list(live.items()):
-            if mod.type in self._CLOCKED_GENS:
+            if self._is_gen(mod.spec):
                 p = self._pitch_override.get(mid, self._pitch)
                 self.bridge.set_param(mid, "pitchShift", -1, self._pitch_semis(p))
 
