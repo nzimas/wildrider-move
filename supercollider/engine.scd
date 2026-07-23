@@ -227,6 +227,11 @@
 		SynthDef(("audout_" ++ channels).asSymbol, { |in = 0|
 			Out.ar(0, Limiter.ar(~killbad.(In.ar(in, channels)), 0.45, 0.01));
 		}).add;
+		// play a (mono) TTS WAV once, straight to the hardware out (bypasses master mute).
+		SynthDef(("audsay_" ++ channels).asSymbol, { |buf = 0, amp = 0.9|
+			var sig = PlayBuf.ar(1, buf, BufRateScale.kr(buf), doneAction: 2);
+			Out.ar(0, (Limiter.ar(~killbad.(sig) * amp, 0.6, 0.005)) ! channels);
+		}).add;
 		// master loudness guard: NaN/Inf kill + brickwall limiter so runaway
 		// feedback can never clip the output (blueprint panic/loudness policy).
 		// Master makeup gain into the brickwall limiter. Tunable via \gain (the
@@ -520,11 +525,23 @@
 // Build a throwaway module (id \_aud) with ~moduleNew (so FMTONE's LFO buses etc. are
 // set up correctly), route its output to master, and — for a processor — feed a test
 // tone through its input with sensible defaults (enable/wet on). Frees on stop/switch.
-~audTone = nil; ~audOut = nil;
+~audTone = nil; ~audOut = nil; ~audSayBuf = nil; ~audSaySyn = nil;
 ~auditionStop = {
 	~audOut.notNil.if { ~audOut.free; ~audOut = nil };
 	~audTone.notNil.if { ~audTone.free; ~audTone = nil };
+	~audSaySyn.notNil.if { ~audSaySyn.free; ~audSaySyn = nil };
+	~audSayBuf.notNil.if { ~audSayBuf.free; ~audSayBuf = nil };
 	~modules[\_aud].notNil.if { ~moduleFree.(\_aud) };
+};
+// speak a processor's name: play the WAV the controller just rendered with espeak-ng.
+~auditionSay = { |path|
+	var p = path.asString;
+	~auditionStop.value;
+	File.exists(p).if {
+		~audSayBuf = Buffer.read(s, p, action: { |b|
+			~audSaySyn = Synth.tail(~gRec, ("audsay_" ++ ~nchan).asSymbol, [\buf, b.bufnum]);
+		});
+	};
 };
 ~auditionGen = { |type|
 	~auditionStop.value;
@@ -782,6 +799,7 @@
 	OSCdef(\sampPatchFx, { |m| ~sampWirePatch.(m[1].asInteger, m[2]) }, '/atelier/sampler/patchfx'),
 	OSCdef(\audGen, { |m| ~auditionGen.(m[1]) }, '/atelier/audition/gen'),
 	OSCdef(\audFx, { |m| ~auditionFx.(m[1]) }, '/atelier/audition/fx'),
+	OSCdef(\audSay, { |m| ~auditionSay.(m[1]) }, '/atelier/audition/say'),
 	OSCdef(\audStop, { |m| ~auditionStop.value }, '/atelier/audition/stop'),
 	OSCdef(\sampRec, { |m| ~sampRecStart.(m[1].asInteger) }, '/atelier/sampler/rec'),
 	OSCdef(\sampRecStop, { |m| ~sampRecStop.(m[1].asInteger, m[2].asInteger) }, '/atelier/sampler/recstop'),

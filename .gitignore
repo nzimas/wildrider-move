@@ -18,3 +18,5 @@ move/build/wrtone.scsyndef
 # CDP cross-build output (binaries deployed to device, not tracked)
 move/build/cdp-out/
 move/build/cdp-build.log
+move/build/espeak-out/
+move/build/espeak-build.log

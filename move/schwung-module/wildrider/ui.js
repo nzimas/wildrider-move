@@ -237,11 +237,6 @@ function sendAudStop() {
     if (typeof host_write_file === 'function')
         host_write_file(CONTROL_FILE, JSON.stringify({ seq: seq, cmd: 'audstop' }));
 }
-/* processor audition = the host TTS speaks the module name (on a path that bypasses
- * our master mute). Intelligible even if robotic. */
-function speakName(type) {
-    if (typeof host_send_screenreader === 'function') host_send_screenreader(String(type).toLowerCase());
-}
 /* addmod carries an optional forced module type (Play/Rec gestures). */
 function sendAddmod(cell, mtype) {
     seq++; lastCmd = 'addmod'; lastArg = cell;
@@ -997,8 +992,8 @@ globalThis.onMidiMessageInternal = function (data) {
                         auditioningType = (auditioningType === heldPaletteType) ? '' : heldPaletteType;
                         sendAudition(heldPaletteType, 'gen');
                         showAction((auditioningType ? 'AUDITION ' : 'STOP ') + heldPaletteType);
-                    } else {                                  /* processor: the host TTS speaks its name */
-                        speakName(heldPaletteType);
+                    } else {                                  /* processor: the controller speaks its name (espeak-ng) */
+                        sendAudition(heldPaletteType, 'fx');
                         showAction('SAY ' + heldPaletteType);
                     }
                     ledDirty = true;

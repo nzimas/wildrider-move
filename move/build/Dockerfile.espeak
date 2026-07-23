@@ -1,0 +1,24 @@
+# Cross-build a relocatable aarch64/glibc-2.35 espeak-ng for the Ableton Move, so
+# Wildrider can speak any processor name on demand (the module browser audition).
+# Built on the Mac via `docker buildx --platform linux/arm64`; the device never
+# sees Docker. Ubuntu 22.04 == the Move's glibc 2.35, so the binary + lib load
+# against the device's own libc. Final stage is `scratch` so buildx --output
+# exports just the bundle tree (bin/espeak-ng, lib/libespeak-ng.so*, share/espeak-ng-data).
+
+FROM ubuntu:22.04 AS build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git build-essential autoconf automake libtool pkg-config ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+# A tagged release for a reproducible build (no external audio backend needed — we
+# only use file output, which the SC engine then plays through its own path).
+RUN git clone --depth 1 --branch 1.51 https://github.com/espeak-ng/espeak-ng.git /src
+WORKDIR /src
+RUN ./autogen.sh \
+    && ./configure --prefix=/opt/espeak --without-pcaudiolib --without-sonic --without-mbrola \
+    && make -j"$(nproc)" \
+    && make install
+RUN strip /opt/espeak/bin/espeak-ng /opt/espeak/lib/libespeak-ng.so* 2>/dev/null || true
+
+FROM scratch AS export
+COPY --from=build /opt/espeak /espeak
