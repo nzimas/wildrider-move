@@ -55,6 +55,15 @@ const CAT_ON = {
     midi: VividYellow
 };
 const OFF_COLOR = White;
+/* Per-engine LED colours ported from poundhard [bright, dim] (raw Move palette indices),
+ * so each generator keeps its identity in the browser + on the canvas. */
+const ENGINE_COLORS = {
+    FMTONE:   [8, 80], WAVIARY: [45, 91],
+    FM7:      [8, 80], DRUM:    [7, 74], BUCHLOID: [21, 107], MOLLY: [16, 95], RINGS: [14, 87],
+    BEN:      [2, 67], NOIZEOP: [23, 109], ICARUS: [18, 105], PLAITS: [31, 84], SHAKER: [25, 106],
+    MEMBRANE: [6, 70], MALLET:  [13, 85], BOWED:  [33, 90], PLUCK:  [29, 108], TUBE: [37, 96],
+    CHAOS:    [5, 68], WTABLE:  [45, 91], BYTEBEAT: [30, 110]
+};
 
 let phase = 0;
 let launched = false;
@@ -408,7 +417,11 @@ function renderLEDs() {
     for (let cell = 0; cell < 16; cell++) {
         const g = cellMap[cell];
         let color = Black;                          /* empty slot = UNLIT */
-        if (g) color = g.on ? (CAT_ON[g.cat] || CAT_ON.fx) : OFF_COLOR;
+        if (g) {
+            var ec = ENGINE_COLORS[g.type];
+            if (ec) color = g.on ? ec[0] : ec[1];   /* per-engine bright/dim identity */
+            else color = g.on ? (CAT_ON[g.cat] || CAT_ON.fx) : OFF_COLOR;
+        }
         setLED(PAD_NOTES[cell], color);
     }
     /* row 3 (16-23) = generator PALETTE, row 4 (24-31) = processor PALETTE (scrollable).
@@ -417,7 +430,8 @@ function renderLEDs() {
     for (let i = 0; i < 8; i++) {
         var gt = palGens[palGenScroll + i];
         var gEdge = (i === 0 && palGenScroll > 0) || (i === 7 && palGenScroll + 8 < palGens.length);
-        setLED(PAD_NOTES[16 + i], gt ? (gt === auditioningType ? BrightGreen : (gEdge ? Cyan : ForestGreen)) : Black);
+        var gec = gt ? ENGINE_COLORS[gt] : null;
+        setLED(PAD_NOTES[16 + i], gt ? (gt === auditioningType ? (gec ? gec[0] : BrightGreen) : (gEdge ? Cyan : (gec ? gec[1] : ForestGreen))) : Black);
         var ft = palFx[palFxScroll + i];
         var fEdge = (i === 0 && palFxScroll > 0) || (i === 7 && palFxScroll + 8 < palFx.length);
         setLED(PAD_NOTES[24 + i], ft ? (ft === auditioningType ? AzureBlue : (fEdge ? Cyan : RoyalBlue)) : Black);

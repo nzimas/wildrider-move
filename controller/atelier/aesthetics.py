@@ -278,7 +278,7 @@ def guided_wet(rng, artist: str, module_type: str) -> float | None:
 # Pure generators (self-sounding). RINGS is the only HYBRID source — it can sit
 # silent with no input/excitation, so it must never be a patch's ONLY source, or
 # the patch has no audible generator at all.
-PURE_GENERATORS = {"FMTONE", "WAVIARY"}
+PURE_GENERATORS = {"FMTONE", "FM7", "WAVIARY"}
 
 MODULE_PALETTE: dict[str, dict] = {
     "vidna_obmana": {  # immersive ambient — one or two warm voices bathed in space
@@ -292,7 +292,7 @@ MODULE_PALETTE: dict[str, dict] = {
         "sources_count": (2, 4), "count": (6, 10), "require": ["VERB"],
     },
     "bernard_parmegiani": {  # musique concrète — one voice, transformed in space
-        "sources": {"RINGS": 2, "FMTONE": 2},
+        "sources": {"RINGS": 2, "FMTONE": 2, "FM7": 2},
         "effects": {"PITCH": 3, "TIME": 3, "COMB": 2, "VERB": 2, "CLOUDS": 2, "GRAINS": 2, "SDLY": 2, "GATE": 1},
         "sources_count": (3, 5), "count": (8, 14), "require": ["TIME", "PITCH"],
     },
@@ -302,7 +302,7 @@ MODULE_PALETTE: dict[str, dict] = {
         "sources_count": (3, 5), "count": (7, 12), "require": ["DISTORT", "GATE"],
     },
     "autechre": {  # algorithmic — one or two voices, fragmented, digital artefacts
-        "sources": {"RINGS": 2, "FMTONE": 2},
+        "sources": {"RINGS": 2, "FMTONE": 2, "FM7": 2},
         "effects": {"DISTORT": 2, "GATE": 3, "TIME": 2, "COMB": 2, "SDLY": 2, "GRAINS": 2},
         "sources_count": (3, 5), "count": (8, 14), "require": ["GATE"],
     },

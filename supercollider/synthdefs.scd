@@ -222,6 +222,48 @@
 		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
 	}).add;
 
+	// ---- FM7: real 6-operator FM (ported from poundhard), wonky-clock articulated ----
+	// A full FM7 (Chowning) matrix voice: 6 operators, 6 algorithms, per-op ratios, FM
+	// index + feedback. Poundhard triggered it per drum step; here Wildrider's unstable
+	// internal clock re-gates the amp + index envelopes so it self-articulates.
+	SynthDef(("fm7" ++ suf).asSymbol, { |out = 0, note = 48,
+		algo = 0, r1 = 1, r2 = 1, r3 = 1, r4 = 2, r5 = 1, r6 = 3.5,
+		index = 1.0, fb = 0.1, bright = 1.0,
+		attack = 0.004, decay = 0.6, ampCurve = -4, mDecay = 0.6, cutoff = 16000,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0,
+		amp = 0.55, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkVelV, v, f0, aEnv, mEnv, ratios, ctlMatrix, modMatrix, ops, sig, fcut;
+		var algos = [
+			( mods: [[0,1,0,0,0,0],[0,1,0,0,0,0],[0,0,0,1,0,0],[0,0,0,1,0,0],[0,0,0,0,0,1],[0,0,0,0,0,1]], carr: [1,0,1,0,1,0] ),
+			( mods: [[0,1,0,0,0,0],[0,0,1,0,0,0],[0,0,0,1,0,0],[0,0,0,0,1,0],[0,0,0,0,0,1],[0,0,0,0,0,1]], carr: [1,0,0,0,0,0] ),
+			( mods: [[0,0,0,0,1,0],[0,0,0,0,1,0],[0,0,0,0,0,1],[0,0,0,0,0,1],[0,0,0,0,1,0],[0,0,0,0,0,1]], carr: [1,1,1,1,0,0] ),
+			( mods: [[0,1,0,0,0,0],[0,1,0,0,0,0],[0,0,0,1,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0]], carr: [1,0,1,0,0,0] ),
+			( mods: [[0,1,1,1,0,0],[0,0,0,0,1,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,1,0],[0,0,0,0,0,0]], carr: [1,0,0,0,0,1] ),
+			( mods: [[0,1,0,0,0,0],[0,0,1,0,0,0],[0,0,1,0,0,0],[0,0,0,0,1,0],[0,0,0,0,0,1],[0,0,0,0,0,1]], carr: [1,0,0,1,0,0] )
+		];
+		// unstable internal clock (Wildrider signature): drifting rate + dropped/extra hits.
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		f0 = ((note.clip(0, 127) + pitchShift).midicps).clip(8, 16000);
+		aEnv = EnvGen.ar(Env.perc(attack.clip(0.0005, 2), (decay * (clkLen + 0.2)).clip(0.01, 8), 1, ampCurve.clip(-8, -1)), clkTrig);
+		mEnv = EnvGen.kr(Env.perc(0.002, (decay * mDecay).clip(0.01, 6), 1, -3.5), clkTrig);
+		ratios = [r1, r2, r3, r4, r5, r6].collect { |r| r.clip(0.01, 24) };
+		ctlMatrix = ratios.collect { |rr| [(rr * f0).clip(1, 20000), 0, 1] };
+		modMatrix = 6.collect { |i| 6.collect { |j|
+			var w = Select.kr(algo.clip(0, 5), algos.collect { |a| a[\mods][i][j] });
+			(i == j).if({ w * fb.clip(0, 1) * 1.6 }, { w * index.clip(0, 12) * mEnv }) } };
+		ops = FM7.ar(ctlMatrix, modMatrix);
+		sig = 6.collect { |k| ops[k] * Select.kr(algo.clip(0, 5), algos.collect { |a| a[\carr][k] }) }.sum;
+		sig = sig * aEnv;
+		fcut = (cutoff * bright.clip(0.1, 4)).clip(60, 19000);
+		sig = LPF.ar(sig, fcut);
+		sig = LeakDC.ar(sig) * v * amp * 0.5 * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
 	// ---- DISTORT: versatile multi-stage distortion / saturation ----------
 	// A full waveshaping chain (best-of SC, core UGens + a Chebyshev Shaper):
 	// pre-emphasis tone -> drive + asymmetry bias -> 8-way waveshaper bank ->

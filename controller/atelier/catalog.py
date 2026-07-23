@@ -202,6 +202,51 @@ FMTONE = ModuleSpec(
 )
 
 # --------------------------------------------------------------------------- #
+# FM7 — real 6-operator FM voice (Chowning matrix), ported from poundhard and
+# self-articulated by Wildrider's unstable internal clock.
+# --------------------------------------------------------------------------- #
+FM7 = ModuleSpec(
+    type="FM7",
+    role="Real 6-operator FM (Chowning matrix): 6 algorithms, per-operator ratios, FM index "
+         "+ feedback, brightness. A wonky internal clock self-articulates it.",
+    node_meaning="FM7 voice (one note in the stack).",
+    synthdef="fm7",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=3.0,
+    gestures=["fm", "epiano", "bell", "clang", "brass", "percussive-fm"],
+    node_params=[
+        P("fm7.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("fm7.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
+        P("fm7.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.55, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.35, 0.9)),
+        P("fm7.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("fm7.algo", "Algorithm", curve=Curve.ENUM, enum=["epiano", "clang", "organ", "fmbass", "bell", "stab"], default=0, randomize=RandomizePolicy.WIDE),
+        P("fm7.r1", "Ratio 1", rmin=0.01, rmax=24.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.5, 8.0)),
+        P("fm7.r2", "Ratio 2", rmin=0.01, rmax=24.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.5, 8.0)),
+        P("fm7.r3", "Ratio 3", rmin=0.01, rmax=24.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.5, 8.0)),
+        P("fm7.r4", "Ratio 4", rmin=0.01, rmax=24.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.5, 11.0)),
+        P("fm7.r5", "Ratio 5", rmin=0.01, rmax=24.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.5, 8.0)),
+        P("fm7.r6", "Ratio 6", rmin=0.01, rmax=24.0, default=3.5, curve=Curve.EXP, formatter="float2", musical=(0.5, 11.0)),
+        P("fm7.index", "FM Index", rmin=0.0, rmax=12.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.3, 6.0)),
+        P("fm7.fb", "Feedback", rmin=0.0, rmax=1.0, default=0.1, musical=(0.0, 0.7), danger=DangerClass.FEEDBACK),
+        P("fm7.bright", "Brightness", rmin=0.1, rmax=4.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 2.5)),
+        P("fm7.attack", "Attack", unit="s", rmin=0.0005, rmax=2.0, default=0.004, curve=Curve.EXP, formatter="float3", musical=(0.001, 0.05)),
+        P("fm7.decay", "Decay", unit="s", rmin=0.01, rmax=8.0, default=0.6, curve=Curve.EXP, formatter="float2", musical=(0.08, 2.5)),
+        P("fm7.ampCurve", "Amp Curve", rmin=-8.0, rmax=-1.0, default=-4.0, formatter="float1", musical=(-6.0, -2.0)),
+        P("fm7.mDecay", "Index Decay", rmin=0.05, rmax=1.5, default=0.6, formatter="float2", musical=(0.2, 1.2)),
+        P("fm7.cutoff", "Cutoff", unit="Hz", rmin=60.0, rmax=19000.0, default=16000.0, curve=Curve.EXP, formatter="Hz", musical=(800.0, 18000.0)),
+        P("fm7.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("fm7.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("fm7.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("fm7.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("fm7.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+# --------------------------------------------------------------------------- #
 # 5.4 PITCH — pitch-shifting granular delay surface
 # --------------------------------------------------------------------------- #
 PITCH = ModuleSpec(
@@ -991,14 +1036,14 @@ WAVEFOLDER = ModuleSpec(
 # takeover does not use it. Its ModuleSpec + SeqEngine remain in the codebase for
 # desktop parity, but it is not registered, so it never appears in any patch/grid.
 CATALOG: dict[str, ModuleSpec] = {
-    m.type: m for m in (FMTONE, PITCH, TIME, COMB, GAIN, SDLY, VERB,
+    m.type: m for m in (FMTONE, FM7, PITCH, TIME, COMB, GAIN, SDLY, VERB,
                         CLOUDS, GRAINS, RINGS, WAVIARY, ENV, GATE, DISTORT,
                         OVERDRIVE, AMPSIM, EQUALIZER, FLANGER, PHASER, RINGMOD,
                         BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER)
 }   # FBANK + PLAITS + MOLLY + BUCHLOID retired above; BEN replaced by WAVIARY
 
 # Ordered lanes (source -> processors -> spatial tail).
-DEFAULT_LANE_ORDER = ["FMTONE", "PITCH", "TIME", "COMB", "GAIN",
+DEFAULT_LANE_ORDER = ["FMTONE", "FM7", "PITCH", "TIME", "COMB", "GAIN",
                       "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "WAVIARY", "ENV", "GATE",
                       "DISTORT", "OVERDRIVE", "AMPSIM", "EQUALIZER", "FLANGER", "PHASER", "RINGMOD",
                       "BITCRUSHER", "LOFI", "TREMOLO", "WAVEFOLDER"]
