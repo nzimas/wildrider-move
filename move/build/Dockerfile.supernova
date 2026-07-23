@@ -37,15 +37,42 @@ RUN cmake .. \
         -DSC_IDE=OFF -DSC_QT=OFF -DSC_ED=OFF -DSC_EL=OFF -DSC_VIM=OFF \
         -DSC_ABLETON_LINK=OFF -DSC_HIDAPI=OFF -DNO_X11=ON \
         -DSYSTEM_BOOST=OFF -DNATIVE=OFF -DINSTALL_HELP=OFF \
-    && make -j"$(nproc)" supernova
+    && make -j"$(nproc)" supernova \
+    && make -j"$(nproc)"
 
-# Locate the built binary and gather it + its shared-lib deps (we'll diff against
-# the device's existing bundle later to decide what actually needs shipping).
+# ---- extra plugins' supernova variants, built against THIS SC source ----------
+# The device's mi-UGens (Plaits/Clouds/Rings) and sc3-plugins (JPverb, Stk, DWG,
+# Membrane...) came as scsynth-only or apt supernova builds. Rebuild their
+# supernova variants against /sc so every UGen matches this supernova server's ABI.
+# mi-UGens:
+RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
+        https://github.com/v7b1/mi-UGens.git /mi \
+    && mkdir -p /mi/build && cd /mi/build \
+    && cmake .. -DSC_PATH=/sc -DSUPERNOVA=ON -DCMAKE_BUILD_TYPE=Release \
+    && make -j"$(nproc)"
+# sc3-plugins (all; we'll deploy only the supernova variants):
+RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
+        https://github.com/supercollider/sc3-plugins.git /sc3 \
+    && mkdir -p /sc3/build && cd /sc3/build \
+    && cmake .. -DSC_PATH=/sc -DSUPERNOVA=ON -DCMAKE_BUILD_TYPE=Release \
+        -DQUARKS=OFF -DNATIVE=OFF \
+    && make -j"$(nproc)" || (echo "sc3 full make had failures; per-target retry"; \
+        make JPverb_supernova -j"$(nproc)" || true)
+
+# Gather the supernova server binary + the CORE UGen plugins' *_supernova.so
+# variants. The device only has scsynth's core plugins (LFUGens.so etc., no
+# supernova variant) plus sc3-plugins' 74 *_supernova.so — so supernova had no
+# core UGens (not even Control). These fill that gap; they coexist with the
+# device's scsynth .so (scsynth loads .so, supernova loads _supernova.so).
 RUN set -eux; \
     SN="$(find /sc/build -type f -name supernova -perm -u+x | head -n1)"; \
     echo "built: $SN"; \
-    mkdir -p /out/bin /out/lib; \
+    mkdir -p /out/bin /out/lib /out/plugins; \
     cp -v "$SN" /out/bin/supernova; \
+    echo "=== mi-UGens build products ==="; find /mi/build -name "Mi*.so" -o -name "Mi*.scx" | sort; \
+    echo "=== sc3 JPverb products ==="; find /sc3/build -iname "*jpverb*" -o -iname "*verb*supernova*" | sort; \
+    find /sc/build /mi/build /sc3/build -type f \( -name "*_supernova.so" -o -name "*_supernova.scx" \) -exec cp -v {} /out/plugins/ \; ; \
+    echo "supernova plugins gathered:"; ls /out/plugins | wc -l; \
     ldd /out/bin/supernova | awk '/=> \// {print $3}' | sort -u | tee /out/ldd.txt; \
     for so in $(ldd /out/bin/supernova | awk '/=> \// {print $3}' | sort -u); do \
         cp -vL "$so" /out/lib/ 2>/dev/null || true; \
