@@ -41,23 +41,41 @@ RUN cmake .. \
     && make -j"$(nproc)"
 
 # ---- extra plugins' supernova variants, built against THIS SC source ----------
-# The device's mi-UGens (Plaits/Clouds/Rings) and sc3-plugins (JPverb, Stk, DWG,
-# Membrane...) came as scsynth-only or apt supernova builds. Rebuild their
-# supernova variants against /sc so every UGen matches this supernova server's ABI.
-# mi-UGens:
+# supernova loads ONLY *_supernova.so. The core (SC) + sc3-plugins supernova set
+# is covered above / by the device's apt build; these three sources still need
+# their supernova variants: mi-UGens (Plaits/Clouds/Rings), ByteBeat, and JPverb.
+
+# mi-UGens: its CMake ignores SUPERNOVA (raw add_library) — append a supernova
+# target to each project we use, then build just those.
+COPY mi-supernova.cmake /mi-supernova.cmake
 RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
         https://github.com/v7b1/mi-UGens.git /mi \
+    && for proj in MiPlaits MiRings MiClouds; do \
+         cat /mi-supernova.cmake >> /mi/projects/$proj/CMakeLists.txt; \
+       done \
     && mkdir -p /mi/build && cd /mi/build \
-    && cmake .. -DSC_PATH=/sc -DSUPERNOVA=ON -DCMAKE_BUILD_TYPE=Release \
-    && make -j"$(nproc)"
-# sc3-plugins (all; we'll deploy only the supernova variants):
-RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
+    && cmake .. -DSC_PATH=/sc -DCMAKE_BUILD_TYPE=Release \
+    && make -j"$(nproc)" MiPlaits_supernova MiRings_supernova MiClouds_supernova
+
+# ByteBeat (midouest/bytebeat): already uses SC's sc_add_server_plugin macro, so
+# -DSUPERNOVA=ON produces ByteBeat_supernova.so directly.
+RUN git clone --depth 1 https://github.com/midouest/bytebeat.git /bb \
+    && mkdir -p /bb/build && cd /bb/build \
+    && cmake .. -DSC_PATH=/sc -DSUPERNOVA=ON -DSCSYNTH=ON -DCMAKE_BUILD_TYPE=Release \
+        -DTEST=OFF -DCLI=OFF \
+    && make -j"$(nproc)" ByteBeat_supernova
+
+# sc3-plugins JPverb (the VERB effect). The full sc3 build trips over unrelated
+# plugins, so build ONLY the reverb supernova targets against /sc.
+# sc3-plugins has no 3.11.x tag (upstream jumped 3.9.1 -> 3.13.0); master needs a
+# newer-than-3.11.2 API (ClearUnitIfMemFailed). Version-3.9.1 predates that and
+# compiles against 3.11.2.
+RUN git clone --depth 1 --branch Version-3.9.1 --recurse-submodules --shallow-submodules \
         https://github.com/supercollider/sc3-plugins.git /sc3 \
     && mkdir -p /sc3/build && cd /sc3/build \
-    && cmake .. -DSC_PATH=/sc -DSUPERNOVA=ON -DCMAKE_BUILD_TYPE=Release \
-        -DQUARKS=OFF -DNATIVE=OFF \
-    && make -j"$(nproc)" || (echo "sc3 full make had failures; per-target retry"; \
-        make JPverb_supernova -j"$(nproc)" || true)
+    && cmake .. -DSC_PATH=/sc -DSUPERNOVA=ON -DCMAKE_BUILD_TYPE=Release -DQUARKS=OFF -DNATIVE=OFF \
+    && (make -j"$(nproc)" JPverb_supernova Greyhole_supernova \
+        || make JPverb_supernova || echo "JPverb build failed — check log")
 
 # Gather the supernova server binary + the CORE UGen plugins' *_supernova.so
 # variants. The device only has scsynth's core plugins (LFUGens.so etc., no
@@ -69,9 +87,9 @@ RUN set -eux; \
     echo "built: $SN"; \
     mkdir -p /out/bin /out/lib /out/plugins; \
     cp -v "$SN" /out/bin/supernova; \
-    echo "=== mi-UGens build products ==="; find /mi/build -name "Mi*.so" -o -name "Mi*.scx" | sort; \
-    echo "=== sc3 JPverb products ==="; find /sc3/build -iname "*jpverb*" -o -iname "*verb*supernova*" | sort; \
-    find /sc/build /mi/build /sc3/build -type f \( -name "*_supernova.so" -o -name "*_supernova.scx" \) -exec cp -v {} /out/plugins/ \; ; \
+    echo "=== extra supernova products ==="; \
+    find /mi/build /bb/build /sc3/build -name "*_supernova.so" | sort; \
+    find /sc/build /mi/build /bb/build /sc3/build -type f -name "*_supernova.so" -exec cp -v {} /out/plugins/ \; ; \
     echo "supernova plugins gathered:"; ls /out/plugins | wc -l; \
     ldd /out/bin/supernova | awk '/=> \// {print $3}' | sort -u | tee /out/ldd.txt; \
     for so in $(ldd /out/bin/supernova | awk '/=> \// {print $3}' | sort -u); do \
