@@ -1,0 +1,56 @@
+# Cross-build the SuperCollider *supernova* (multithreaded) server for the Move
+# (RPi CM4, AbletonOS, glibc 2.35). Ubuntu 22.04 = glibc 2.35, identical to the
+# device, so the binary loads against the device's own libc.
+#
+# The device already runs SC 3.11.2's scsynth + its sc3-plugins *_supernova.so
+# variants (from the apt packages). Debian/Ubuntu do NOT ship the supernova
+# server binary, so we compile it from the MATCHING 3.11.2 source — same server-
+# plugin ABI, so those _supernova.so plugins load unchanged.
+#
+# Built on the Mac via `docker buildx --platform linux/arm64`; the final stage is
+# `scratch` so --output exports just the binary + its extra runtime libs.
+
+FROM ubuntu:22.04 AS build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git cmake build-essential pkg-config ca-certificates patchelf \
+        libjack-jackd2-dev libsndfile1-dev libfftw3-dev libasound2-dev libudev-dev \
+        libboost-dev libboost-thread-dev libboost-system-dev \
+        libboost-program-options-dev libboost-filesystem-dev libboost-regex-dev \
+        libboost-test-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# SC 3.11.2 source WITH submodules — supernova needs its own nova-tt (threading)
+# and nova-simd submodules. Several SC submodules still declare git:// URLs, which
+# GitHub now refuses (connection reset) — rewrite git:// -> https:// globally first.
+RUN git config --global url."https://github.com/".insteadOf "git://github.com/"
+RUN git clone --depth 1 --branch Version-3.11.2 --recurse-submodules --shallow-submodules \
+        https://github.com/supercollider/supercollider.git /sc
+
+WORKDIR /sc/build
+# Server-only, no IDE/Qt/sclang/Link/X11. SUPERNOVA=ON is the whole point.
+# NATIVE=OFF so codegen stays generic ARMv8 (not the build host's -march).
+# SYSTEM_BOOST=ON uses Ubuntu's boost (matches the device's glibc world).
+RUN cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DSUPERNOVA=ON \
+        -DSC_IDE=OFF -DSC_QT=OFF -DSC_ED=OFF -DSC_EL=OFF -DSC_VIM=OFF \
+        -DSC_ABLETON_LINK=OFF -DSC_HIDAPI=OFF -DNO_X11=ON \
+        -DSYSTEM_BOOST=OFF -DNATIVE=OFF -DINSTALL_HELP=OFF \
+    && make -j"$(nproc)" supernova
+
+# Locate the built binary and gather it + its shared-lib deps (we'll diff against
+# the device's existing bundle later to decide what actually needs shipping).
+RUN set -eux; \
+    SN="$(find /sc/build -type f -name supernova -perm -u+x | head -n1)"; \
+    echo "built: $SN"; \
+    mkdir -p /out/bin /out/lib; \
+    cp -v "$SN" /out/bin/supernova; \
+    ldd /out/bin/supernova | awk '/=> \// {print $3}' | sort -u | tee /out/ldd.txt; \
+    for so in $(ldd /out/bin/supernova | awk '/=> \// {print $3}' | sort -u); do \
+        cp -vL "$so" /out/lib/ 2>/dev/null || true; \
+    done; \
+    ls -l /out/bin/supernova
+
+FROM scratch AS export
+COPY --from=build /out /
