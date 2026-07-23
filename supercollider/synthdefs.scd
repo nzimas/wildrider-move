@@ -53,7 +53,7 @@
 	// ---- STK init: point the STK plugin at the rawwave bank before any physical-
 	// model voice (MALLET/BOWED — StkInst) spawns. SHAKER is stochastic (no rawwaves)
 	// but this is harmless for it. Fired once at boot (see engine.scd). No suffix.
-	SynthDef(\stkInit, { StkGlobals.ar(1, 1, "/data/UserData/wildrider/rawwaves") }).add;
+	SynthDef(\stkInit, { StkGlobals.ar(1, 1, "/data/UserData/wildrider/rawwaves"); Line.kr(0, 1, 0.3, doneAction: 2) }).add;
 
 	// ---- DX7: exact 6-operator FM voice (port of DX7-Supercollider) -------
 	// Per-module pitch/amp modulation LFO. Writes a frequency *multiplier*
@@ -696,6 +696,92 @@
 		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
 	}).add;
 
+
+	// ---- WTABLE: Ableton "Wavetable" rebuild (ported from poundhard) ----
+	// Two morphing wavetable oscillators (BufRd over concatenated 1024-sample single-cycle
+	// frames) + sub + noise -> 3-mode filter with drive -> AR/sustain amp env; the osc
+	// POSITION is swept per-hit by an envelope + LFO. buf1/buf2 are sprite buffers set by
+	// the engine at spawn (Move's built-in wavetable bank). Wonky-clock articulated.
+	SynthDef(("wtable" ++ suf).asSymbol, { |out = 0, note = 48, buf1 = 0, buf2 = 0,
+		pos1 = 0.0, pos2 = 0.0, oscmix = 0.5, detune = 0.0, transpose2 = 0,
+		suboct = 1, sublevel = 0.0, noiselevel = 0.0,
+		cutoff = 8000, res = 0.2, filttype = 0, drive = 1.0, filtenv = 0.3,
+		posenv = 0.35, poslfoRate = 0.5, poslfoAmt = 0.0,
+		attack = 0.01, decay = 0.5, sustain = 0.7, release = 0.7,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0, bypass = 0, wet = 1, enable = 1,
+		amp = 0.3, pan = 0|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, gOn;
+		var f0, aEnv, pEnv, fEnv, posMod, p1, p2, o1, o2, sub, noise, sig, fcut, rq;
+		var wtOsc = { |buf, freq, position|
+			var n = (BufFrames.kr(buf) / 1024).max(1);
+			var ph = Phasor.ar(0, freq * 1024 / SampleRate.ir, 0, 1024);
+			var fp = position.clip(0, 1) * (n - 1);
+			var fa = fp.floor, frac = fp - fp.floor;
+			var wa = BufRd.ar(1, buf, (fa * 1024) + ph, 1, 2);
+			var wb = BufRd.ar(1, buf, ((fa + 1).min(n - 1) * 1024) + ph, 1, 2);
+			(wa * (1 - frac)) + (wb * frac);
+		};
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		gOn = Trig.kr(clkTrig, clkLenV);
+		f0 = ((note.clip(0, 127) + pitchShift).midicps).clip(8, 16000);
+		// clock-triggered AD envelope (like the rest of the fleet) — a sustained-gate ADSR
+		// barely opens under the short clock gate, so re-fire a perc env on each hit instead.
+		aEnv = EnvGen.ar(Env.perc(attack.clip(0.001, 4), (decay * (clkLenV + 0.3) + (sustain * release)).clip(0.02, 8), 1, -3), clkTrig);
+		pEnv = EnvGen.kr(Env.perc(attack.clip(0.001, 4), (decay * 1.5).clip(0.01, 8), 1, -3), clkTrig);
+		fEnv = EnvGen.kr(Env.perc(attack.clip(0.001, 2), (decay * 1.2).clip(0.01, 6), 1, -4), clkTrig);
+		posMod = (pEnv * posenv) + (SinOsc.kr(poslfoRate.clip(0.01, 30)) * poslfoAmt * 0.5);
+		p1 = (pos1 + posMod).clip(0, 1);
+		p2 = (pos2 + posMod).clip(0, 1);
+		o1 = wtOsc.(buf1, f0, p1);
+		o2 = wtOsc.(buf2, f0 * (2 ** (transpose2.round / 12)) * (2 ** (detune / 1200)), p2);
+		sig = XFade2.ar(o1, o2, oscmix.clip(0, 1) * 2 - 1);
+		sub = SinOsc.ar(f0 / (2 ** suboct.round.clip(0, 3))) * sublevel.clip(0, 1);
+		noise = PinkNoise.ar * noiselevel.clip(0, 1) * 0.6;
+		sig = sig + sub + noise;
+		rq = (1 - (res.clip(0, 1) * 0.9)).clip(0.05, 1);
+		fcut = (cutoff * (1 + (fEnv * filtenv * 4))).clip(30, 18000);
+		sig = Select.ar(filttype.round.clip(0, 2),
+			[RLPF.ar(sig, fcut, rq), BPF.ar(sig, fcut, rq), RHPF.ar(sig, fcut, rq)]);
+		sig = (sig * (1 + (drive.clip(0.1, 6) * 1.5))).tanh;
+		sig = LeakDC.ar(sig) * aEnv * v * amp * 1.4 * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
+	// ---- BYTEBEAT: 8-bit bytebeat voice (ByteBeat plugin), wonky-clock articulated ----
+	// A bytebeat expression clocked at a note-scaled sample rate; the expression is pushed
+	// per-voice via the /eval unit command (see engine ~bbExprs / ~bbUgenIndex). The unstable
+	// clock re-gates the amp envelope (gOn), so it self-articulates like the rest of the fleet.
+	~bbDef = SynthDef(("bytebeat" ++ suf).asSymbol, { |out = 0, note = 48, rate = 8000,
+		cutoff = 12000, res = 0.1, drive = 1.0,
+		attack = 0.004, decay = 0.5, sustain = 0.7, release = 0.3,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0, bypass = 0, wet = 1, enable = 1,
+		amp = 0.4, pan = 0|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, gOn, clk, t, raw, aEnv, rq, sig;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		gOn = Trig.kr(clkTrig, clkLenV);
+		clk = (rate * (2 ** (((note.clip(0, 127) + pitchShift) - 48) / 12))).clip(200, 44100);
+		t = PulseCount.ar(Impulse.ar(clk));
+		raw = ByteBeat.ar(t);
+		aEnv = EnvGen.ar(Env.new([0, 1, sustain.clip(0, 1), 0],
+			[attack.clip(0.001, 4), decay.clip(0.005, 8), release.clip(0.005, 8)], \sin), gOn);
+		rq = (1 - res.clip(0, 0.96)).clip(0.05, 1);
+		sig = RLPF.ar(raw, cutoff.clip(40, 18000), rq);
+		sig = (sig * (1 + (drive.clip(0.1, 6) * 1.5))).tanh;
+		sig = LeakDC.ar(sig) * aEnv * v * amp * 1.2 * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+	// capture the ByteBeat UGen's graph index so the engine can /eval a per-voice expression.
+	~bbUgenIndex = ~bbDef.children.detect({ |u| u.class.asSymbol == 'ByteBeat' }).synthIndex;
 
 	// ---- DISTORT: versatile multi-stage distortion / saturation ----------
 	// A full waveshaping chain (best-of SC, core UGens + a Chebyshev Shaper):

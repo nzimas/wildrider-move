@@ -259,6 +259,27 @@
 		// STK rawwave path: set once before any StkInst voice (MALLET/BOWED) spawns.
 		Synth(\stkInit);
 		s.sync;
+		// WTABLE: scan Move's built-in single-cycle wavetable sprite bank + load a default
+		// oscillator pair (buf1/buf2 passed at spawn; a silent buffer if the bank is empty).
+		~silentBuf ?? { ~silentBuf = Buffer.alloc(s, 1024, 1) };
+		~wtSprites = "/opt/move/Dsp/Vector/Sprites/*.wav".pathMatch.sort;
+		(~wtSprites.size > 0).if {
+			Buffer.readChannel(s, ~wtSprites[0], channels: [0], action: { |b| ~wtBufA = b });
+			Buffer.readChannel(s, ~wtSprites[(~wtSprites.size * 0.34).asInteger.clip(0, ~wtSprites.size - 1)],
+				channels: [0], action: { |b| ~wtBufB = b });
+		};
+		// BYTEBEAT: a curated bank of bytebeat expressions; one is pushed to each voice's
+		// ByteBeat UGen via the /eval unit command on spawn (see ~moduleBuild + ~bbUgenIndex).
+		~bbExprs = [
+			"t*(t>>5|t>>8)", "t*(((t>>12)|(t>>8))&(63&(t>>4)))",
+			"(t>>6|t|t>>(t>>16))*10+((t>>11)&7)", "t*5&(t>>7)|t*3&(t*4>>10)",
+			"t*9&t>>4|t*5&t>>7|t*3&t/1024", "t>>4|t&(t>>5)|t>>7",
+			"t&t>>8", "t*(42&t>>10)", "(t*5&t>>7)|(t*3&t>>10)",
+			"t*((t>>9|t>>13)&25&t>>6)", "(t>>7|t|t>>6)*10+4*(t&t>>13|t>>6)",
+			"t*(t>>11&t>>8&123&t>>3)", "(t*(t>>5|t>>8))>>(t>>16)",
+			"t*(t>>7|t>>10)^(t>>5)", "t>>4|t*(t>>12|t>>8)&(63&t>>4)", "(t&t>>12)*(t>>4|t>>8)"
+		];
+		s.sync;
 		~ensureGroups.value;
 		~inBus = Bus.audio(s, channels);
 		~masterBus = Bus.audio(s, channels);
@@ -414,8 +435,30 @@
 				~modules[mid.asSymbol] = (group: grp, nodes: nodeSynths, type: type, inBus: inBus,
 					outBus: outBus, pbus: pbus, abus: abus, lfo: lfo);
 			}, {
-				nodeSynths = Array.fill(nodes, {
-					Synth.tail(grp, defName, [\out, outBus.index, \in, inBus.index]);
+				(type.toUpper == "WTABLE").if({
+					// WTABLE: each voice reads a wavetable-sprite buffer pair (buf1/buf2).
+					nodeSynths = Array.fill(nodes, {
+						Synth.tail(grp, defName, [\out, outBus.index,
+							\buf1, ~wtBufA.notNil.if({ ~wtBufA.bufnum }, { ~silentBuf.bufnum }),
+							\buf2, ~wtBufB.notNil.if({ ~wtBufB.bufnum }, { ~silentBuf.bufnum })]);
+					});
+				}, {
+					(type.toUpper == "BYTEBEAT").if({
+						// BYTEBEAT: expression pushed to each voice's ByteBeat UGen via /eval
+						// right after /s_new (ordered on the server).
+						nodeSynths = Array.fill(nodes, { |i|
+							var syn = Synth.tail(grp, defName, [\out, outBus.index]);
+							(~bbUgenIndex.notNil and: { ~bbExprs.size > 0 }).if {
+								s.sendMsg('/u_cmd', syn.nodeID, ~bbUgenIndex, '/eval',
+									~bbExprs.wrapAt(i));
+							};
+							syn;
+						});
+					}, {
+						nodeSynths = Array.fill(nodes, {
+							Synth.tail(grp, defName, [\out, outBus.index, \in, inBus.index]);
+						});
+					});
 				});
 				~modules[mid.asSymbol] = (group: grp, nodes: nodeSynths, type: type, inBus: inBus, outBus: outBus);
 			});

@@ -737,6 +737,86 @@ TUBE = ModuleSpec(
     ],
 )
 
+WTABLE = ModuleSpec(
+    type="WTABLE",
+    role="Ableton-style wavetable voice: two morphing wavetable oscillators (Move's sprite bank) "
+         "with position sweep + LFO, sub, noise, 3-mode filter and drive. A wonky internal clock articulates it.",
+    node_meaning="Wavetable voice (one note in the stack).",
+    synthdef="wtable",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=2.5,
+    gestures=["wavetable", "morph-sweep", "pwm-pad", "digital-bass", "position-lfo"],
+    node_params=[
+        P("wtable.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("wtable.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
+        P("wtable.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.3, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.2, 0.6)),
+        P("wtable.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("wtable.pos1", "Position A", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 1.0)),
+        P("wtable.pos2", "Position B", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 1.0)),
+        P("wtable.oscmix", "Osc Mix", rmin=0.0, rmax=1.0, default=0.5, musical=(0.1, 0.9)),
+        P("wtable.detune", "Detune", unit="cent", rmin=-50.0, rmax=50.0, default=0.0, curve=Curve.BIPOLAR, formatter="float1", musical=(-25.0, 25.0)),
+        P("wtable.transpose2", "Transpose B", unit="semitone", rmin=-24.0, rmax=24.0, default=0.0, rate=Rate.DISCRETE, curve=Curve.BIPOLAR, formatter="float1", musical=(-12.0, 12.0)),
+        P("wtable.suboct", "Sub Octave", rmin=0.0, rmax=3.0, default=1.0, rate=Rate.DISCRETE, formatter="float1", musical=(1.0, 2.0)),
+        P("wtable.sublevel", "Sub Level", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.6)),
+        P("wtable.noiselevel", "Noise Level", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.4)),
+        P("wtable.cutoff", "Cutoff", unit="Hz", rmin=40.0, rmax=18000.0, default=8000.0, curve=Curve.EXP, formatter="Hz", musical=(500.0, 16000.0)),
+        P("wtable.res", "Resonance", rmin=0.0, rmax=1.0, default=0.2, musical=(0.0, 0.75)),
+        P("wtable.filttype", "Filter Type", curve=Curve.ENUM, enum=["lowpass", "bandpass", "highpass"], default=0, randomize=RandomizePolicy.WIDE),
+        P("wtable.drive", "Drive", rmin=0.1, rmax=6.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.5, 3.0)),
+        P("wtable.filtenv", "Filter Env", rmin=0.0, rmax=1.0, default=0.3, musical=(0.0, 0.8)),
+        P("wtable.posenv", "Position Env", rmin=0.0, rmax=1.0, default=0.35, musical=(0.0, 0.8)),
+        P("wtable.poslfoRate", "Position LFO Rate", unit="Hz", rmin=0.01, rmax=30.0, default=0.5, curve=Curve.EXP, formatter="float2", musical=(0.05, 8.0)),
+        P("wtable.poslfoAmt", "Position LFO Amt", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.6)),
+        P("wtable.attack", "Attack", unit="s", rmin=0.001, rmax=4.0, default=0.01, curve=Curve.EXP, formatter="float3", musical=(0.002, 0.5)),
+        P("wtable.decay", "Decay", unit="s", rmin=0.005, rmax=8.0, default=0.5, curve=Curve.EXP, formatter="float2", musical=(0.05, 2.5)),
+        P("wtable.sustain", "Sustain", rmin=0.0, rmax=1.0, default=0.7, musical=(0.3, 1.0)),
+        P("wtable.release", "Release", unit="s", rmin=0.01, rmax=8.0, default=0.7, curve=Curve.EXP, formatter="float2", musical=(0.1, 3.0)),
+        P("wtable.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("wtable.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("wtable.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("wtable.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("wtable.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+BYTEBEAT = ModuleSpec(
+    type="BYTEBEAT",
+    role="8-bit bytebeat voice: a curated expression clocked at a note-scaled rate through a "
+         "resonant filter + drive. A wonky internal clock re-gates it.",
+    node_meaning="Bytebeat voice (one note in the stack).",
+    synthdef="bytebeat",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=2.0,
+    gestures=["bytebeat", "8bit", "chiptune", "glitch", "digital", "lofi"],
+    node_params=[
+        P("bytebeat.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("bytebeat.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
+        P("bytebeat.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.4, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.25, 0.6)),
+        P("bytebeat.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("bytebeat.rate", "Bit Rate", unit="Hz", rmin=200.0, rmax=44100.0, default=8000.0, curve=Curve.EXP, formatter="Hz", musical=(1000.0, 22050.0)),
+        P("bytebeat.cutoff", "Cutoff", unit="Hz", rmin=40.0, rmax=18000.0, default=12000.0, curve=Curve.EXP, formatter="Hz", musical=(800.0, 16000.0)),
+        P("bytebeat.res", "Resonance", rmin=0.0, rmax=0.96, default=0.1, musical=(0.0, 0.8)),
+        P("bytebeat.drive", "Drive", rmin=0.1, rmax=6.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.5, 3.0)),
+        P("bytebeat.attack", "Attack", unit="s", rmin=0.001, rmax=4.0, default=0.004, curve=Curve.EXP, formatter="float3", musical=(0.002, 0.3)),
+        P("bytebeat.decay", "Decay", unit="s", rmin=0.005, rmax=8.0, default=0.5, curve=Curve.EXP, formatter="float2", musical=(0.05, 2.0)),
+        P("bytebeat.sustain", "Sustain", rmin=0.0, rmax=1.0, default=0.7, musical=(0.3, 1.0)),
+        P("bytebeat.release", "Release", unit="s", rmin=0.005, rmax=8.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 2.0)),
+        P("bytebeat.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("bytebeat.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("bytebeat.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("bytebeat.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("bytebeat.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
 
 # --------------------------------------------------------------------------- #
 # 5.4 PITCH — pitch-shifting granular delay surface
@@ -1410,11 +1490,7 @@ WAVEFOLDER = ModuleSpec(
 # desktop parity, but it is not registered, so it never appears in any patch/grid.
 CATALOG: dict[str, ModuleSpec] = {
     m.type: m for m in (FMTONE, FM7, BUCHLOID, MOLLY, BEN, NOIZEOP, CHAOS,
-                        ICARUS, PLAITS, SHAKER, MEMBRANE, PLUCK, TUBE,
-                        # MALLET, BOWED — StkModalBar/StkBandedWG silent on this sc3-plugins
-                        # build (rawwave models produce no output; SHAKER/stochastic works).
-                        # Synthdefs + specs retained; excluded from the active fleet pending
-                        # on-device STK rawwave-load debugging.
+                        ICARUS, PLAITS, SHAKER, MEMBRANE, PLUCK, TUBE, WTABLE, BYTEBEAT,   # MALLET, BOWED excluded (StkInst rawwave models silent/racy on this sc3-plugins build)
                         PITCH, TIME, COMB, GAIN, SDLY, VERB,
                         CLOUDS, GRAINS, RINGS, WAVIARY, ENV, GATE, DISTORT,
                         OVERDRIVE, AMPSIM, EQUALIZER, FLANGER, PHASER, RINGMOD,
@@ -1423,7 +1499,7 @@ CATALOG: dict[str, ModuleSpec] = {
 
 # Ordered lanes (source -> processors -> spatial tail).
 DEFAULT_LANE_ORDER = ["FMTONE", "FM7", "BUCHLOID", "MOLLY", "BEN", "NOIZEOP", "CHAOS",
-                      "ICARUS", "PLAITS", "SHAKER", "MEMBRANE", "PLUCK", "TUBE",
+                      "ICARUS", "PLAITS", "SHAKER", "MEMBRANE", "PLUCK", "TUBE", "WTABLE", "BYTEBEAT",   # MALLET/BOWED: unreliable StkInst rawwave load on this build
                       "PITCH", "TIME", "COMB", "GAIN",
                       "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "WAVIARY", "ENV", "GATE",
                       "DISTORT", "OVERDRIVE", "AMPSIM", "EQUALIZER", "FLANGER", "PHASER", "RINGMOD",
