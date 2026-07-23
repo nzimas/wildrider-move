@@ -246,6 +246,498 @@ FM7 = ModuleSpec(
     ],
 )
 
+BUCHLOID = ModuleSpec(
+    type="BUCHLOID",
+    role="Buchla-style complex oscillator: dual FM modulators into a sine/varsaw core, wavefolding "
+         "+ timbre bloom, pressure/drive saturation, resonant LPF. A wonky internal clock self-articulates it.",
+    node_meaning="Buchloid voice (one note in the stack).",
+    synthdef="buchloid",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=2.5,
+    gestures=["west-coast", "complex-osc", "wavefold", "pluck", "metallic", "buchla"],
+    node_params=[
+        P("buchloid.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("buchloid.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
+        P("buchloid.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.25, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.12, 0.33)),
+        P("buchloid.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("buchloid.fm1Ratio", "FM1 Ratio", rmin=0.1, rmax=12.0, default=0.66, curve=Curve.EXP, formatter="float2", musical=(0.25, 8.0)),
+        P("buchloid.fm1Amount", "FM1 Amount", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.7)),
+        P("buchloid.fm2Ratio", "FM2 Ratio", rmin=0.1, rmax=24.0, default=3.3, curve=Curve.EXP, formatter="float2", musical=(0.5, 12.0)),
+        P("buchloid.fm2Amount", "FM2 Amount", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.7)),
+        P("buchloid.waveShape", "Wave Shape", rmin=0.0, rmax=1.0, default=0.0, formatter="float2", musical=(0.0, 1.0)),
+        P("buchloid.waveFolds", "Wave Folds", rmin=0.0, rmax=3.0, default=0.0, formatter="float2", musical=(0.0, 2.0)),
+        P("buchloid.timbre", "Timbre", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.9)),
+        P("buchloid.attack", "Attack", unit="s", rmin=0.001, rmax=4.0, default=0.02, curve=Curve.EXP, formatter="float3", musical=(0.005, 0.3)),
+        P("buchloid.decay", "Decay", unit="s", rmin=0.01, rmax=8.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.1, 3.0)),
+        P("buchloid.peak", "Filter Peak", unit="Hz", rmin=100.0, rmax=12000.0, default=8000.0, curve=Curve.EXP, formatter="Hz", musical=(500.0, 11000.0)),
+        P("buchloid.res", "Resonance", rmin=0.0, rmax=1.0, default=0.2, danger=DangerClass.FEEDBACK, musical=(0.0, 0.85)),
+        P("buchloid.pressure", "Pressure", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.8)),
+        P("buchloid.drive", "Drive", rmin=0.1, rmax=4.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.3, 3.0)),
+        P("buchloid.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("buchloid.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("buchloid.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("buchloid.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("buchloid.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+MOLLY = ModuleSpec(
+    type="MOLLY",
+    role="Molly-the-Poly analogue voice: 2 osc + sub + noise, filter/amp ADSRs, LFO routing, ring-mod, "
+         "cross-FM/fold/crush grit, asymmetric drive, chorus. A wonky internal clock self-articulates it.",
+    node_meaning="Molly voice (one note in the stack).",
+    synthdef="molly",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=3.0,
+    gestures=["analogue", "poly", "pad", "bass", "lead", "acid", "grit"],
+    node_params=[
+        P("molly.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("molly.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
+        P("molly.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.3, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.15, 0.4)),
+        P("molly.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("molly.detune", "Detune", unit="cent", rmin=0.0, rmax=50.0, default=7.0, formatter="float2", musical=(2.0, 30.0)),
+        P("molly.oscShape", "Osc Shape", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),
+        P("molly.pulseWidth", "Pulse Width", rmin=0.05, rmax=0.95, default=0.5, musical=(0.2, 0.8)),
+        P("molly.subLevel", "Sub Level", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.7)),
+        P("molly.noiseLevel", "Noise Level", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.4)),
+        P("molly.cutoff", "Cutoff", unit="Hz", rmin=20.0, rmax=18000.0, default=1200.0, curve=Curve.EXP, formatter="Hz", musical=(200.0, 12000.0)),
+        P("molly.resonance", "Resonance", rmin=0.0, rmax=1.0, default=0.2, danger=DangerClass.FEEDBACK, musical=(0.0, 0.85)),
+        P("molly.lpType", "Filter Type", curve=Curve.ENUM, enum=["rlpf", "moog"], default=1),
+        P("molly.filterEnvAmt", "Filter Env Amt", rmin=0.0, rmax=1.0, default=0.3, musical=(0.0, 0.8)),
+        P("molly.fAtk", "Filter Atk", unit="s", rmin=0.001, rmax=4.0, default=0.05, curve=Curve.EXP, formatter="float3", musical=(0.005, 1.0)),
+        P("molly.fDec", "Filter Dec", unit="s", rmin=0.005, rmax=6.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 2.0)),
+        P("molly.fSus", "Filter Sus", rmin=0.0, rmax=1.0, default=0.6, musical=(0.2, 0.9)),
+        P("molly.fRel", "Filter Rel", unit="s", rmin=0.005, rmax=8.0, default=0.6, curve=Curve.EXP, formatter="float2", musical=(0.05, 3.0)),
+        P("molly.aAtk", "Amp Atk", unit="s", rmin=0.001, rmax=4.0, default=0.01, curve=Curve.EXP, formatter="float3", musical=(0.002, 0.5)),
+        P("molly.aDec", "Amp Dec", unit="s", rmin=0.005, rmax=6.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 2.0)),
+        P("molly.aSus", "Amp Sus", rmin=0.0, rmax=1.0, default=0.8, musical=(0.3, 1.0)),
+        P("molly.aRel", "Amp Rel", unit="s", rmin=0.005, rmax=8.0, default=0.5, curve=Curve.EXP, formatter="float2", musical=(0.05, 3.0)),
+        P("molly.lfoRate", "LFO Rate", unit="Hz", rmin=0.01, rmax=40.0, default=4.0, curve=Curve.EXP, formatter="float2", musical=(0.1, 12.0)),
+        P("molly.lfoToCutoff", "LFO to Cutoff", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.7)),
+        P("molly.lfoToPitch", "LFO to Pitch", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.5)),
+        P("molly.lfoToPW", "LFO to PW", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.7)),
+        P("molly.lfoToAmp", "LFO to Amp", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.6)),
+        P("molly.ringMod", "Ring Mod", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.8)),
+        P("molly.drive", "Drive", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.7)),
+        P("molly.chorus", "Chorus", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.8)),
+        P("molly.fmAmt", "Cross-FM", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.5)),
+        P("molly.fold", "Wavefold", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.7)),
+        P("molly.crush", "Bitcrush", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.7)),
+        P("molly.downsample", "Downsample", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.7)),
+        P("molly.grit", "Grit", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.6)),
+        P("molly.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("molly.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("molly.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("molly.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("molly.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+BEN = ModuleSpec(
+    type="BEN",
+    role="Benjolin: two cross-modulating oscillators + an 8-bit shift-register rungler whose "
+         "DAC feeds back into pitch and cutoff — stepped self-patterning chaos. A wonky internal clock articulates it.",
+    node_meaning="Benjolin voice (one in the stack).",
+    synthdef="ben",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=3.0,
+    gestures=["benjolin", "rungler", "chaos-drone", "stepped", "cross-mod", "glitch"],
+    node_params=[
+        P("ben.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("ben.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
+        P("ben.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.3, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.2, 0.5)),
+        P("ben.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("ben.freq2", "Osc2 Freq", unit="Hz", rmin=0.02, rmax=12000.0, default=4.0, curve=Curve.EXP, formatter="Hz", musical=(0.5, 500.0)),
+        P("ben.scale", "Rungler Scale", rmin=0.0, rmax=1.0, default=1.0, formatter="percent1", musical=(0.2, 1.0)),
+        P("ben.rungler1", "Rungler>Osc1", rmin=0.0, rmax=2.0, default=0.16, formatter="float2", musical=(0.0, 0.6)),
+        P("ben.rungler2", "Rungler>Osc2", rmin=0.0, rmax=2.0, default=0.0, formatter="float2", musical=(0.0, 0.4)),
+        P("ben.runglerFilt", "Rungler>Cutoff", rmin=0.0, rmax=64.0, default=9.0, curve=Curve.EXP, formatter="float2", musical=(0.0, 24.0)),
+        P("ben.filtFreq", "Filter Freq", unit="Hz", rmin=20.0, rmax=16000.0, default=40.0, curve=Curve.EXP, formatter="Hz", musical=(60.0, 8000.0)),
+        P("ben.q", "Resonance", rmin=0.0, rmax=1.0, default=0.82, formatter="percent1", danger=DangerClass.FEEDBACK, musical=(0.2, 0.95)),
+        P("ben.filterType", "Filter Type", curve=Curve.ENUM, enum=["lowpass", "highpass", "svf", "dfm1"], default=0, randomize=RandomizePolicy.WIDE),
+        P("ben.outSignal", "Output Tap", curve=Curve.ENUM, enum=["tri1", "pulse1", "tri2", "pulse2", "pwm", "shift", "filtered"], default=6, randomize=RandomizePolicy.WIDE),
+        P("ben.gain", "Drive", rmin=0.01, rmax=8.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.3, 4.0)),
+        P("ben.decay", "Length Mult", rmin=0.1, rmax=6.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.2, 3.0)),
+        P("ben.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("ben.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("ben.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("ben.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("ben.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+NOIZEOP = ModuleSpec(
+    type="NOIZEOP",
+    role="Four sine oscillators combined through six nonlinear algorithms (products, ratios, "
+         "truncation, hypot, sum-of-squares) -> spiky glitchy noise, filter bank. A wonky internal clock articulates it.",
+    node_meaning="NoizeOp voice (one in the stack).",
+    synthdef="noizeop",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=3.5,
+    gestures=["glitch", "noise", "digital-chaos", "spiky", "nonlinear", "harsh"],
+    node_params=[
+        P("noizeop.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("noizeop.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
+        P("noizeop.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.3, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.2, 0.5)),
+        P("noizeop.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("noizeop.freq01", "Ratio 1", rmin=0.125, rmax=16.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.25, 8.0)),
+        P("noizeop.freq02", "Ratio 2", rmin=0.125, rmax=16.0, default=1.5, curve=Curve.EXP, formatter="float2", musical=(0.25, 8.0)),
+        P("noizeop.freq03", "Ratio 3", rmin=0.125, rmax=16.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.25, 8.0)),
+        P("noizeop.freq04", "Ratio 4", rmin=0.125, rmax=16.0, default=3.0, curve=Curve.EXP, formatter="float2", musical=(0.25, 8.0)),
+        P("noizeop.mul01", "Osc1 Level", rmin=0.0, rmax=2.0, default=1.0, formatter="float2", musical=(0.3, 1.5)),
+        P("noizeop.mul02", "Osc2 Level", rmin=0.0, rmax=2.0, default=1.0, formatter="float2", musical=(0.3, 1.5)),
+        P("noizeop.mul03", "Osc3 Level", rmin=0.0, rmax=2.0, default=1.0, formatter="float2", musical=(0.3, 1.5)),
+        P("noizeop.mul04", "Osc4 Level", rmin=0.0, rmax=2.0, default=1.0, formatter="float2", musical=(0.3, 1.5)),
+        P("noizeop.a_mod_01", "Algo1 Mod", rmin=0.001, rmax=4.0, default=1.0, curve=Curve.EXP, formatter="float3", musical=(0.2, 2.0)),
+        P("noizeop.a_mod_02", "Algo2 Mod", rmin=0.001, rmax=4.0, default=1.0, curve=Curve.EXP, formatter="float3", musical=(0.2, 2.0)),
+        P("noizeop.a_mod_03", "Algo3 Trunc", rmin=0.001, rmax=1.0, default=0.02, curve=Curve.EXP, formatter="float3", musical=(0.005, 0.2)),
+        P("noizeop.a_mod_04", "Algo4 Mod", rmin=0.001, rmax=4.0, default=1.0, curve=Curve.EXP, formatter="float3", musical=(0.2, 2.0)),
+        P("noizeop.a_mod_05", "Algo5 Mod", rmin=0.001, rmax=4.0, default=1.0, curve=Curve.EXP, formatter="float3", musical=(0.2, 2.0)),
+        P("noizeop.a_mod_06", "Algo6 Mod", rmin=0.001, rmax=4.0, default=1.0, curve=Curve.EXP, formatter="float3", musical=(0.2, 2.0)),
+        P("noizeop.a_vol_01", "Algo1 Mix", rmin=0.0, rmax=1.0, default=0.5, formatter="percent1", musical=(0.0, 1.0)),
+        P("noizeop.a_vol_02", "Algo2 Mix", rmin=0.0, rmax=1.0, default=0.5, formatter="percent1", musical=(0.0, 1.0)),
+        P("noizeop.a_vol_03", "Algo3 Mix", rmin=0.0, rmax=1.0, default=0.5, formatter="percent1", musical=(0.0, 1.0)),
+        P("noizeop.a_vol_04", "Algo4 Mix", rmin=0.0, rmax=1.0, default=0.5, formatter="percent1", musical=(0.0, 1.0)),
+        P("noizeop.a_vol_05", "Algo5 Mix", rmin=0.0, rmax=1.0, default=0.5, formatter="percent1", musical=(0.0, 1.0)),
+        P("noizeop.a_vol_06", "Algo6 Mix", rmin=0.0, rmax=1.0, default=0.5, formatter="percent1", musical=(0.0, 1.0)),
+        P("noizeop.ffreq01", "HiPass Freq", unit="Hz", rmin=20.0, rmax=18000.0, default=40.0, curve=Curve.EXP, formatter="Hz", musical=(30.0, 2000.0)),
+        P("noizeop.ffreq02", "LoPass Freq", unit="Hz", rmin=20.0, rmax=18000.0, default=12000.0, curve=Curve.EXP, formatter="Hz", musical=(2000.0, 16000.0)),
+        P("noizeop.ffreq03", "Resonz Freq", unit="Hz", rmin=20.0, rmax=18000.0, default=1200.0, curve=Curve.EXP, formatter="Hz", musical=(200.0, 6000.0)),
+        P("noizeop.q01", "HiPass Q", rmin=0.05, rmax=4.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.2, 2.0)),
+        P("noizeop.q02", "LoPass Q", rmin=0.05, rmax=4.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.2, 2.0)),
+        P("noizeop.q03", "Resonz Q", rmin=0.05, rmax=4.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.2, 2.0)),
+        P("noizeop.gain", "Drive", rmin=0.01, rmax=8.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.3, 4.0)),
+        P("noizeop.decay", "Length Mult", rmin=0.1, rmax=6.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.2, 3.0)),
+        P("noizeop.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("noizeop.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("noizeop.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("noizeop.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("noizeop.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+CHAOS = ModuleSpec(
+    type="CHAOS",
+    role="Chaotic-map oscillators (feedback sine + iterated strange attractors): note sets the "
+         "iteration rate, chaosA/B steer the attractor from tone to noise, wavefolder + resonant filter. A wonky internal clock articulates it.",
+    node_meaning="Chaos voice (one in the stack).",
+    synthdef="chaos",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=2.5,
+    gestures=["chaos", "strange-attractor", "noise", "glitch", "fbsine", "henon"],
+    node_params=[
+        P("chaos.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("chaos.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
+        P("chaos.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.2, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.1, 0.35)),
+        P("chaos.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("chaos.type", "Map", curve=Curve.ENUM, enum=["fbsine", "latoocarfian", "henon", "standard", "cusp"], default=0, randomize=RandomizePolicy.WIDE),
+        P("chaos.chaosA", "Chaos A", rmin=0.0, rmax=4.0, default=1.1, formatter="float2", musical=(0.3, 3.0)),
+        P("chaos.chaosB", "Chaos B", rmin=0.0, rmax=3.0, default=0.5, formatter="float2", musical=(0.2, 2.0)),
+        P("chaos.fold", "Wavefold", rmin=0.0, rmax=1.0, default=0.0, formatter="percent1", musical=(0.0, 0.8)),
+        P("chaos.cutoff", "Cutoff", unit="Hz", rmin=40.0, rmax=16000.0, default=6000.0, curve=Curve.EXP, formatter="Hz", musical=(400.0, 12000.0)),
+        P("chaos.res", "Resonance", rmin=0.0, rmax=1.0, default=0.2, formatter="percent1", danger=DangerClass.FEEDBACK, musical=(0.0, 0.8)),
+        P("chaos.attack", "Attack", unit="s", rmin=0.0005, rmax=2.0, default=0.003, curve=Curve.EXP, formatter="float3", musical=(0.001, 0.05)),
+        P("chaos.decay", "Decay", unit="s", rmin=0.01, rmax=8.0, default=0.5, curve=Curve.EXP, formatter="float2", musical=(0.05, 2.0)),
+        P("chaos.ampCurve", "Amp Curve", rmin=-8.0, rmax=-1.0, default=-4.0, formatter="float1", musical=(-6.0, -2.0)),
+        P("chaos.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("chaos.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("chaos.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("chaos.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("chaos.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+ICARUS = ModuleSpec(
+    type="ICARUS",
+    role="'Dreamcrusher' pad/drone: detuned VarSaw + Pulse sub through a feedback delay "
+         "network, MoogLadder low-pass and Dust dropouts. A wonky internal clock re-articulates it.",
+    node_meaning="Icarus voice (one drone in the stack).",
+    synthdef="icarus",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=4.0,
+    gestures=["pad", "drone", "dreamcrush", "detune-swell", "feedback-wash", "dropout"],
+    node_params=[
+        P("icarus.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("icarus.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
+        P("icarus.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.3, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.2, 0.55)),
+        P("icarus.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("icarus.subpitch", "Sub Octave", rmin=0.0, rmax=3.0, default=1.0, formatter="float1", musical=(1.0, 2.0)),
+        P("icarus.sublevel", "Sub Level", rmin=0.0, rmax=1.0, default=0.3, musical=(0.0, 0.6)),
+        P("icarus.detuning", "Detune", rmin=0.0, rmax=1.0, default=0.1, musical=(0.0, 0.4)),
+        P("icarus.portamento", "Portamento", unit="s", rmin=0.0, rmax=1.0, default=0.1, curve=Curve.EXP, formatter="float2", musical=(0.02, 0.4)),
+        P("icarus.pwmcenter", "PWM Center", rmin=0.0, rmax=1.0, default=0.5, musical=(0.3, 0.7)),
+        P("icarus.pwmwidth", "PWM Width", rmin=0.0, rmax=1.0, default=0.05, musical=(0.0, 0.3)),
+        P("icarus.pwmfreq", "PWM Rate", unit="Hz", rmin=0.1, rmax=30.0, default=10.0, curve=Curve.EXP, formatter="float2", musical=(0.5, 20.0)),
+        P("icarus.lpf", "Cutoff", unit="Hz", rmin=20.0, rmax=18000.0, default=6000.0, curve=Curve.EXP, formatter="Hz", musical=(400.0, 12000.0)),
+        P("icarus.resonance", "Resonance", rmin=0.0, rmax=1.0, default=0.2, musical=(0.0, 0.7)),
+        P("icarus.feedback", "FDN Feedback", rmin=0.0, rmax=0.98, default=0.5, musical=(0.2, 0.85), danger=DangerClass.FEEDBACK),
+        P("icarus.delaytime", "Delay Time", unit="s", rmin=0.0, rmax=0.5, default=0.25, curve=Curve.EXP, formatter="float3", musical=(0.02, 0.45)),
+        P("icarus.destruction", "Destruction", unit="Hz", rmin=0.0, rmax=30.0, default=0.0, formatter="float1", musical=(0.0, 8.0)),
+        P("icarus.attack", "Attack", unit="s", rmin=0.0005, rmax=2.0, default=0.02, curve=Curve.EXP, formatter="float3", musical=(0.005, 0.5)),
+        P("icarus.release", "Release", unit="s", rmin=0.01, rmax=8.0, default=1.5, curve=Curve.EXP, formatter="float2", musical=(0.2, 4.0)),
+        P("icarus.sustain", "Sustain", rmin=0.0, rmax=1.0, default=0.8, musical=(0.3, 1.0)),
+        P("icarus.gain", "Gain", unit="dB", rmin=0.0, rmax=2.0, default=1.0, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.5, 1.2)),
+        P("icarus.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("icarus.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("icarus.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("icarus.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("icarus.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+PLAITS = ModuleSpec(
+    type="PLAITS",
+    role="Mutable Instruments Plaits: 16-model macro-oscillator (analog/wavetable/FM/chord/"
+         "speech/noise/percussion). A wonky internal clock triggers its LPG and articulates it.",
+    node_meaning="Plaits voice (one note in the stack).",
+    synthdef="plaits",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=3.0,
+    gestures=["macro-osc", "model-morph", "pluck", "chord", "speech", "percussion"],
+    node_params=[
+        P("plaits.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("plaits.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 72.0)),
+        P("plaits.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.4, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.25, 0.7)),
+        P("plaits.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("plaits.model", "Engine", curve=Curve.ENUM,
+          enum=["va", "waveshape", "fm", "grain", "additive", "wavetable", "chord", "speech",
+                "swarm", "noise", "particle", "string", "modal", "bass-drum", "snare", "hi-hat"],
+          default=0, randomize=RandomizePolicy.WIDE),
+        P("plaits.harm", "Harmonics", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),
+        P("plaits.timbre", "Timbre", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),
+        P("plaits.morph", "Morph", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),
+        P("plaits.decay", "LPG Decay", rmin=0.0, rmax=1.0, default=0.5, musical=(0.1, 0.9)),
+        P("plaits.lpgColour", "LPG Colour", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),
+        P("plaits.aux", "Out/Aux Blend", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 1.0)),
+        P("plaits.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("plaits.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("plaits.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("plaits.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("plaits.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+SHAKER = ModuleSpec(
+    type="SHAKER",
+    role="STK stochastic shakers (maraca, cabasa, guiro, tambourine, sleigh bells...): "
+         "energy/decay/objects shape the gesture, resonance tilts with the note. A wonky clock re-excites it.",
+    node_meaning="Shaker voice (one shaker in the stack).",
+    synthdef="shaker",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=2.5,
+    gestures=["maraca", "cabasa", "guiro", "tambourine", "sleighbells", "granular-shake"],
+    node_params=[
+        P("shaker.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("shaker.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=60.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 84.0)),
+        P("shaker.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.35, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.2, 0.6)),
+        P("shaker.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("shaker.instr", "Model", curve=Curve.ENUM, enum=["maraca", "cabasa", "sekere", "guiro", "waterdrops", "bamboo", "tambourine", "sleighbells", "sticks", "crunch", "wrench", "sandpaper", "cokecan", "nextmug", "pennymug", "nickelmug", "dimemug", "quartermug", "francmug", "pesomug", "bigrocks", "littlerocks", "tunedbamboo"], default=0, randomize=RandomizePolicy.WIDE),
+        P("shaker.energy", "Energy", rmin=0.0, rmax=128.0, default=90.0, formatter="float1", musical=(40.0, 120.0)),
+        P("shaker.decay", "Decay", rmin=0.0, rmax=128.0, default=70.0, formatter="float1", musical=(20.0, 110.0)),
+        P("shaker.objects", "Objects", rmin=0.0, rmax=128.0, default=40.0, formatter="float1", musical=(2.0, 80.0)),
+        P("shaker.resfreq", "Res Freq", rmin=0.0, rmax=128.0, default=64.0, formatter="float1", musical=(20.0, 110.0)),
+        P("shaker.atk", "Attack", unit="s", rmin=0.0002, rmax=0.2, default=0.001, curve=Curve.EXP, formatter="float3", musical=(0.0005, 0.05)),
+        P("shaker.dec", "Decay Time", unit="s", rmin=0.02, rmax=3.0, default=0.35, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("shaker.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("shaker.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("shaker.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("shaker.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("shaker.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+MEMBRANE = ModuleSpec(
+    type="MEMBRANE",
+    role="2D waveguide struck circular membrane (toms, frame drums, gongs, warped skins): "
+         "tension tunes it, loss sets ring time, a noise strike excites it. A wonky clock re-strikes it.",
+    node_meaning="Membrane voice (one drum in the stack).",
+    synthdef="membrane",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=2.5,
+    gestures=["tom", "framedrum", "gong", "warped-skin", "membrane-thud"],
+    node_params=[
+        P("membrane.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("membrane.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=48.0, rate=Rate.DISCRETE, formatter="noteName", musical=(30.0, 72.0)),
+        P("membrane.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.35, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.2, 0.6)),
+        P("membrane.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("membrane.tension", "Tension", rmin=0.004, rmax=0.22, default=0.05, curve=Curve.EXP, formatter="float3", musical=(0.01, 0.15)),
+        P("membrane.loss", "Ring / Loss", rmin=0.9, rmax=0.99998, default=0.9995, curve=Curve.EXP, formatter="float3", musical=(0.99, 0.9999)),
+        P("membrane.tone", "Strike Tone", default=0.5, musical=(0.2, 0.9)),
+        P("membrane.strike", "Strike Time", default=0.5, musical=(0.1, 0.9)),
+        P("membrane.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("membrane.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("membrane.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("membrane.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("membrane.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+MALLET = ModuleSpec(
+    type="MALLET",
+    role="STK ModalBar struck mallets (marimba, vibraphone, agogo, wood, reso, beats): "
+         "the note tunes it, stick hardness/position and decay shape the ring. A wonky clock re-strikes it.",
+    node_meaning="Mallet voice (one bar in the stack).",
+    synthdef="mallet",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=2.5,
+    gestures=["marimba", "vibraphone", "agogo", "woodblock", "bell", "percussive-mallet"],
+    node_params=[
+        P("mallet.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("mallet.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=60.0, rate=Rate.DISCRETE, formatter="noteName", musical=(48.0, 84.0)),
+        P("mallet.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.3, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.2, 0.55)),
+        P("mallet.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("mallet.instrument", "Model", curve=Curve.ENUM, enum=["marimba", "vibraphone", "agogo", "wood1", "reso", "wood2", "beats", "twofixed", "clump"], default=0, randomize=RandomizePolicy.WIDE),
+        P("mallet.stickhardness", "Stick Hardness", rmin=0.0, rmax=128.0, default=64.0, formatter="float1", musical=(20.0, 110.0)),
+        P("mallet.stickposition", "Stick Position", rmin=0.0, rmax=128.0, default=28.0, formatter="float1", musical=(0.0, 90.0)),
+        P("mallet.vibratogain", "Vibrato Gain", rmin=0.0, rmax=128.0, default=8.0, formatter="float1", musical=(0.0, 40.0)),
+        P("mallet.vibratofreq", "Vibrato Freq", rmin=0.0, rmax=128.0, default=20.0, formatter="float1", musical=(0.0, 80.0)),
+        P("mallet.directmix", "Direct Mix", rmin=0.0, rmax=128.0, default=40.0, formatter="float1", musical=(0.0, 100.0)),
+        P("mallet.decay", "Decay", unit="s", rmin=0.05, rmax=6.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.1, 3.0)),
+        P("mallet.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("mallet.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("mallet.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("mallet.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("mallet.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+BOWED = ModuleSpec(
+    type="BOWED",
+    role="STK banded waveguide (uniform/tuned bar, glass harmonica, Tibetan bowl): the note "
+         "tunes it, the clock gate bows each hit, striking toggles struck vs bowed. A wonky clock articulates it.",
+    node_meaning="Bowed voice (one bar/bowl in the stack).",
+    synthdef="bowed",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=3.0,
+    gestures=["glassharmonica", "tibetanbowl", "bowed-bar", "singing-metal", "struck-glass"],
+    node_params=[
+        P("bowed.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("bowed.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=60.0, rate=Rate.DISCRETE, formatter="noteName", musical=(48.0, 84.0)),
+        P("bowed.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.3, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.2, 0.55)),
+        P("bowed.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("bowed.instr", "Model", curve=Curve.ENUM, enum=["uniformbar", "tunedbar", "glassharmonica", "tibetanbowl"], default=0, randomize=RandomizePolicy.WIDE),
+        P("bowed.bowpressure", "Bow Pressure", rmin=0.0, rmax=128.0, default=70.0, formatter="float1", musical=(20.0, 110.0)),
+        P("bowed.bowmotion", "Bow Motion", rmin=0.0, rmax=128.0, default=30.0, formatter="float1", musical=(0.0, 90.0)),
+        P("bowed.integration", "Integration", curve=Curve.ENUM, enum=["off", "on"], default=0),
+        P("bowed.modalresonance", "Modal Resonance", rmin=0.0, rmax=128.0, default=90.0, formatter="float1", musical=(40.0, 120.0)),
+        P("bowed.bowvelocity", "Bow Velocity", rmin=0.0, rmax=128.0, default=80.0, formatter="float1", musical=(20.0, 120.0)),
+        P("bowed.striking", "Striking", curve=Curve.ENUM, enum=["bowed", "struck"], default=0),
+        P("bowed.decay", "Release", unit="s", rmin=0.02, rmax=4.0, default=1.5, curve=Curve.EXP, formatter="float2", musical=(0.1, 3.0)),
+        P("bowed.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("bowed.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("bowed.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("bowed.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("bowed.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+PLUCK = ModuleSpec(
+    type="PLUCK",
+    role="Digital-waveguide plucked stiff string (koto, clav, harp, muted plucks): stiffness adds "
+         "inharmonicity, pos/decay/damp/bright shape it. A wonky clock re-plucks it.",
+    node_meaning="Pluck voice (one string in the stack).",
+    synthdef="pluck",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=2.5,
+    gestures=["koto", "clav", "harp", "muted-pluck", "stiff-string"],
+    node_params=[
+        P("pluck.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("pluck.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=60.0, rate=Rate.DISCRETE, formatter="noteName", musical=(40.0, 84.0)),
+        P("pluck.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.4, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.25, 0.65)),
+        P("pluck.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("pluck.pos", "Pluck Position", rmin=0.02, rmax=0.5, default=0.14, formatter="float2", musical=(0.05, 0.4)),
+        P("pluck.decay", "Decay", unit="s", rmin=0.05, rmax=8.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.2, 4.0)),
+        P("pluck.damp", "Damping", rmin=1.0, rmax=80.0, default=30.0, curve=Curve.EXP, formatter="float1", musical=(5.0, 60.0)),
+        P("pluck.bright", "Brightness", default=0.5, musical=(0.1, 0.9)),
+        P("pluck.excite", "Excite Time", unit="s", rmin=0.001, rmax=0.05, default=0.008, curve=Curve.EXP, formatter="float3", musical=(0.002, 0.03)),
+        P("pluck.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("pluck.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("pluck.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("pluck.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("pluck.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+TUBE = ModuleSpec(
+    type="TUBE",
+    role="Two-tube (vocal-tract-ish) waveguide: hollow formant plucks and reedy tones. Tube lengths "
+         "set from the note, k junction and balance shape it, the clock gate breathes it. A wonky clock articulates it.",
+    node_meaning="Tube voice (one resonator in the stack).",
+    synthdef="tube",
+    insert_capable=False,
+    generative_capable=True,
+    max_nodes=2,
+    cpu_per_node=3.0,
+    gestures=["formant-pluck", "reed", "hollow-tone", "vocal-tract", "tube-resonance"],
+    node_params=[
+        P("tube.enable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
+        P("tube.note", "Note", unit="note", rmin=0.0, rmax=127.0, default=60.0, rate=Rate.DISCRETE, formatter="noteName", musical=(36.0, 78.0)),
+        P("tube.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.4, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.25, 0.65)),
+        P("tube.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
+    ],
+    global_params=[
+        P("tube.k", "Junction", rmin=0.001, rmax=0.2, default=0.01, curve=Curve.EXP, formatter="float3", musical=(0.002, 0.1)),
+        P("tube.loss", "Loss", rmin=0.9, rmax=1.0, default=0.99, formatter="float3", musical=(0.95, 0.999)),
+        P("tube.balance", "Balance", rmin=0.1, rmax=0.9, default=0.5, formatter="float2", musical=(0.2, 0.8)),
+        P("tube.excite", "Breath Attack", unit="s", rmin=0.001, rmax=0.08, default=0.01, curve=Curve.EXP, formatter="float3", musical=(0.003, 0.05)),
+        P("tube.decay", "Release", unit="s", rmin=0.05, rmax=6.0, default=1.0, curve=Curve.EXP, formatter="float2", musical=(0.1, 3.0)),
+        P("tube.clkRate", "Clock Rate", unit="Hz", rmin=0.1, rmax=12.0, default=2.0, curve=Curve.EXP, formatter="float2", musical=(0.4, 6.0)),
+        P("tube.clkChaos", "Clock Chaos", default=0.4, musical=(0.1, 0.9)),
+        P("tube.clkDrift", "Clock Drift", default=0.3, musical=(0.0, 0.8)),
+        P("tube.clkLen", "Note Length", unit="s", rmin=0.02, rmax=4.0, default=0.3, curve=Curve.EXP, formatter="float2", musical=(0.05, 1.5)),
+        P("tube.clkVel", "Velocity Var", default=0.5, musical=(0.0, 0.9)),
+    ],
+)
+
+
 # --------------------------------------------------------------------------- #
 # 5.4 PITCH — pitch-shifting granular delay surface
 # --------------------------------------------------------------------------- #
@@ -628,40 +1120,6 @@ WAVIARY = ModuleSpec(
 )
 
 
-# --------------------------------------------------------------------------- #
-# BUCHLOID — west-coast complex oscillator / FM voice (port of markwheeler/passersby)
-# --------------------------------------------------------------------------- #
-BUCHLOID = ModuleSpec(
-    type="BUCHLOID",
-    role="West-coast complex oscillator with FM, wave folding and resonant lowpass gate.",
-    node_meaning="Buchloid voice.",
-    synthdef="buchloid",
-    insert_capable=False,
-    generative_capable=True,
-    max_nodes=4,
-    cpu_per_node=2.2,
-    gestures=["complex-osc", "fm", "wave-fold", "lpg"],
-    node_params=[
-        P("buchloid.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
-        P("buchloid.freq", "Freq", unit="Hz", rmin=20.0, rmax=2000.0, default=220.0, curve=Curve.EXP, musical=(40.0, 880.0), formatter="Hz"),
-        P("buchloid.glide", "Glide", rmin=0.0, rmax=1.0, default=0.0, musical=(0.0, 0.3)),
-        P("buchloid.fm1Ratio", "FM1 Ratio", rmin=0.1, rmax=10.0, default=0.66, curve=Curve.EXP, musical=(0.5, 4.0)),
-        P("buchloid.fm2Ratio", "FM2 Ratio", rmin=0.1, rmax=20.0, default=3.3, curve=Curve.EXP, musical=(1.0, 8.0)),
-        P("buchloid.fm1Amount", "FM1 Amt", default=0.0, musical=(0.0, 0.5)),
-        P("buchloid.fm2Amount", "FM2 Amt", default=0.0, musical=(0.0, 0.5)),
-        P("buchloid.waveShape", "Wave Shape", default=0.0, musical=(0.0, 1.0)),
-        P("buchloid.waveFolds", "Wave Folds", rmin=0.0, rmax=3.0, default=0.0, musical=(0.0, 1.5)),
-        P("buchloid.timbre", "Timbre", default=0.0, musical=(0.0, 1.0)),
-        P("buchloid.attack", "Attack", unit="ms", rmin=3.0, rmax=8000.0, default=40.0, curve=Curve.EXP, formatter="ms", musical=(5.0, 1000.0)),
-        P("buchloid.peak", "Filter Peak", unit="Hz", rmin=100.0, rmax=10000.0, default=10000.0, curve=Curve.EXP, formatter="Hz", musical=(500.0, 8000.0)),
-        P("buchloid.decay", "Decay", unit="ms", rmin=3.0, rmax=8000.0, default=1000.0, curve=Curve.EXP, formatter="ms", musical=(100.0, 3000.0)),
-        P("buchloid.pressure", "Pressure", default=0.0, musical=(0.0, 1.0)),
-        P("buchloid.velocity", "Velocity", default=0.7, musical=(0.2, 1.0)),
-        P("buchloid.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.5, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.3, 0.9)),
-        P("buchloid.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
-    ],
-    global_params=[],
-)
 
 
 # --------------------------------------------------------------------------- #
@@ -733,38 +1191,6 @@ GATE = ModuleSpec(
 )
 
 
-# --------------------------------------------------------------------------- #
-# PLAITS — Mutable Instruments Plaits macro-oscillator
-# --------------------------------------------------------------------------- #
-PLAITS = ModuleSpec(
-    type="PLAITS",
-    role="Mutable Instruments Plaits macro-oscillator: 16 synthesis models with internal LPG/VCA.",
-    node_meaning="Plaits voice.",
-    synthdef="plaits",
-    insert_capable=False,
-    generative_capable=True,
-    max_nodes=4,
-    cpu_per_node=2.5,
-    gestures=["macro-osc", "fm", "wavetable", "physical", "percussion"],
-    node_params=[
-        P("plaits.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
-        P("plaits.pitch", "Pitch", unit="note", rmin=0.0, rmax=127.0, default=60.0, formatter="noteName", musical=(36.0, 84.0)),
-        P("plaits.engine", "Engine", curve=Curve.ENUM, enum=[str(i) for i in range(16)], default=0, randomize=RandomizePolicy.SAFE, musical=(0.0, 15.0)),
-        P("plaits.harm", "Harmonics", rmin=0.0, rmax=1.0, default=0.1, musical=(0.0, 1.0)),
-        P("plaits.timbre", "Timbre", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),
-        P("plaits.morph", "Morph", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),
-        P("plaits.trigger", "Trigger", curve=Curve.ENUM, enum=["off", "on"], default=0, randomize=RandomizePolicy.OFF),
-        P("plaits.level", "Level", rmin=0.0, rmax=1.0, default=1.0, musical=(0.0, 1.0)),
-        P("plaits.fm_mod", "FM Mod", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.5, 0.5)),
-        P("plaits.timb_mod", "Timbre Mod", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.5, 0.5)),
-        P("plaits.morph_mod", "Morph Mod", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, musical=(-0.5, 0.5)),
-        P("plaits.decay", "LPG Decay", rmin=0.0, rmax=1.0, default=0.5, musical=(0.1, 0.9)),
-        P("plaits.lpg_colour", "LPG Colour", rmin=0.0, rmax=1.0, default=0.5, musical=(0.0, 1.0)),
-        P("plaits.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.5, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.3, 0.9)),
-        P("plaits.pan", "Spatial Pos", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR),
-    ],
-    global_params=[],
-)
 
 
 # --------------------------------------------------------------------------- #
@@ -827,59 +1253,6 @@ SEQ = ModuleSpec(
 )
 
 
-# MOLLY — a port of Mark Wheeler's "Molly the Poly" (Norns): a characterful
-# analogue-voiced polysynth. Dual morphing oscillators (tri→saw→pulse) + sub +
-# noise, optional ring mod, a resonant low-pass (12/24 dB) with its own ADSR, an
-# amp ADSR, an LFO routable to pitch/PW/cutoff/amp, overdrive and chorus. Driven
-# by note + gate (drone by default; SEQ / GATE articulate it). The `scope` param
-# recreates Molly's three sound types — lead / pad / percussion — and steers
-# GUIDED randomization toward that sound's musical use.
-MOLLY = ModuleSpec(
-    type="MOLLY",
-    role="Molly the Poly: characterful analogue-voiced polysynth (lead/pad/perc).",
-    node_meaning="One analogue voice (stack nodes for unison/poly drones).",
-    synthdef="molly",
-    insert_capable=False,
-    generative_capable=True,    # a voice — note + gate (SEQ/GATE drive it)
-    max_nodes=3,
-    cpu_per_node=2.6,
-    gestures=["lead", "pad", "percussion", "filter-sweep", "ring-mod", "chorus-wash"],
-    node_params=[
-        P("molly.nodeEnable", "Enable", curve=Curve.ENUM, enum=["off", "on"], default=1, randomize=RandomizePolicy.OFF, modulatable=False),
-        P("molly.note", "Note", rmin=0.0, rmax=127.0, default=48.0, curve=Curve.LINEAR, formatter="float0", randomize=RandomizePolicy.OFF, modulatable=False),
-        P("molly.gate", "Gate", curve=Curve.ENUM, enum=["off", "on"], default=1, rate=Rate.TRIGGER, randomize=RandomizePolicy.OFF, modulatable=False),
-        P("molly.detune", "Detune", unit="cent", rmin=0.0, rmax=50.0, default=7.0, formatter="float1", musical=(2.0, 22.0)),
-        P("molly.oscShape", "Osc Shape", default=0.5, musical=(0.2, 1.0)),
-        P("molly.pulseWidth", "Pulse Width", rmin=0.05, rmax=0.95, default=0.5, musical=(0.2, 0.8)),
-        P("molly.subLevel", "Sub", default=0.0, musical=(0.0, 0.5)),
-        P("molly.noiseLevel", "Noise", default=0.0, musical=(0.0, 0.3)),
-        P("molly.cutoff", "Cutoff", unit="Hz", rmin=20.0, rmax=18000.0, default=1200.0, curve=Curve.EXP, formatter="Hz", musical=(300.0, 6000.0)),
-        P("molly.resonance", "Resonance", default=0.2, musical=(0.1, 0.7), danger=DangerClass.FEEDBACK),
-        P("molly.filterEnvAmt", "Filter Env", rmin=-1.0, rmax=1.0, default=0.3, curve=Curve.BIPOLAR, musical=(0.0, 0.8)),
-        P("molly.fAtk", "F.Attack", unit="s", rmin=0.001, rmax=5.0, default=0.05, curve=Curve.EXP, formatter="float3", musical=(0.002, 1.5)),
-        P("molly.fDec", "F.Decay", unit="s", rmin=0.001, rmax=5.0, default=0.3, curve=Curve.EXP, formatter="float3", musical=(0.03, 1.5)),
-        P("molly.fSus", "F.Sustain", default=0.6, musical=(0.0, 0.9)),
-        P("molly.fRel", "F.Release", unit="s", rmin=0.001, rmax=8.0, default=0.6, curve=Curve.EXP, formatter="float3", musical=(0.05, 3.0)),
-        P("molly.aAtk", "A.Attack", unit="s", rmin=0.001, rmax=5.0, default=0.01, curve=Curve.EXP, formatter="float3", musical=(0.002, 2.0)),
-        P("molly.aDec", "A.Decay", unit="s", rmin=0.001, rmax=5.0, default=0.3, curve=Curve.EXP, formatter="float3", musical=(0.05, 1.5)),
-        P("molly.aSus", "A.Sustain", default=0.8, musical=(0.0, 1.0)),
-        P("molly.aRel", "A.Release", unit="s", rmin=0.001, rmax=8.0, default=0.5, curve=Curve.EXP, formatter="float3", musical=(0.05, 4.0)),
-        P("molly.lfoRate", "LFO Rate", unit="Hz", rmin=0.01, rmax=30.0, default=4.0, curve=Curve.EXP, formatter="float2", musical=(0.1, 8.0)),
-        P("molly.lfoToCutoff", "LFO→Cutoff", default=0.0, musical=(0.0, 0.4)),
-        P("molly.lfoToPitch", "LFO→Pitch", default=0.0, musical=(0.0, 0.3)),
-        P("molly.lfoToPW", "LFO→PW", default=0.0, musical=(0.0, 0.4)),
-        P("molly.lfoToAmp", "LFO→Amp", default=0.0, musical=(0.0, 0.4)),
-        P("molly.ringMod", "Ring Mod", default=0.0, musical=(0.0, 0.4)),
-        P("molly.drive", "Drive", default=0.0, musical=(0.0, 0.6)),
-        P("molly.chorus", "Chorus", default=0.0, musical=(0.0, 0.7)),
-        P("molly.pan", "Pan", rmin=-1.0, rmax=1.0, default=0.0, curve=Curve.BIPOLAR, formatter="float2"),
-        P("molly.amp", "Amp", unit="dB", rmin=0.0, rmax=2.0, default=0.3, curve=Curve.DB, formatter="dB1", danger=DangerClass.LOUDNESS, musical=(0.2, 0.6)),
-    ],
-    global_params=[
-        P("molly.scope", "Scope", curve=Curve.ENUM, enum=["lead", "pad", "percussion"], default=0, modulatable=False, randomize=RandomizePolicy.OFF),
-        P("molly.lpType", "Filter", curve=Curve.ENUM, enum=["12 dB", "24 dB"], default=1, modulatable=False),
-    ],
-)
 
 
 # =========================================================================== #
@@ -1036,14 +1409,22 @@ WAVEFOLDER = ModuleSpec(
 # takeover does not use it. Its ModuleSpec + SeqEngine remain in the codebase for
 # desktop parity, but it is not registered, so it never appears in any patch/grid.
 CATALOG: dict[str, ModuleSpec] = {
-    m.type: m for m in (FMTONE, FM7, PITCH, TIME, COMB, GAIN, SDLY, VERB,
+    m.type: m for m in (FMTONE, FM7, BUCHLOID, MOLLY, BEN, NOIZEOP, CHAOS,
+                        ICARUS, PLAITS, SHAKER, MEMBRANE, PLUCK, TUBE,
+                        # MALLET, BOWED — StkModalBar/StkBandedWG silent on this sc3-plugins
+                        # build (rawwave models produce no output; SHAKER/stochastic works).
+                        # Synthdefs + specs retained; excluded from the active fleet pending
+                        # on-device STK rawwave-load debugging.
+                        PITCH, TIME, COMB, GAIN, SDLY, VERB,
                         CLOUDS, GRAINS, RINGS, WAVIARY, ENV, GATE, DISTORT,
                         OVERDRIVE, AMPSIM, EQUALIZER, FLANGER, PHASER, RINGMOD,
                         BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER)
 }   # FBANK + PLAITS + MOLLY + BUCHLOID retired above; BEN replaced by WAVIARY
 
 # Ordered lanes (source -> processors -> spatial tail).
-DEFAULT_LANE_ORDER = ["FMTONE", "FM7", "PITCH", "TIME", "COMB", "GAIN",
+DEFAULT_LANE_ORDER = ["FMTONE", "FM7", "BUCHLOID", "MOLLY", "BEN", "NOIZEOP", "CHAOS",
+                      "ICARUS", "PLAITS", "SHAKER", "MEMBRANE", "PLUCK", "TUBE",
+                      "PITCH", "TIME", "COMB", "GAIN",
                       "SDLY", "VERB", "CLOUDS", "GRAINS", "RINGS", "WAVIARY", "ENV", "GATE",
                       "DISTORT", "OVERDRIVE", "AMPSIM", "EQUALIZER", "FLANGER", "PHASER", "RINGMOD",
                       "BITCRUSHER", "LOFI", "TREMOLO", "WAVEFOLDER"]

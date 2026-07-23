@@ -278,31 +278,40 @@ def guided_wet(rng, artist: str, module_type: str) -> float | None:
 # Pure generators (self-sounding). RINGS is the only HYBRID source — it can sit
 # silent with no input/excitation, so it must never be a patch's ONLY source, or
 # the patch has no audible generator at all.
-PURE_GENERATORS = {"FMTONE", "FM7", "WAVIARY"}
+# Pure generators (self-sounding). RINGS is the only HYBRID source — it can sit
+# silent with no input/excitation, so it must never be a patch's ONLY source, or
+# the patch has no audible generator at all. The poundhard fleet (FM7, BUCHLOID,
+# MOLLY, BEN, NOIZEOP, CHAOS, ICARUS, PLAITS + the physical models SHAKER/MEMBRANE/
+# MALLET/BOWED/PLUCK/TUBE) are all self-sounding, clock-articulated voices.
+PURE_GENERATORS = {
+    "FMTONE", "WAVIARY",
+    "FM7", "BUCHLOID", "MOLLY", "BEN", "NOIZEOP", "CHAOS", "ICARUS", "PLAITS",
+    "SHAKER", "MEMBRANE", "PLUCK", "TUBE",   # MALLET/BOWED excluded (silent STK models)
+}
 
 MODULE_PALETTE: dict[str, dict] = {
     "vidna_obmana": {  # immersive ambient — one or two warm voices bathed in space
-        "sources": {"FMTONE": 3, "RINGS": 1},
+        "sources": {"FM7": 3, "MOLLY": 2, "PLAITS": 2, "TUBE": 1, "RINGS": 1},
         "effects": {"VERB": 3, "CLOUDS": 3, "GRAINS": 2, "SDLY": 2, "COMB": 1, "PITCH": 1},
         "sources_count": (3, 5), "count": (7, 12), "require": ["VERB", "CLOUDS"],
     },
     "lustmord": {  # dark ambient — a single deep drone in a cavern
-        "sources": {"FMTONE": 3, "RINGS": 1},
+        "sources": {"FM7": 2, "MOLLY": 2, "TUBE": 2, "MEMBRANE": 1, "ICARUS": 2, "RINGS": 1},
         "effects": {"VERB": 4, "COMB": 2, "SDLY": 1, "PITCH": 1},
         "sources_count": (2, 4), "count": (6, 10), "require": ["VERB"],
     },
     "bernard_parmegiani": {  # musique concrète — one voice, transformed in space
-        "sources": {"RINGS": 2, "FMTONE": 2, "FM7": 2},
+        "sources": {"RINGS": 2, "FM7": 2, "BUCHLOID": 2, "CHAOS": 2, "NOIZEOP": 1, "PLAITS": 2},
         "effects": {"PITCH": 3, "TIME": 3, "COMB": 2, "VERB": 2, "CLOUDS": 2, "GRAINS": 2, "SDLY": 2, "GATE": 1},
         "sources_count": (3, 5), "count": (8, 14), "require": ["TIME", "PITCH"],
     },
     "ben_frost": {  # abrasive — a voice driven hard, rhythmic gating, little reverb
-        "sources": {"FMTONE": 3, "RINGS": 1},
+        "sources": {"FM7": 2, "NOIZEOP": 3, "BEN": 2, "CHAOS": 2, "MEMBRANE": 2, "RINGS": 1},
         "effects": {"DISTORT": 4, "GATE": 2, "COMB": 1, "VERB": 1, "SDLY": 1},
         "sources_count": (3, 5), "count": (7, 12), "require": ["DISTORT", "GATE"],
     },
     "autechre": {  # algorithmic — one or two voices, fragmented, digital artefacts
-        "sources": {"RINGS": 2, "FMTONE": 2, "FM7": 2},
+        "sources": {"RINGS": 2, "BUCHLOID": 2, "PLAITS": 2, "BEN": 2, "CHAOS": 2, "SHAKER": 1, "PLUCK": 1},
         "effects": {"DISTORT": 2, "GATE": 3, "TIME": 2, "COMB": 2, "SDLY": 2, "GRAINS": 2},
         "sources_count": (3, 5), "count": (8, 14), "require": ["GATE"],
     },

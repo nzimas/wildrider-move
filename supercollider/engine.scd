@@ -256,6 +256,9 @@
 		~dx7_allocBufs.(s);
 		~dx7_factory.isNil.if { ~dx7_loadFactory.(~dx7afxPath ? "DX7.afx") };
 		s.sync;
+		// STK rawwave path: set once before any StkInst voice (MALLET/BOWED) spawns.
+		Synth(\stkInit);
+		s.sync;
 		~ensureGroups.value;
 		~inBus = Bus.audio(s, channels);
 		~masterBus = Bus.audio(s, channels);

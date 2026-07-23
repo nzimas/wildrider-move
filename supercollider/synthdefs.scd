@@ -50,6 +50,11 @@
 ~buildDefs = { |nchan = 2|
 	var suf = "_" ++ nchan;
 
+	// ---- STK init: point the STK plugin at the rawwave bank before any physical-
+	// model voice (MALLET/BOWED — StkInst) spawns. SHAKER is stochastic (no rawwaves)
+	// but this is harmless for it. Fired once at boot (see engine.scd). No suffix.
+	SynthDef(\stkInit, { StkGlobals.ar(1, 1, "/data/UserData/wildrider/rawwaves") }).add;
+
 	// ---- DX7: exact 6-operator FM voice (port of DX7-Supercollider) -------
 	// Per-module pitch/amp modulation LFO. Writes a frequency *multiplier*
 	// (~1.0 at rest) to pmodbus and an amp-mod offset to amodbus, both read by
@@ -263,6 +268,434 @@
 		sig = LeakDC.ar(sig) * v * amp * 0.5 * enable;
 		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
 	}).add;
+
+	// ---- BUCHLOID: complex/west-coast osc (ported from poundhard), wonky-clock articulated ----
+	// A Buchla-style complex oscillator: two FM modulators into a sine/varsaw core,
+	// wavefolding + timbre bloom, pressure/drive saturation, and a resonant lowpass
+	// swept by a per-hit filter env. Poundhard fired it once per step; here the
+	// unstable internal clock re-gates the amp + filter envelopes so it self-articulates.
+	SynthDef(("buchloid" ++ suf).asSymbol, { |out = 0, note = 45,
+		fm1Ratio = 0.66, fm1Amount = 0.0, fm2Ratio = 3.3, fm2Amount = 0.0,
+		waveShape = 0.0, waveFolds = 0.0, timbre = 0.0,
+		attack = 0.02, decay = 1.0, peak = 8000, res = 0.2,
+		pressure = 0.0, drive = 1.0,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0, bypass = 0, wet = 1, enable = 1,
+		amp = 0.25, pan = 0|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, f0, aEnv, fEnv, m1, m2, osc, sig, fc;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		f0 = ((note.clip(0, 127) + pitchShift).midicps).clip(8, 16000);
+		aEnv = EnvGen.ar(Env.new([0, 1, 0], [attack.clip(0.001, 4), decay.clip(0.01, 8)], -4), clkTrig);
+		fEnv = EnvGen.ar(Env.perc(attack.clip(0.001, 4), decay.clip(0.01, 8), 1, -3), clkTrig);
+		m1 = SinOsc.ar(f0 * fm1Ratio.clip(0.1, 12)) * fm1Amount.clip(0, 1) * f0 * 4;
+		m2 = SinOsc.ar(f0 * fm2Ratio.clip(0.1, 24)) * fm2Amount.clip(0, 1) * f0 * 4;
+		osc = SelectX.ar(waveShape.clip(0, 1), [
+			SinOsc.ar((f0 + m1 + m2).clip(10, 18000)),
+			VarSaw.ar((f0 + m1 + m2).clip(10, 18000), 0, 0.3 + (timbre.clip(0, 1) * 0.6))]);
+		osc = (osc * (1 + (waveFolds.clip(0, 3) * 2) + (timbre.clip(0, 1) * 3))).fold2(1);
+		sig = osc * aEnv;
+		sig = (sig * (1 + (pressure.clip(0, 1) * 4))).tanh * (1 + (drive.clip(0.1, 4)));
+		fc = (peak.clip(100, 12000) * (0.4 + (fEnv * 0.9))).clip(80, 14000);
+		sig = RLPF.ar(sig, fc, (1 - (res.clip(0, 1) * 0.9)).clip(0.05, 1));
+		sig = LeakDC.ar(sig) * v * amp * 0.6 * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
+	// ---- MOLLY: Molly-the-Poly analogue voice (ported from poundhard), wonky-clock articulated ----
+	SynthDef(("molly" ++ suf).asSymbol, { |out = 0, note = 48, detune = 7, oscShape = 0.5, pulseWidth = 0.5,
+		subLevel = 0, noiseLevel = 0, cutoff = 1200, resonance = 0.2, lpType = 1, filterEnvAmt = 0.3,
+		fAtk = 0.05, fDec = 0.3, fSus = 0.6, fRel = 0.6, aAtk = 0.01, aDec = 0.3, aSus = 0.8, aRel = 0.5,
+		lfoRate = 4, lfoToCutoff = 0, lfoToPitch = 0, lfoToPW = 0, lfoToAmp = 0,
+		ringMod = 0, drive = 0, chorus = 0,
+		fmAmt = 0, fold = 0, crush = 0, downsample = 0, grit = 0,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0, bypass = 0, wet = 1, enable = 1,
+		amp = 0.3, pan = 0|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, gOn;
+		var freq, lfo, fA, fB, pw, wave, modB, oscA, oscB, sub, noise, mix, fenv, aenv, fc, filt, sig, cho, bits, lv, dsr;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		gOn = Trig.kr(clkTrig, clkLenV);
+		freq = ((note.clip(0, 127) + pitchShift).midicps).clip(8, 16000);
+		lfo = SinOsc.kr(lfoRate);
+		fA = freq * (1 + (lfo * lfoToPitch * 0.06));
+		fB = fA * (2 ** (detune / 1200));
+		pw = (pulseWidth + (lfo * lfoToPW * 0.4)).clip(0.05, 0.95);
+		wave = { |f| SelectX.ar(oscShape * 2, [VarSaw.ar(f, 0, 0.5), Saw.ar(f), Pulse.ar(f, pw)]) };
+		modB = SinOsc.ar(fB) * fmAmt * fA * 3;
+		oscA = wave.((fA + modB).clip(20, 12000));
+		oscB = wave.(fB);
+		sub = Pulse.ar(fA * 0.5, 0.5) * subLevel;
+		noise = WhiteNoise.ar(noiseLevel) + (Dust2.ar((2000 * grit).max(1)) * grit * 0.7);
+		mix = ((oscA + oscB) * 0.5) + sub + noise;
+		fenv = EnvGen.ar(Env.adsr(fAtk, fDec, fSus, fRel), gOn);
+		aenv = EnvGen.ar(Env.adsr(aAtk, aDec, aSus, aRel), gOn);
+		fc = (cutoff * (2 ** ((filterEnvAmt * fenv * 4) + (lfo * lfoToCutoff * 2)))).clip(20, 18000);
+		mix = XFade2.ar(mix, oscA * oscB * 2, (ringMod * 2 - 1));
+		mix = XFade2.ar(mix, (mix * (1 + (fold * 10))).fold2(1) * 0.7, (fold.clip(0, 1) * 2 - 1));
+		filt = Select.ar(lpType.clip(0, 1), [
+			RLPF.ar(mix, fc, (1 - (resonance * 0.95)).max(0.05)),
+			MoogFF.ar(mix, fc, (resonance * 4).clip(0, 3.95))]);
+		sig = filt * (1 + (drive * 14));
+		sig = (sig + (drive * 0.3)).tanh;
+		sig = sig / (1 + (drive * 2.2));
+		bits = (16 - (crush * 13)).clip(3, 16);
+		lv = 2 ** bits;
+		sig = XFade2.ar(sig, (sig * lv).round / lv, (crush.clip(0, 1) * 2 - 1));
+		dsr = (SampleRate.ir / (1 + (downsample * 80))).clip(800, SampleRate.ir);
+		sig = XFade2.ar(sig, Latch.ar(sig, Impulse.ar(dsr)), (downsample.clip(0, 1) * 2 - 1));
+		sig = sig * aenv * (1 - (lfoToAmp * (lfo * 0.5 + 0.5)));
+		cho = Mix(DelayC.ar(sig, 0.06, LFNoise2.kr([0.5, 0.7]).range(0.004, 0.02))) * 0.7;
+		sig = XFade2.ar(sig, cho, (chorus * 2 - 1));
+		sig = LeakDC.ar(sig) * v * amp * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+	// ---- BEN: Benjolin (rungler cross-mod chaos), wonky-clock articulated ----
+	SynthDef(("ben" ++ suf).asSymbol, { |out = 0, note = 48,
+		freq2 = 4, scale = 1, rungler1 = 0.16, rungler2 = 0.0, runglerFilt = 9,
+		filtFreq = 40, q = 0.82, filterType = 0, outSignal = 6, gain = 1,
+		decay = 1.0, amp = 0.3, pan = 0,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, f0;
+		var fb, rIn, f1, f2, tri1, tri2, osc1, osc2, pwm, sh0, sh, prev;
+		var dac = 0, rungler, ffreq, qq, filt, sig, aEnv;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		f0 = ((note.clip(0, 127) + pitchShift).midicps).clip(8, 16000);
+		fb = LocalIn.ar(2);
+		rIn = fb[0];
+		f1 = ((rIn * rungler1) + f0).clip(0.01, 12000);
+		f2 = ((rIn * rungler2) + freq2).clip(0.01, 12000);
+		tri1 = LFTri.ar(f1); tri2 = LFTri.ar(f2);
+		osc1 = PulseDPW.ar(f1); osc2 = PulseDPW.ar(f2);
+		pwm = (tri1 + tri2) > 0;
+		sh0 = (osc1 > 0.5);
+		sh = Array.newClear(8);
+		prev = sh0;
+		8.do { |i| sh[i] = Latch.ar(prev, osc2); prev = Delay1.ar(sh[i]) };
+		8.do { |i| dac = dac + (sh[i] / (2 ** (8 - i))) };
+		rungler = (dac * scale.clip(0, 1).linlin(0, 1, 0, 127)).midicps;
+		LocalOut.ar([rungler, DC.ar(0)]);
+		ffreq = ((rungler * runglerFilt) + filtFreq).clip(20, 16000);
+		qq = ((q.clip(0, 1) * -1) + 1).max(0.02);
+		filt = Select.ar(filterType.clip(0, 3), [
+			RLPF.ar(pwm, ffreq, qq),
+			RHPF.ar(pwm, ffreq, qq),
+			SVF.ar(pwm, ffreq, q.clip(0, 1)),
+			DFM1.ar(pwm, ffreq, q.clip(0, 1))
+		]);
+		sig = Select.ar(outSignal.clip(0, 6), [tri1, osc1, tri2, osc2, pwm, sh0, filt]);
+		sig = (sig * gain.max(0.01)).tanh;
+		aEnv = EnvGen.ar(Env([0, 1, 1, 0], [0.004, (clkLenV * decay.clip(0.1, 6)).clip(0.01, 8), 0.12], [0, 0, -3]), clkTrig);
+		sig = LeakDC.ar(sig) * aEnv * v * amp * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
+	// ---- NOIZEOP: deeg's NoizeOp (four sines through six nonlinear algos), clocked ----
+	SynthDef(("noizeop" ++ suf).asSymbol, { |out = 0, note = 48,
+		freq01 = 1.0, freq02 = 1.5, freq03 = 2.0, freq04 = 3.0,
+		mul01 = 1, mul02 = 1, mul03 = 1, mul04 = 1,
+		a_mod_01 = 1, a_mod_02 = 1, a_mod_03 = 0.02, a_mod_04 = 1, a_mod_05 = 1, a_mod_06 = 1,
+		a_vol_01 = 0.5, a_vol_02 = 0.5, a_vol_03 = 0.5, a_vol_04 = 0.5, a_vol_05 = 0.5, a_vol_06 = 0.5,
+		ffreq01 = 40, ffreq02 = 12000, ffreq03 = 1200, q01 = 1, q02 = 1, q03 = 1,
+		gain = 1, decay = 1.0, amp = 0.3, pan = 0,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, f0;
+		var f01, f02, f03, f04, osc01, osc02, osc03, osc04;
+		var algo01, algo02, algo03, algo04, algo05, algo06, combo, sig, aEnv;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		f0 = ((note.clip(0, 127) + pitchShift).midicps).clip(8, 16000);
+		f01 = (f0 * freq01).clip(0.001, 18000);
+		f02 = (f0 * freq02).clip(0.001, 18000);
+		f03 = (f0 * freq03).clip(0.001, 18000);
+		f04 = (f0 * freq04).clip(0.001, 18000);
+		osc01 = SinOsc.ar(f01, 0, mul01, 0);
+		osc02 = SinOsc.ar(f02, 0, mul02, 0);
+		osc03 = SinOsc.ar(f03, 0, mul03, 0);
+		osc04 = SinOsc.ar(f04, 0, mul04, 0);
+		algo01 = ((osc01 * osc02) / ((osc03 * osc04) + 1e-9)) / a_mod_01.max(1e-3);
+		algo02 = ((osc02 * osc04) / ((osc03 - osc01) + 1e-9)) / a_mod_02.max(1e-3);
+		algo03 = ((osc01 + osc02) - (osc03 + osc04)).trunc(a_mod_03.max(1e-4));
+		algo01 = algo01.clip2(50); algo02 = algo02.clip2(50); algo03 = algo03.clip2(50);
+		algo04 = ((algo01 * algo02 * algo03).abs.sqrt) / a_mod_04.max(1e-3);
+		algo05 = (hypot(osc01, osc02) + hypot(osc03, osc04)) * a_mod_05;
+		algo06 = ((osc01 ** 2) + (osc02 ** 2) + (osc03 ** 2) + (osc04 ** 2)) * a_mod_06;
+		combo = (algo01 * a_vol_01) + (algo02 * a_vol_02) + (algo03 * a_vol_03)
+		      + (algo04 * a_vol_04) + (algo05 * a_vol_05) + (algo06 * a_vol_06);
+		combo = combo.clip2(20);
+		sig = BLowPass4.ar(BHiPass4.ar(combo, ffreq01.clip(20, 18000), q01, 1, 0),
+			ffreq02.clip(20, 18000), q02, 1, 0);
+		sig = Resonz.ar(sig, ffreq03.clip(20, 18000), q03, 1.0, 0.0);
+		sig = (sig * gain.max(0.01)).tanh;
+		aEnv = EnvGen.ar(Env([0, 1, 1, 0], [0.004, (clkLenV * decay.clip(0.1, 6)).clip(0.01, 8), 0.12], [0, 0, -3]), clkTrig);
+		sig = LeakDC.ar(sig) * aEnv * v * amp * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
+	// ---- CHAOS: chaotic-map oscillators (core ChaosUGens), wonky-clock articulated ----
+	SynthDef(("chaos" ++ suf).asSymbol, { |out = 0, note = 48,
+		type = 0, chaosA = 1.1, chaosB = 0.5, fold = 0.0, cutoff = 6000, res = 0.2,
+		attack = 0.003, decay = 0.5, ampCurve = -4, amp = 0.2, pan = 0,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkVelV, v, f0, aEnv, srcs, sig;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		f0 = ((note.clip(0, 127) + pitchShift).midicps).clip(20, 8000);
+		aEnv = EnvGen.ar(Env.perc(attack.clip(0.0005, 2), (decay * (clkLen + 0.2)).clip(0.01, 8), 1, ampCurve.clip(-8, -1)), clkTrig);
+		srcs = [
+			FBSineC.ar(f0 * 2, chaosA.clip(0.1, 4), chaosB.clip(0, 3), 1.0, 0.5),
+			LatoocarfianC.ar(f0, chaosA.linlin(0, 4, -3, 3), chaosB.linlin(0, 3, 0.5, 1.5), 1.5, 0.5),
+			HenonC.ar(f0, chaosA.linlin(0, 4, 1.0, 1.4), chaosB.linlin(0, 3, 0.2, 0.4)),
+			StandardL.ar(f0, chaosA.linlin(0, 4, 0.3, 3.0)),
+			CuspL.ar(f0, chaosA.linlin(0, 4, 0.9, 1.2), chaosB.linlin(0, 3, 1.7, 2.0))
+		];
+		sig = Select.ar(type.round.clip(0, 4), srcs).tanh;
+		sig = SelectX.ar(fold.clip(0, 1), [sig, (sig * (1 + (fold * 4))).fold2(1)]);
+		sig = RLPF.ar(sig, cutoff.clip(40, 16000), (1 - (res.clip(0, 1) * 0.9)).clip(0.05, 1));
+		sig = LeakDC.ar(sig) * aEnv * v * amp * 2.8 * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+	// ---- ICARUS: schollz's Icarus "dreamcrusher" pad/drone (ported from poundhard) ----
+	SynthDef(("icarus" ++ suf).asSymbol, { |out = 0, note = 48,
+		subpitch = 1, sublevel = 0.3, detuning = 0.1, portamento = 0.1,
+		pwmcenter = 0.5, pwmwidth = 0.05, pwmfreq = 10,
+		lpf = 6000, resonance = 0.2, feedback = 0.5, delaytime = 0.25, destruction = 0,
+		attack = 0.02, decay = 1.0, release = 1.5, sustain = 0.8,
+		gain = 1, amp = 0.3, pan = 0,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v;
+		var hz, ender, in, subdiv, hzd, hzs, ampcheck, local, snd;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		hz = ((note.clip(0, 127) + pitchShift).midicps).clip(8, 16000);
+		ender = EnvGen.ar(Env.new(
+			curve: 'cubed', levels: [0, 1, sustain, 0],
+			times: [attack + 0.015, clkLenV, release]), clkTrig);
+		hzd = (Lag.kr(hz + (SinOsc.kr(LFNoise0.kr(1)) * (((hz.cpsmidi + 1).midicps) - hz) * detuning), portamento).cpsmidi).midicps;
+		in = VarSaw.ar(hzd, width: LFTri.kr(pwmfreq + Rand(0.1, 0.3), mul: pwmwidth / 2, add: pwmcenter), mul: 0.5);
+		subdiv = 2 ** subpitch;
+		hzs = (Lag.kr((hz / subdiv) + (SinOsc.kr(LFNoise0.kr(1)) * ((((hz / subdiv).cpsmidi + 1).midicps) - (hz / subdiv)) * detuning), portamento).cpsmidi).midicps;
+		in = in + Pulse.ar(hzs, width: LFTri.kr(pwmfreq + Rand(0.1, 0.3), mul: pwmwidth / 2, add: pwmcenter), mul: 0.5 * sublevel);
+		in = Splay.ar(in);
+		in = Balance2.ar(in[0], in[1], SinOsc.kr(LinLin.kr(LFNoise0.kr(0.1), -1, 1, 0.05, 0.2)) * 0.1);
+		in = in * ender;
+		ampcheck = Amplitude.kr(Mix.ar(in));
+		in = in * (ampcheck > 0.006);
+		local = LocalIn.ar(2);
+		local = OnePole.ar(local, 0.4);
+		local = OnePole.ar(local, -0.08);
+		local = Rotate2.ar(local[0], local[1], 0.2);
+		local = DelayC.ar(local, 0.5, Lag.kr(delaytime, 0.2));
+		local = LeakDC.ar(local);
+		local = ((local + in) * 1.25).softclip;
+		local = MoogLadder.ar(local, Lag.kr(lpf.clip(20, 18000), 1), res: Lag.kr(resonance.clip(0, 1), 1));
+		local = ((local * (1 - EnvGen.kr(Env([0, 1, 0], [0.1, 0.1], curve: \sine), gate: Dust.kr(destruction)))) + local) / 2;
+		LocalOut.ar(local * Lag.kr(feedback.clip(0, 0.98), 1));
+		snd = Balance2.ar(local[0] * 0.9, local[1] * 0.9, SinOsc.kr(LinLin.kr(LFNoise0.kr(0.1), -1, 1, 0.05, 0.2)) * 0.1);
+		snd = Mix.ar([Pan2.ar(snd[0], -1 + (2 * pan.clip(-1, 1)), 1), Pan2.ar(snd[1], 1 + (2 * pan.clip(-1, 1)), 1)]);
+		snd = snd * v * amp * gain.max(0.01) * enable;
+		Out.ar(out, ~killbad.(snd * (1 - bypass) * wet));
+	}).add;
+
+	// ---- PLAITS: real MiPlaits macro-oscillator (mi-UGens), ported from poundhard ----
+	SynthDef(("plaits" ++ suf).asSymbol, { |out = 0, note = 48,
+		model = 0, harm = 0.5, timbre = 0.5, morph = 0.5,
+		decay = 0.5, lpgColour = 0.5, aux = 0.0, amp = 0.4, pan = 0,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, gOn;
+		var pitchN, sig, mono, trim, aEnv, s;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		gOn = Trig.kr(clkTrig, clkLenV);
+		pitchN = (note.clip(0, 127) + pitchShift).clip(0, 127);
+		sig = MiPlaits.ar(
+			pitch: pitchN,
+			engine: model.round.clip(0, 15),
+			harm: harm.clip(0, 1), timbre: timbre.clip(0, 1), morph: morph.clip(0, 1),
+			trigger: clkTrig,
+			level: v.clip(0, 1),
+			decay: decay.clip(0, 1), lpg_colour: lpgColour.clip(0, 1));
+		mono = XFade2.ar(sig[0], sig[1], (aux.clip(0, 1) * 2) - 1);
+		trim = Select.kr(model.round.clip(0, 15), [
+			0.76, 0.99, 0.82, 1.54, 0.97, 1.01, 0.74, 1.77,
+			0.78, 0.74, 1.25, 6.00, 1.29, 2.70, 1.44, 1.71]);
+		aEnv = EnvGen.ar(Env.perc(0.004, clkLenV.max(0.03), 1, -3), gOn);
+		s = LeakDC.ar(mono) * trim * amp * aEnv * enable;
+		Out.ar(out, ~killbad.(~spread.(s, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+	// ---- SHAKER: STK stochastic shakers (StkUGens), wonky-clock re-excited ----
+	SynthDef(("shaker" ++ suf).asSymbol, { |out = 0, note = 60,
+		instr = 0, energy = 90, decay = 70, objects = 40, resfreq = 64,
+		atk = 0.001, dec = 0.35,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0,
+		amp = 0.35, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, gOn;
+		var eEnv, aEnv, rf, sig;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		gOn = Trig.kr(clkTrig, clkLenV);
+		eEnv = EnvGen.kr(Env.perc(0.001, (dec * (clkLenV + 0.2)).clip(0.02, 3), 1, -4), clkTrig);
+		aEnv = EnvGen.ar(Env.perc(atk.clip(0.0002, 0.2), (dec * 1.5 * (clkLenV + 0.2)).clip(0.02, 4), 1, -3), clkTrig);
+		rf = (resfreq + ((note + pitchShift) - 60)).clip(0, 128);
+		sig = StkShakers.ar(instr.round.clip(0, 22), (energy * eEnv).clip(0, 128),
+			decay.clip(0, 128), objects.clip(0, 128), rf);
+		sig = LeakDC.ar(sig) * aEnv * v * amp * 4.5 * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
+	// ---- MEMBRANE: 2D waveguide struck membrane (MembraneUGens), wonky-clock re-struck ----
+	SynthDef(("membrane" ++ suf).asSymbol, { |out = 0, note = 48,
+		tension = 0.05, loss = 0.9995, tone = 0.5, strike = 0.5,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0,
+		amp = 0.35, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, gOn;
+		var sEnv, exc, tns, sig;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		gOn = Trig.kr(clkTrig, clkLenV);
+		sEnv = EnvGen.ar(Env.perc(0.0002, (0.002 + (strike * 0.03)).clip(0.001, 0.08), 1, -6), clkTrig);
+		exc = LPF.ar(WhiteNoise.ar, tone.clip(0, 1).linexp(0, 1, 600, 9000)) * sEnv * (0.4 + (v * 0.6));
+		tns = (tension * (2 ** (((note + pitchShift).clip(24, 96) - 48) / 24))).clip(0.004, 0.22);
+		sig = MembraneCircle.ar(exc, tns, loss.clip(0.9, 0.99998));
+		sig = LeakDC.ar(sig) * v * amp * 2.0 * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
+	// ---- MALLET: STK ModalBar (StkInst), wonky-clock struck ----
+	SynthDef(("mallet" ++ suf).asSymbol, { |out = 0, note = 60,
+		instrument = 0, stickhardness = 64, stickposition = 28, vibratogain = 8,
+		vibratofreq = 20, directmix = 40, decay = 1.0,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0,
+		amp = 0.3, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, gOn;
+		var f0, sig, aEnv;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		gOn = Trig.kr(clkTrig, clkLenV);
+		f0 = ((note.clip(0, 127) + pitchShift).midicps).clip(20, 8000);
+		sig = StkModalBar.ar(f0, instrument.round.clip(0, 8), stickhardness.clip(0, 128),
+			stickposition.clip(0, 128), vibratogain.clip(0, 128), vibratofreq.clip(0, 128),
+			directmix.clip(0, 128), (100 * v).clip(0, 128), T2A.ar(clkTrig));
+		aEnv = EnvGen.ar(Env.perc(0.001, (decay * (clkLenV + 0.2)).clip(0.05, 6), 1, -3), clkTrig);
+		sig = LeakDC.ar(sig) * aEnv * v * amp * 4.0 * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
+	// ---- BOWED: STK BandedWG (StkInst), wonky-clock bowed ----
+	SynthDef(("bowed" ++ suf).asSymbol, { |out = 0, note = 60,
+		instr = 0, bowpressure = 70, bowmotion = 30, integration = 0, modalresonance = 90,
+		bowvelocity = 80, striking = 0, decay = 1.5,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0,
+		amp = 0.3, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, gOn;
+		var f0, bowV, aEnv, sig;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		gOn = Trig.kr(clkTrig, clkLenV);
+		f0 = ((note.clip(0, 127) + pitchShift).midicps).clip(20, 7000);
+		bowV = (bowvelocity * (0.15 + (gOn * 0.85 * v))).clip(0, 128);
+		sig = StkBandedWG.ar(f0, instr.round.clip(0, 3), bowpressure.clip(0, 128),
+			bowmotion.clip(0, 128), integration.round.clip(0, 1), modalresonance.clip(0, 128),
+			bowV, striking.round.clip(0, 1), T2A.ar(clkTrig));
+		aEnv = EnvGen.ar(Env.asr(0.01, 1, decay.clip(0.02, 4), -3), gOn);
+		sig = LeakDC.ar(sig) * aEnv * v * amp * 4.0 * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
+	// ---- PLUCK: DWG plucked stiff string (DWGPlucked), wonky-clock re-plucked ----
+	SynthDef(("pluck" ++ suf).asSymbol, { |out = 0, note = 60,
+		pos = 0.14, decay = 1.0, damp = 30, bright = 0.5, excite = 0.008,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0,
+		amp = 0.4, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, gOn;
+		var f0, exc, c1, sig;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		gOn = Trig.kr(clkTrig, clkLenV);
+		f0 = ((note.clip(0, 127) + pitchShift).midicps).clip(20, 6000);
+		exc = WhiteNoise.ar * EnvGen.ar(Env.perc(0.0005, excite.clip(0.001, 0.05), 1, -4), clkTrig) * (0.5 + (v * 0.5));
+		c1 = (1.0 / (decay * (clkLenV + 0.2)).clip(0.05, 8)).clip(0.1, 30);
+		sig = DWGPluckedStiff.ar(f0, v, 1, pos.clip(0.02, 0.5), c1, damp.clip(1, 80),
+			exc, 0.1, bright.clip(0, 1) * 6);
+		sig = LeakDC.ar(sig) * v * amp * 1.5 * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
+	// ---- TUBE: TwoTube waveguide (vocal-tract-ish), wonky-clock breathed ----
+	SynthDef(("tube" ++ suf).asSymbol, { |out = 0, note = 60,
+		k = 0.01, loss = 0.99, balance = 0.5, excite = 0.01, decay = 1.0,
+		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0,
+		amp = 0.4, pan = 0, bypass = 0, wet = 1, enable = 1|
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, gOn;
+		var f0, totLen, bal, d1, d2, breath, aEnv, sig;
+		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
+		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
+		v = clkVelV.max(0.03);
+		gOn = Trig.kr(clkTrig, clkLenV);
+		f0 = ((note.clip(0, 127) + pitchShift).midicps).clip(30, 4000);
+		totLen = (SampleRate.ir / (2 * f0)).clip(4, 2000);
+		bal = balance.clip(0.1, 0.9);
+		d1 = (totLen * bal).clip(2, 1500);
+		d2 = (totLen * (1 - bal)).clip(2, 1500);
+		breath = WhiteNoise.ar
+			* EnvGen.ar(Env.asr((0.001 + excite).clip(0.001, 0.2), 1, 0.03, -3), gOn)
+			* (0.4 + (v * 0.6));
+		aEnv = EnvGen.ar(Env.asr(0.004, 1, decay.clip(0.02, 4), -3), gOn);
+		sig = TwoTube.ar(breath, k.clip(0.001, 0.2), loss.clip(0.9, 1.0), d1, d2);
+		sig = LeakDC.ar(sig) * aEnv * v * amp * 1.5 * enable;
+		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
+	}).add;
+
 
 	// ---- DISTORT: versatile multi-stage distortion / saturation ----------
 	// A full waveshaping chain (best-of SC, core UGens + a Chebyshev Shaper):
@@ -503,65 +936,6 @@
 	// Port of markwheeler/passersby's Engine_Passersby.sc synth voice.
 	// Simplified for Wildrider: no internal LFOs/reverb; ASR envelope gated by
 	// enable so each node is a sustained drone voice.
-	SynthDef(("buchloid" ++ suf).asSymbol, { |out = 0, in = 0,
-		freq = 220, glide = 0, fm1Ratio = 0.66, fm2Ratio = 3.3,
-		fm1Amount = 0, fm2Amount = 0, waveShape = 0, waveFolds = 0,
-		timbre = 0, attack = 0.04, peak = 10000, decay = 1,
-		pressure = 0, velocity = 0.7, amp = 0.5, pan = 0,
-		bypass = 0, wet = 1, enable = 1|
-		var i_nyquist = SampleRate.ir * 0.5, signal;
-		var controlLag = 0.005, i_numHarmonics = 44;
-		var modFreq, mod1, mod2, mod1Index, mod2Index, mod1Freq, mod2Freq;
-		var sinOsc, triOsc, additiveOsc, additivePhase;
-		var filterEnvVel, filterEnvLow, asrEnvelope, asrFilterFreq, asrSignal;
-		var gate = enable;
-		var atk = attack * 0.001;
-		var dec = decay * 0.001;
-		freq = Lag.kr(freq, 0.007 + glide).clip(20, i_nyquist);
-		fm1Ratio = Lag.kr(fm1Ratio, controlLag);
-		fm2Ratio = Lag.kr(fm2Ratio, controlLag);
-		fm1Amount = Lag.kr(fm1Amount.squared, controlLag);
-		fm2Amount = Lag.kr(fm2Amount.squared, controlLag);
-		waveShape = Lag.kr(waveShape, controlLag);
-		waveFolds = Lag.kr(waveFolds, controlLag);
-		atk = Lag.kr(atk, controlLag);
-		peak = Lag.kr(peak, controlLag);
-		dec = Lag.kr(dec, controlLag);
-		mod1Index = fm1Amount * 22;
-		mod1Freq = freq * fm1Ratio * LFNoise2.kr(freq: 0.1, mul: 0.001, add: 1);
-		mod1 = SinOsc.ar(freq: mod1Freq, phase: 0, mul: mod1Index * mod1Freq, add: 0);
-		mod2Index = fm2Amount * 12;
-		mod2Freq = freq * fm2Ratio * LFNoise2.kr(freq: 0.1, mul: 0.005, add: 1);
-		mod2 = SinOsc.ar(freq: mod2Freq, phase: 0, mul: mod2Index * mod2Freq, add: 0);
-		modFreq = freq + mod1 + mod2;
-		sinOsc = SinOsc.ar(freq: modFreq, phase: 0, mul: 0.5);
-		triOsc = VarSaw.ar(freq: modFreq, iphase: 0, width: 0.5, mul: 0.5);
-		additivePhase = LFSaw.ar(freq: modFreq, iphase: 1, mul: pi, add: pi);
-		additiveOsc = Mix.fill(i_numHarmonics, { |index|
-			var harmonic, harmonicFreq, harmonicCutoff, attenuation;
-			harmonic = index + 1;
-			harmonicFreq = freq * harmonic;
-			harmonicCutoff = i_nyquist - harmonicFreq;
-			attenuation = Select.kr(index, [1,
-				(harmonicCutoff - (harmonicFreq * 0.25) - harmonicFreq).expexp(0.000001, harmonicFreq * 0.5, 0.000001, 1)]);
-			(sin(additivePhase * harmonic % 2pi) / harmonic) * attenuation * (harmonic % 2 + waveShape.linlin(0.666666, 1, 0, 1)).min(1);
-		});
-		signal = LinSelectX.ar(waveShape * 3, [sinOsc, triOsc, additiveOsc]);
-		signal = Fold.ar(in: signal * (1 + (timbre * 0.5) + (waveFolds * 2)), lo: -0.5, hi: 0.5);
-		signal = LPF.ar(in: signal, freq: 12000);
-		signal = signal + PinkNoise.ar(mul: 0.003);
-		filterEnvVel = velocity.linlin(0, 1, 0.5, 1);
-		filterEnvLow = (peak * filterEnvVel).min(300);
-		asrEnvelope = EnvGen.ar(envelope: Env.new(levels: [0, 1, 0], times: [atk, dec], curve: -4, releaseNode: 1), gate: gate);
-		asrFilterFreq = asrEnvelope.linlin(0, 1, filterEnvLow, peak * filterEnvVel);
-		asrSignal = RLPF.ar(in: signal, freq: asrFilterFreq, rq: 0.95);
-		asrSignal = RLPF.ar(in: asrSignal, freq: asrFilterFreq, rq: 0.95);
-		asrSignal = asrSignal * EnvGen.ar(envelope: Env.asr(attackTime: atk, sustainLevel: 1, releaseTime: dec, curve: -4), gate: gate);
-		signal = asrSignal * velocity.linlin(0, 1, 0.2, 1);
-		signal = tanh(signal * pressure.linlin(0, 1, 1.5, 3) * amp).softclip;
-		signal = ~spread.(signal * enable, nchan, pan);
-		Out.ar(out, ~killbad.(signal * (1 - bypass) * wet));
-	}).add;
 
 
 	// ---- ENV: ADSR envelope VCA / audio gate ----
@@ -635,36 +1009,6 @@
 	// ---- PLAITS: Mutable Instruments Plaits macro-oscillator ----
 	// Port of the v7b1 MiPlaits UGen. Trigger fires on enable rising edge;
 	// an external ASR envelope gated by enable guarantees sustain while on.
-	SynthDef(("plaits" ++ suf).asSymbol, { |out = 0, in = 0,
-		pitch = 60, engine = 0, harm = 0.1, timbre = 0.5, morph = 0.5,
-		trigger = 0, level = 1, fm_mod = 0, timb_mod = 0, morph_mod = 0,
-		decay = 0.5, lpg_colour = 0.5,
-		amp = 0.5, pan = 0,
-		bypass = 0, wet = 1, enable = 1|
-		// MiPlaits latches the engine (model) at TRIGGER time, so re-trigger when the
-		// engine changes — otherwise it's stuck on whatever it had at the first
-		// trigger (default 0) and randomizing the engine does nothing audible.
-		var eng = engine.round(1);
-		var trig = Changed.kr(enable) + Changed.kr(trigger) + Changed.kr(eng);
-		var pl = MiPlaits.ar(
-			pitch: pitch,
-			engine: eng,
-			harm: harm,
-			timbre: timbre,
-			morph: morph,
-			trigger: trig,
-			level: level,
-			fm_mod: fm_mod,
-			timb_mod: timb_mod,
-			morph_mod: morph_mod,
-			decay: decay,
-			lpg_colour: lpg_colour,
-			mul: 1
-		);
-		var env = EnvGen.kr(Env.asr(0.005, 1, 0.05), enable);
-		var sig = Balance2.ar(pl[0], pl[1], pan, amp * env);
-		Out.ar(out, ~killbad.(sig * (1 - bypass) * wet));
-	}).add;
 	// ---- FBANK: 10-band resonant stereo filterbank ------------------------
 	// Mimics the Erica Synths Resonant Filterbank: ten fixed-frequency resonant
 	// bandpass filters (29 Hz … 11 kHz), each with a boost/cut gain (1 = flat).
@@ -914,41 +1258,6 @@
 	// + sub + noise -> optional ring-mod -> resonant LP (12/24 dB) with its own
 	// ADSR -> overdrive -> amp ADSR -> chorus. note + gate drive it (gate held =
 	// drone; SEQ/GATE articulate the envelopes). Source: ignores `in`.
-	SynthDef(("molly" ++ suf).asSymbol, { |out = 0, in = 0,
-		note = 48, gate = 1, detune = 7, oscShape = 0.5, pulseWidth = 0.5,
-		subLevel = 0, noiseLevel = 0,
-		cutoff = 1200, resonance = 0.2, lpType = 1, filterEnvAmt = 0.3,
-		fAtk = 0.05, fDec = 0.3, fSus = 0.6, fRel = 0.6,
-		aAtk = 0.01, aDec = 0.3, aSus = 0.8, aRel = 0.5,
-		lfoRate = 4, lfoToCutoff = 0, lfoToPitch = 0, lfoToPW = 0, lfoToAmp = 0,
-		ringMod = 0, drive = 0, chorus = 0, amp = 0.3, pan = 0,
-		bypass = 0, wet = 1, nodeEnable = 1|
-		var freq = Lag.kr(note.midicps, 0.03);
-		var lfo = SinOsc.kr(lfoRate);
-		var fA = freq * (1 + (lfo * lfoToPitch * 0.06));
-		var fB = fA * (2 ** (detune / 1200));
-		var pw = (pulseWidth + (lfo * lfoToPW * 0.4)).clip(0.05, 0.95);
-		var wave = { |f| SelectX.ar(oscShape * 2, [VarSaw.ar(f, 0, 0.5), Saw.ar(f), Pulse.ar(f, pw)]) };
-		var oscA = wave.(fA);
-		var oscB = wave.(fB);
-		var sub = Pulse.ar(fA * 0.5, 0.5) * subLevel;
-		var noise = WhiteNoise.ar(noiseLevel);
-		var mix = ((oscA + oscB) * 0.5) + sub + noise;
-		var fenv = EnvGen.ar(Env.adsr(fAtk, fDec, fSus, fRel), gate);
-		var aenv = EnvGen.ar(Env.adsr(aAtk, aDec, aSus, aRel), gate);
-		var fc = (cutoff * (2 ** ((filterEnvAmt * fenv * 4) + (lfo * lfoToCutoff * 2)))).clip(20, 18000);
-		var filt, sig, cho;
-		mix = XFade2.ar(mix, oscA * oscB * 2, (ringMod * 2 - 1));
-		filt = Select.ar(lpType.clip(0, 1), [
-			RLPF.ar(mix, fc, (1 - (resonance * 0.95)).max(0.05)),     // 12 dB
-			MoogFF.ar(mix, fc, (resonance * 4).clip(0, 3.95))         // 24 dB
-		]);
-		sig = (filt * (1 + (drive * 6))).tanh / (1 + (drive * 2.5));  // overdrive + makeup
-		sig = sig * aenv * (1 - (lfoToAmp * (lfo * 0.5 + 0.5)));      // tremolo
-		cho = Mix(DelayC.ar(sig, 0.06, LFNoise2.kr([0.5, 0.7]).range(0.004, 0.02))) * 0.7;
-		sig = XFade2.ar(sig, cho, (chorus * 2 - 1)) * amp * nodeEnable;
-		Out.ar(out, ~killbad.(~spread.(sig, nchan, pan) * (1 - bypass) * wet));
-	}).add;
 
 	// ---- RINGS: Mutable Instruments modal/string resonator (MiRings) ------
 	(\MiRings.asClass.notNil).if {
