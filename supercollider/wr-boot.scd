@@ -5,21 +5,21 @@
 // server binary + UGen plugins, then hand off to the unmodified desktop boot.scd
 // (which loads dx7/synthdefs/engine and auto-boots the server).
 //
-// ATELIER_THREADS (env): if set, boot the multithreaded SUPERNOVA server with that
-// many DSP threads instead of scsynth. Unset (default) keeps scsynth — unchanged,
-// so a plain launch is exactly as before. Supernova is a matching 3.11.2 build and
-// loads the same *_supernova.so plugins.
+// ATELIER_THREADS (env): the DSP thread count for the multithreaded SUPERNOVA
+// server, which is the DEFAULT engine (run-engine.sh sets it to 3). A value < 1
+// (e.g. ATELIER_THREADS=0) falls back to single-core scsynth. Supernova is a
+// matching 3.11.2 build and loads the same *_supernova.so plugins.
 (
 var dir = "/data/UserData/wildrider";
-var threads = "ATELIER_THREADS".getenv;
+var threads = ("ATELIER_THREADS".getenv ? "").asInteger;
 // ~wrSupernova gates server-specific synthdef bodies (e.g. VERB uses GVerb under
 // supernova, JPverb under scsynth). Set BEFORE boot.scd loads synthdefs.scd.
-(threads.notNil and: { threads.asString.size > 0 }).if({
+(threads > 0).if({
 	~wrSupernova = true;
 	Server.program = dir +/+ "bin/supernova";
-	Server.default.options.threads = threads.asInteger.max(1);
+	Server.default.options.threads = threads;
 	Server.default.options.useSystemClock = true;   // supernova: drive scheduling off the JACK clock
-	("[wr-boot] SUPERNOVA — " ++ threads.asInteger.max(1) ++ " DSP threads").postln;
+	("[wr-boot] SUPERNOVA — " ++ threads ++ " DSP threads").postln;
 }, {
 	~wrSupernova = false;
 	Server.program = dir +/+ "bin/scsynth";

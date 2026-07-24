@@ -25,6 +25,11 @@ export ATELIER_BLOCK=128            # match the shadow JACK period (128) -> one
 export CONTROLLER_HOST=127.0.0.1
 export CONTROLLER_PORT=57140
 export PATH=$WR/bin:$PATH
+# Engine: the multithreaded SUPERNOVA server is the DEFAULT now — it spreads the
+# patch across all four cores (see docs/supernova.md). ATELIER_THREADS = the DSP
+# thread count. To fall back to single-core scsynth, set it to 0 (wr-boot.scd
+# treats <1 as scsynth). Overridable from the environment for one-off tests.
+export ATELIER_THREADS="${ATELIER_THREADS:-3}"
 # Logs live under the (ableton-owned) wildrider tree, NOT /tmp: the runner is
 # launched as `ableton` from the Schwung menu and cannot write root-owned files.
 LOGS=$WR/logs; mkdir -p "$LOGS"
@@ -49,7 +54,7 @@ echo "[engine] sclang pid=$!  (log: $ENGLOG)"
 echo "[engine] waiting for boot ..."
 i=0
 while [ $i -lt 60 ]; do
-    grep -q "server ready\|SuperCollider 3 server ready" "$ENGLOG" 2>/dev/null && break
+    grep -q "server ready\|SuperCollider 3 server ready\|Supernova ready" "$ENGLOG" 2>/dev/null && break
     grep -qi "ERROR\|FAILURE\|Exception" "$ENGLOG" 2>/dev/null && { echo "[engine] error:"; tail -n 20 "$ENGLOG"; exit 1; }
     i=$((i+1)); sleep 1
 done
@@ -60,10 +65,10 @@ echo "[engine] --- log tail ---"; tail -n 12 "$ENGLOG"
 # leave core 3 for the SPI/display driver. This reduces cross-core cache/lock
 # contention; the SCHED_FIFO priority from `jackd -R` is what actually prevents
 # the preemption that causes XRuns.
-for p in $(pgrep -x scsynth) $(pgrep -x jackd); do taskset -pc 1-2 "$p" >/dev/null 2>&1; done
+for p in $(pgrep -x scsynth) $(pgrep -x supernova) $(pgrep -x jackd); do taskset -pc 1-3 "$p" >/dev/null 2>&1; done
 for p in $(pgrep -x sclang); do taskset -pc 0 "$p" >/dev/null 2>&1; done
 
 # Verify the audio chain actually came up realtime (read-only; logs to engine log).
-for p in $(pgrep -x jackd) $(pgrep -x scsynth); do
+for p in $(pgrep -x jackd) $(pgrep -x scsynth) $(pgrep -x supernova); do
     echo "[engine] $(cat /proc/$p/comm 2>/dev/null) sched: $(chrt -p $p 2>/dev/null | tr '\n' ' ')"
 done
