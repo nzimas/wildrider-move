@@ -1,0 +1,69 @@
+# Cross-build a relocatable aarch64/glibc-2.35 Csound for the Ableton Move
+# (RPi CM4, AbletonOS, glibc 2.35). Csound is used here ONLY as an offline
+# (NRT) sound-file transformer — it renders a source WAV through a transform
+# orchestra to an output WAV (`csound -o out.wav …`). No realtime audio, no
+# MIDI, no GUI — so every realtime IO backend is disabled, which also strips the
+# ALSA/JACK/PortAudio runtime deps.
+#
+# Ubuntu 22.04 = glibc 2.35, identical to the device, so the binary + libs load
+# against the Move's own libc. Built on the Mac via
+# `docker buildx --platform linux/arm64`; the device never sees Docker.
+
+FROM ubuntu:22.04 AS build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git cmake build-essential flex bison ca-certificates patchelf \
+        libsndfile1-dev libfftw3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Csound 6.18.1 — the last of the mature 6.x line; builds cleanly on ARM64 and
+# ships every transform opcode we want (ATS, LPC, partikkel, pvs, mode, pconvolve).
+RUN git clone --depth 1 --branch 6.18.1 https://github.com/csound/csound.git /src
+
+WORKDIR /src/build
+# Offline-only, lean build: no realtime IO modules (ALSA/JACK/Pulse/PortAudio/
+# PortMIDI), no OSC/CUnit/tests/Python/Java/HTML5. libsndfile + FFTW are the only
+# real runtime deps (both bundled below). Standard opcode plugins are kept — that
+# is where partikkel / mode / pconvolve / the ATS + LPC opcodes live.
+RUN cmake -S /src -B /src/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/csound \
+        -DBUILD_TESTS=OFF -DUSE_CURL=OFF -DUSE_GETTEXT=OFF \
+        -DBUILD_JACK_OPCODES=OFF -DUSE_JACK=OFF \
+        -DBUILD_ALSA_MODULE=OFF -DBUILD_PULSE_MODULE=OFF \
+        -DBUILD_PORTAUDIO_MODULE=OFF -DBUILD_PORTMIDI_MODULE=OFF \
+        -DBUILD_OSC_OPCODES=OFF -DBUILD_WINSOUND=OFF \
+        -DBUILD_JAVA_INTERFACE=OFF -DBUILD_PYTHON_INTERFACE=OFF \
+        -DBUILD_LUA_INTERFACE=OFF -DBUILD_CSOUND_AC=OFF \
+        -DBUILD_STATIC_LIBRARY=OFF -DBUILD_MULTI_CORE=ON \
+        -DBUILD_DSSI_OPCODES=OFF -DBUILD_FLUID_OPCODES=OFF \
+        -DBUILD_IMAGE_OPCODES=OFF -DBUILD_LINEAR_ALGEBRA_OPCODES=OFF \
+        -DBUILD_STK_OPCODES=OFF -DBUILD_WEBSOCKET_OPCODE=OFF \
+        -DBUILD_FAUST_OPCODES=OFF -DBUILD_VST4CS_OPCODES=OFF \
+        -DBUILD_P5GLOVE_OPCODES=OFF -DBUILD_SERIAL_OPCODES=OFF \
+        -DBUILD_CHUA_OPCODES=OFF -DBUILD_JACK_OPCODES=OFF \
+        -DCMAKE_C_FLAGS="-O2" -DCMAKE_CXX_FLAGS="-O2"
+RUN make -j"$(nproc)" 2>&1 | tail -30
+RUN make install
+
+# Gather the binary, libcsound, the opcode plugin dir, and every non-glibc shared
+# lib the binary + all plugins pull in (so the bundle is self-contained under one
+# LD_LIBRARY_PATH). The device deploy sets OPCODE6DIR64 -> the plugins dir.
+RUN set -eux; \
+    mkdir -p /out/bin /out/lib /out/plugins; \
+    cp -v /csound/bin/csound /out/bin/csound; \
+    cp -av /csound/lib/libcsound64.so* /out/lib/; \
+    PLUGDIR="$(find /csound/lib -maxdepth 2 -type d -name 'plugins64*' | head -n1)"; \
+    echo "plugin dir: $PLUGDIR"; cp -av "$PLUGDIR"/*.so /out/plugins/; \
+    echo "opcode plugins:"; ls /out/plugins | wc -l; \
+    for bin in /out/bin/csound /out/lib/libcsound64.so* /out/plugins/*.so; do \
+        ldd "$bin" 2>/dev/null | awk '/=> \// {print $3}'; \
+    done | sort -u | grep -vE 'libc\.so|libm\.so|libpthread|libdl\.so|librt\.so|ld-linux|libgcc_s|libstdc\+\+' \
+        | while read -r so; do cp -vL "$so" /out/lib/ 2>/dev/null || true; done; \
+    cp -vL "$(gcc -print-file-name=libstdc++.so.6)" /out/lib/ 2>/dev/null || true; \
+    strip /out/bin/csound /out/lib/*.so* /out/plugins/*.so 2>/dev/null || true; \
+    echo "=== bundle ==="; ls -R /out | head -60; \
+    "/out/bin/csound" --version 2>&1 | head -3 || true
+
+FROM scratch AS export
+COPY --from=build /out /

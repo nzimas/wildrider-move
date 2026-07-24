@@ -123,8 +123,11 @@ Every on-screen bar activates the moment its encoder is touched.
   BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER.
 - **On-device module browser** — audition generators and hear processor names
   spoken, then assign them to the canvas (palette rows 3 & 4).
-- **CDP variations** — capture a live snippet and fan Composers-Desktop-Project
-  transformations across the free sample slots.
+- **Sample transformation** — capture a live snippet and fan it across the free
+  sample slots as **16 variations per job: 8 from CDP** (phase-vocoder / waveset
+  *musique concrète*) **+ 8 from Csound** (offline/NRT — ATS resynthesis, LPC
+  formant recasting, spectral morphing, modal resonators). The two engines run
+  back to back for tonally-distinct results.
 - **Guided generative patches** — artist-profile randomization with a CPU budget so
   a generated patch always leaves DSP headroom (and stays processor-forward rather
   than drowning in generators).

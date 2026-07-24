@@ -1473,30 +1473,45 @@ class HeadlessController:
                         last, stable = sz, 0
             if not (src.exists() and src.stat().st_size > 2000):
                 return
-            # 3. spawn diverse variations, ONE per currently-FREE CDP slot (0-23, rows
-            #    1-3 of the CDP view), so a re-generate fills only the empties the
-            #    performer left after deleting the variations they didn't want —
-            #    occupied slots are never overwritten.
+            # 3. Fill the currently-FREE CDP slots (0-23, rows 1-3) with TWO engines
+            #    run BACK TO BACK, never in parallel: up to 8 CDP variations, then up to
+            #    8 Csound (NRT) variations — 16 per job max. CDP is the phase-vocoder /
+            #    waveset concrète palette; Csound (csoundfx) brings the tonally-distinct
+            #    territory CDP/SC can't — ATS resynthesis, LPC formants, spectral morph,
+            #    modal resonators. A re-generate fills only the empties the performer
+            #    left; occupied slots are never overwritten.
+            from . import csoundfx as _csfx
             free = [i for i in range(24) if self._samp[i]["state"] == "empty"]
             if not free:
                 return
-            # load each into the next free slot the moment it is ready (progressive fill),
-            # marking it FRESH so the ui paints newly-generated content a distinct colour
-            # until it is auditioned/toggled for the first time. The engine reads the WAV
-            # into a RAM buffer (async, quick); once loaded the file is disposable, so we
-            # delete each variation a step behind the newest to keep peak disk tiny.
+            n_cdp = min(8, len(free))
+            n_cs = min(8, len(free) - n_cdp)
+            cdp_slots = free[:n_cdp]
+            cs_slots = free[n_cdp:n_cdp + n_cs]
+            # load each variation into its slot the moment it is ready (progressive fill),
+            # marking it FRESH so the ui paints new content a distinct colour until it is
+            # auditioned. The engine reads the WAV into a RAM buffer (async, quick); once
+            # loaded the file is disposable, so delete a step behind the newest to keep
+            # peak disk tiny.
             loaded: list = []
-            def _load(k, path):
-                if k < len(free):
-                    i = free[k]
-                    self._samp[i]["state"] = "filled"
-                    self._samp[i]["fresh"] = True
-                    self.bridge.send("/atelier/sampler/load", i, str(path), 0)
-                    loaded.append(path)
-                    while len(loaded) > 2:          # keep the 2 most-recent; the rest are in RAM now
-                        try: Path(loaded.pop(0)).unlink()
-                        except OSError: pass
-            _cdp.generate(str(src), str(vars_dir), count=len(free), on_ready=_load)
+            def _loader(slots):
+                def _load(k, path):
+                    if k < len(slots):
+                        i = slots[k]
+                        self._samp[i]["state"] = "filled"
+                        self._samp[i]["fresh"] = True
+                        self.bridge.send("/atelier/sampler/load", i, str(path), 0)
+                        loaded.append(path)
+                        while len(loaded) > 2:      # keep the 2 most-recent; the rest are in RAM now
+                            try: Path(loaded.pop(0)).unlink()
+                            except OSError: pass
+                return _load
+            if cdp_slots:
+                _cdp.generate(str(src), str(vars_dir / "cdp"), count=len(cdp_slots),
+                              on_ready=_loader(cdp_slots))
+            if cs_slots:
+                _csfx.generate(str(src), str(vars_dir / "cs"), count=len(cs_slots),
+                               on_ready=_loader(cs_slots))
             # everything is loaded into engine buffers now — reclaim the disk.
             _t.sleep(1.5)
             _sh.rmtree(vars_dir, ignore_errors=True)
