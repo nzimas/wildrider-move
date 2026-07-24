@@ -161,6 +161,7 @@ let samplerMode = false;
  * knows they're here. PLAYING slots always flash; selected-for-edit = blue. */
 let cdpMode = false;
 let cdpBusy = false;             /* controller is capturing / running the CDP job */
+let cdpBlinkFrame = -1;          /* last Transformers blink frame (wall-clock driven) */
 const CDP_GEN_CELL = 24;         /* bottom-left pad = record+process trigger */
 let sampStates = new Array(56).fill('empty');   /* per slot from status.json */
 let sampFresh = new Array(56).fill(0);          /* 1 = freshly CDP-generated, not yet auditioned */
@@ -555,21 +556,23 @@ function renderSamplerLEDs(flashOn) {
  * knows they're here), the generator pad lit red (pulsing while a job runs), and
  * rows 1-3 = the Transformers bank (slots 32..55). Pads WITH A SAMPLE pulse at
  * 120 BPM (a heartbeat); a slot selected for editing is painted solid RED. */
-function renderCdpLEDs(pulseOn) {
+function renderCdpLEDs(playOn, genOn) {
     for (var c = 0; c < 32; c++) {
         var color = DarkGrey;                        /* dim cool wash everywhere */
         if (c === CDP_GEN_CELL) {                    /* the generator / record+process pad */
-            color = cdpBusy ? (pulseOn ? BrightRed : Red) : Red;
+            color = cdpBusy ? (genOn ? BrightRed : Red) : Red;   /* moderate blink while a job runs */
         } else if (c < 24) {                         /* rows 1-3 = Transformers slots 32..55 */
             var slot = 32 + c;
             var st = sampStates[slot];
             if (selSlots.indexOf(slot) >= 0) {       /* selected for editing = solid RED (high contrast) */
                 color = Red;
-            } else if (st === 'filled' || st === 'playing') {
-                /* a pad WITH A SAMPLE pulses at 120 BPM (heartbeat) in its identity colour */
-                var idc = (st === 'filled' && sampFresh[slot]) ? BrightGreen        /* fresh, unauditioned */
-                        : (sampPatchFx[slot] ? AzureBlue : White);                  /* blue = through patch FX */
-                color = pulseOn ? idc : DarkGrey;
+            } else if (st === 'playing') {           /* PLAYING pulses discretely at 120 BPM */
+                color = playOn ? (sampPatchFx[slot] ? AzureBlue : White) : DarkGrey;
+            } else if (st === 'filled') {
+                var idc = sampFresh[slot] ? BrightGreen : (sampPatchFx[slot] ? AzureBlue : White);
+                /* while the job runs the filling slots blink MODERATELY; once it
+                 * finishes they go STEADY (only playback pulses them again). */
+                color = cdpBusy ? (genOn ? idc : DarkGrey) : idc;
             }
             /* empty slot stays on the DarkGrey dim base */
         }
@@ -806,11 +809,16 @@ globalThis.tick = function () {
         return;
     }
     if (cdpMode) {                          /* TRANSFORMERS view owns the grid + screen */
-        var pulseOn = (phase % 15) < 4;     /* ~120 BPM heartbeat (30Hz tick -> 15-tick period) */
-        /* animate only when the Transformers bank (slots 32..55) has content, or a job runs */
-        var anim = cdpBusy || sampStates.indexOf('filled', 32) >= 0 || sampStates.indexOf('playing', 32) >= 0;
-        if (anim && pulseOn !== sampFlashOn) { sampFlashOn = pulseOn; ledDirty = true; }
-        if (ledDirty) renderCdpLEDs(sampFlashOn);
+        /* wall-clock driven so the cadence never depends on the tick rate */
+        var nowMs = Date.now();
+        var playOn = (nowMs % 500) < 150;   /* 120 BPM DISCRETE pulse — playing slots */
+        var genOn  = (nowMs % 1000) < 300;  /* ~1 Hz MODERATE blink — during a job (not a strobe) */
+        /* only animate while a job runs (moderate blink) or a slot plays (120 BPM);
+         * idle filled slots are steady, so they stop blinking once generation ends. */
+        var anim = cdpBusy || sampStates.indexOf('playing', 32) >= 0;
+        var frame = (playOn ? 1 : 0) | (genOn ? 2 : 0);
+        if (anim && frame !== cdpBlinkFrame) { cdpBlinkFrame = frame; ledDirty = true; }
+        if (ledDirty) renderCdpLEDs(playOn, genOn);
         if (screenDirty) { drawCdp(); screenDirty = false; }
         return;
     }
