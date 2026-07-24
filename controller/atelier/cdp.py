@@ -475,9 +475,14 @@ def generate(src_wav: str, out_dir: str, count: int = 8,
     src_n = work / "_source_norm.wav"
     if not (c0.run("housekeep", "chans", "4", src, mono) and _ok(mono)):
         return []
-    if not (c0.run("modify", "loudness", "3", mono, src_n, "-l0.7") and _ok(src_n)):
-        return []
-    src = src_n
+    # Normalise UP so quiet captures are audible. CDP's `modify loudness 3` is
+    # boost-only: it ERRORS "already above the specified level" when the source
+    # already peaks over the target — in which case the capture is already loud
+    # enough, so just use the mono fold directly rather than dropping the whole job.
+    if c0.run("modify", "loudness", "3", mono, src_n, "-l0.7") and _ok(src_n):
+        src = src_n
+    else:
+        src = mono
     # Family round-robin: shuffle the family order once, then deal one variation per
     # family in turn. Within a family, recipes are drawn from a shuffled deck that
     # reshuffles when exhausted, so long batches (24) still avoid recipe repeats
@@ -514,9 +519,13 @@ def generate(src_wav: str, out_dir: str, count: int = 8,
             nrm = ctx.tmp("wav")     # normalised mono
             # real (mono) variation -> normalise to a consistent audible level ->
             # interleave mono->stereo so it loads like a normal sampler take.
-            ok = _one_variation(ctx, recipe, src, raw) and _ok(raw) \
-                    and ctx.run("modify", "loudness", "3", raw, nrm, "-l0.5") and _ok(nrm) \
-                    and ctx.run("submix", "interleave", nrm, nrm, out) and _ok(out)
+            # normalise to a consistent level; the boost-only `modify loudness 3`
+            # errors when the variation already peaks above it -> fall back to the
+            # raw (already-loud) output so the variation is kept, not dropped.
+            ok = _one_variation(ctx, recipe, src, raw) and _ok(raw)
+            if ok:
+                lvl = nrm if (ctx.run("modify", "loudness", "3", raw, nrm, "-l0.5") and _ok(nrm)) else raw
+                ok = ctx.run("submix", "interleave", lvl, lvl, out) and _ok(out)
             ctx.sweep()             # drop THIS recipe's intermediates before the next
             if ok:
                 idx = len(outs)
