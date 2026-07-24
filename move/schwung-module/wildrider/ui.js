@@ -697,6 +697,43 @@ function showSaved(pad) {   /* big 'OK' + pad flash confirming a project save/ov
     ledDirty = true; screenDirty = true;
 }
 
+/* GIANT text: a 3x5 bitmap font drawn as scaled fill_rect blocks (technique from
+ * the PoundHard stack) — far bigger than print(). Used for the save-confirm 'OK'. */
+var BIGFONT = {
+    '0': ['###', '# #', '# #', '# #', '###'], '1': [' # ', '## ', ' # ', ' # ', '###'],
+    '2': ['###', '  #', '###', '#  ', '###'], '3': ['###', '  #', ' ##', '  #', '###'],
+    '4': ['# #', '# #', '###', '  #', '  #'], '5': ['###', '#  ', '###', '  #', '###'],
+    '6': ['###', '#  ', '###', '# #', '###'], '7': ['###', '  #', '  #', '  #', '  #'],
+    '8': ['###', '# #', '###', '# #', '###'], '9': ['###', '# #', '###', '  #', '###'],
+    'A': [' # ', '# #', '###', '# #', '# #'], 'B': ['## ', '# #', '## ', '# #', '## '],
+    'C': ['###', '#  ', '#  ', '#  ', '###'], 'D': ['## ', '# #', '# #', '# #', '## '],
+    'E': ['###', '#  ', '## ', '#  ', '###'], 'K': ['# #', '# #', '## ', '# #', '# #'],
+    'O': ['###', '# #', '# #', '# #', '###'], 'S': ['###', '#  ', '###', '  #', '###'],
+    'V': ['# #', '# #', '# #', '# #', ' # '],
+    ' ': ['   ', '   ', '   ', '   ', '   ']
+};
+function drawBig(text, yTop, maxScale) {
+    if (typeof fill_rect !== 'function') return;
+    text = String(text).toUpperCase();
+    var n = text.length || 1;
+    var scale = Math.max(3, Math.min(maxScale || 11, Math.floor(122 / (4 * n - 1))));
+    var gw = 3 * scale, gap = scale, totalW = n * gw + (n - 1) * gap;
+    var x0 = Math.max(0, Math.floor((128 - totalW) / 2));
+    for (var i = 0; i < text.length; i++) {
+        var g = BIGFONT[text[i]] || BIGFONT[' '];
+        var gx = x0 + i * (gw + gap);
+        for (var r = 0; r < 5; r++) {
+            var row = g[r], c = 0;
+            while (c < 3) {                          /* contiguous '#' -> one wide rect (fewer host calls) */
+                if (row.charCodeAt(c) === 35) {
+                    var st2 = c;
+                    while (c < 3 && row.charCodeAt(c) === 35) c++;
+                    fill_rect(gx + st2 * scale, yTop + r * scale, (c - st2) * scale, scale, 1);
+                } else { c++; }
+            }
+        }
+    }
+}
 function bar(frac) {   /* draw a 0..1 unipolar bar */
     if (typeof draw_rect === 'function') draw_rect(6, 34, 116, 14, 1);
     if (typeof fill_rect === 'function') fill_rect(8, 36, Math.max(0, Math.round(frac * 112)), 10, 1);
@@ -726,8 +763,8 @@ function drawScreen() {
         } else if (overlay.kind === 'action') {
             print(0, 24, overlay.label, 2);
         } else if (overlay.kind === 'saved') {
-            print(52, 12, 'OK', 2);                                  /* a big, centred OK */
-            print(0, 44, 'PROJECT ' + (overlay.pad + 1) + ' SAVED', 1);
+            drawBig('OK', 6, 9);                                     /* GIANT centred OK */
+            print(0, 54, 'PROJECT ' + (overlay.pad + 1) + ' SAVED', 1);
         } else if (overlay.kind === 'density') {
             var dt = overlay.target;
             var dv = (dt >= 0) ? (densityCell[dt] || 0) : density;
@@ -878,12 +915,19 @@ globalThis.tick = function () {
         return;
     }
     if (perfMode) {                         /* PERFORMANCES view owns the grid + screen */
+        if (overlay && overlay.kind === 'saved' && phase >= overlayUntil) { overlay = null; screenDirty = true; }  /* the view returns before the global expiry, so clear the OK here */
         if (perfFlashPad >= 0) {            /* keep animating the post-save flash, then settle */
             if (phase < perfFlashUntil) ledDirty = true;
             else { perfFlashPad = -1; ledDirty = true; }
         }
         if (ledDirty) renderPerfLEDs();
-        if (screenDirty) { drawPerf(); screenDirty = false; }
+        if (screenDirty) {
+            if (overlay && overlay.kind === 'saved' && phase < overlayUntil) {
+                clear_screen(); drawBig('OK', 6, 9);   /* GIANT save confirmation */
+                print(0, 54, 'PROJECT ' + (overlay.pad + 1) + ' SAVED', 1);
+            } else { drawPerf(); }
+            screenDirty = false;
+        }
         return;
     }
     /* Long-press crossed the threshold: reveal the module name (no toggle).

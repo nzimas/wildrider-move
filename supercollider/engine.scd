@@ -1023,18 +1023,6 @@
 	// nil ~masterBus -> 'index' errors. ~built is set at the end of ~boot.
 	OSCdef(\ping, { |m| (~built ? false).if { ~ctrl.value.sendMsg('/atelier/ready') } }, '/atelier/ping'),
 	OSCdef(\feedback, { |m| /* armed feedback edges: see ~rebuildLane refinement */ }, '/atelier/feedback'),
-	OSCdef(\recorder, { |m| /* recorder/resampling hook */ }, '/atelier/recorder'),
-	// CD-quality WAV capture off JACK (see record.sh). The controller picks the
-	// timestamped path; we just launch/stop the ffmpeg capture.
-	OSCdef(\recStart, { |m|
-		var path = m[1].asString;
-		("/opt/atelier/record.sh start " ++ path.quote).unixCmd;
-		("[atelier-sc] recording -> " ++ path).postln;
-	}, '/atelier/record/start'),
-	OSCdef(\recStop, { |m|
-		"/opt/atelier/record.sh stop".unixCmd;
-		"[atelier-sc] recording stopped".postln;
-	}, '/atelier/record/stop'),
 ];
 
 // forward SendReply telemetry from scsynth to the controller
