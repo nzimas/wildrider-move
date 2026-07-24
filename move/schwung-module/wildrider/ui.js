@@ -133,6 +133,8 @@ let sceneFilled = new Array(32).fill(false);   /* which slots hold a scene */
  * Short press a filled pad = load that project; Shift+pad = save the current one. */
 let perfMode = false;
 let perfFilled = new Array(32).fill(false);    /* which pads hold a saved performance */
+let perfFlashPad = -1;                         /* project pad to briefly flash after a save */
+let perfFlashUntil = 0;
 let perfActive = -1;                           /* last saved/loaded pad (highlighted) */
 let lastPerfReload = -1;                        /* edge-detect a performance load (re-sync macros) */
 const PERF_FILLED_COLOR = BrightGreen;
@@ -487,7 +489,9 @@ function drawScenes() {
 function renderPerfLEDs() {
     for (var c = 0; c < 32; c++) {
         var color = Black;
-        if (c === perfActive && perfFilled[c]) color = White;   /* last saved/loaded */
+        if (c === perfFlashPad && phase < perfFlashUntil) {       /* just saved -> brief flash */
+            color = ((Math.floor(phase / 3) % 2) === 0) ? White : BrightRed;
+        } else if (c === perfActive && perfFilled[c]) color = White;   /* last saved/loaded */
         else if (perfFilled[c]) color = PERF_FILLED_COLOR;       /* holds a project */
         setLED(PAD_NOTES[c], color);
     }
@@ -565,15 +569,16 @@ function renderCdpLEDs(playOn, recOn) {
             var slot = 32 + c;
             var st = sampStates[slot];
             var wired = sampPatchFx[slot];
+            var sel = selSlots.indexOf(slot) >= 0;
             /* a slot's bright + dim shades of the SAME hue — pulsing between them is a
              * gentle breathe (NOT the old full-colour-to-black "turn signal"). */
             var bright = wired ? AzureBlue : (sampFresh[slot] ? BrightGreen : White);
             var dim    = wired ? DeepBlue  : (sampFresh[slot] ? DullGreen  : WhiteLedDim);
-            if (selSlots.indexOf(slot) >= 0) {       /* selected for editing = solid RED (high contrast) */
+            if (st === 'playing') {                  /* PLAYING always breathes — KEEP breathing in edit mode */
+                color = sel ? (playOn ? BrightRed : Red)      /* selected + playing = a RED breathe */
+                            : (playOn ? bright : dim);        /* normal 120 BPM breathe */
+            } else if (sel) {                        /* selected, not playing = solid RED (high contrast) */
                 color = Red;
-            } else if (st === 'playing') {           /* PLAYING: gentle 120 BPM breathe */
-                var pb = wired ? AzureBlue : White, pd = wired ? DeepBlue : WhiteLedDim;
-                color = playOn ? pb : pd;
             } else if (st === 'filled') {
                 /* while the job runs the filling slots breathe FAST + gently; once it
                  * finishes they go STEADY (only playback breathes them again). */
@@ -664,6 +669,11 @@ function heldGenCell() {
 }
 function showLfo(i, label) { overlay = { kind: 'lfo', idx: i, label: label }; overlayUntil = phase + 24; screenDirty = true; }
 function showAction(label) { overlay = { kind: 'action', label: label }; overlayUntil = phase + 24; screenDirty = true; }
+function showSaved(pad) {   /* big 'OK' + pad flash confirming a project save/overwrite */
+    overlay = { kind: 'saved', pad: pad }; overlayUntil = phase + 30;
+    perfFlashPad = pad; perfFlashUntil = phase + 30;
+    ledDirty = true; screenDirty = true;
+}
 
 function bar(frac) {   /* draw a 0..1 unipolar bar */
     if (typeof draw_rect === 'function') draw_rect(6, 34, 116, 14, 1);
@@ -693,6 +703,9 @@ function drawScreen() {
             print(0, 40, overlay.label, 1);
         } else if (overlay.kind === 'action') {
             print(0, 24, overlay.label, 2);
+        } else if (overlay.kind === 'saved') {
+            print(52, 12, 'OK', 2);                                  /* a big, centred OK */
+            print(0, 44, 'PROJECT ' + (overlay.pad + 1) + ' SAVED', 1);
         } else if (overlay.kind === 'density') {
             var dt = overlay.target;
             var dv = (dt >= 0) ? (densityCell[dt] || 0) : density;
@@ -841,6 +854,10 @@ globalThis.tick = function () {
         return;
     }
     if (perfMode) {                         /* PERFORMANCES view owns the grid + screen */
+        if (perfFlashPad >= 0) {            /* keep animating the post-save flash, then settle */
+            if (phase < perfFlashUntil) ledDirty = true;
+            else { perfFlashPad = -1; ledDirty = true; }
+        }
         if (ledDirty) renderPerfLEDs();
         if (screenDirty) { drawPerf(); screenDirty = false; }
         return;
@@ -856,7 +873,7 @@ globalThis.tick = function () {
     loadPalette();                          /* one-shot: fetch the module browser lists */
     if (ledDirty) renderLEDs();
     /* Expire a timed overlay (macro / volume) -> revert to the idle screen once. */
-    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action' || overlay.kind === 'density' || overlay.kind === 'pitch' || overlay.kind === 'pfilter' || overlay.kind === 'macro5' || overlay.kind === 'exit') && phase >= overlayUntil) { if (overlay.kind === 'exit') exitPending = false; overlay = null; pFiltShow = null; screenDirty = true; }
+    if (overlay && (overlay.kind === 'macro' || overlay.kind === 'level' || overlay.kind === 'lfo' || overlay.kind === 'action' || overlay.kind === 'saved' || overlay.kind === 'density' || overlay.kind === 'pitch' || overlay.kind === 'pfilter' || overlay.kind === 'macro5' || overlay.kind === 'exit') && phase >= overlayUntil) { if (overlay.kind === 'exit') exitPending = false; overlay = null; pFiltShow = null; screenDirty = true; }
     /* Redraw ONLY when something changed (or a macro slider is live), so the
      * SPI display isn't flushed 133x/s — that contention was XRunning audio. */
     if (screenDirty) { drawScreen(); screenDirty = false; }
@@ -994,7 +1011,7 @@ globalThis.onMidiMessageInternal = function (data) {
         }
         if (perfMode) {                              /* PERFORMANCES: pad=load, shift+pad=save, X+pad=delete */
             if (deleteHeld) { if (perfFilled[cell]) { perfFilled[cell] = false; if (perfActive === cell) perfActive = -1; sendCmd('delp', cell); showAction('DEL ' + (cell + 1)); } }
-            else if (shiftHeld) { perfFilled[cell] = true; perfActive = cell; sendCmd('savep', cell); showAction('SAVED ' + (cell + 1)); }
+            else if (shiftHeld) { perfFilled[cell] = true; perfActive = cell; sendCmd('savep', cell); showSaved(cell); }
             else if (perfFilled[cell]) { perfActive = cell; sendCmd('loadp', cell); showAction('LOAD ' + (cell + 1)); }
             ledDirty = true; screenDirty = true;
             return;
