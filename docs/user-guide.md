@@ -192,10 +192,11 @@ red one) is the generator.
   waveset) then **8 from Csound** (ATS resynthesis, LPC formants, spectral
   morphing, modal resonators), back to back. Occupied slots are never overwritten;
   the pad flashes bright red while the job runs.
-- **While a job runs** the filling slots (and the generator pad) blink moderately
-  (~1 Hz); once it finishes they go **steady** — freshly generated content sits
-  **bright green** until you audition it, then reverts to the normal colour.
-- **A playing slot pulses discretely at 120 BPM**, so you can see what's sounding.
+- **While a job runs** the filling slots (and the generator pad) **breathe** fast
+  and gently — a soft bright↔dim pulse, not a hard blink; once it finishes they go
+  **steady** — freshly generated content sits **bright green** until you audition
+  it, then reverts to the normal colour.
+- **A playing slot breathes gently at 120 BPM**, so you can see what's sounding.
 - **Shift + pad selects a slot for editing** — it turns solid **red** for contrast.
 
 The slot gestures, per-slot encoder editing, and armed insert FX are identical to
@@ -275,8 +276,8 @@ Filled slots glow green; the last saved/loaded slot is white.
 | Performances | green / white | saved / last used |
 | Transformers | grey wash | you're in the Transformers view (its own slot bank) |
 | Transformers | steady white/green | a filled slot (green = fresh, unauditioned) |
-| Transformers | pulse 120 BPM | a **playing** slot |
-| Transformers | ~1 Hz blink | a job is generating (moderate, not a strobe) |
+| Transformers | gentle breathe, 120 BPM | a **playing** slot (soft bright↔dim, not on/off) |
+| Transformers | fast gentle breathe | a job is generating |
 | Transformers | solid red | selected-for-edit (high contrast) |
 | Recorder | red-flash / amber / green / blue | recording / take / playing / selected-for-edit |
 | Screen | "CPU LIMIT" | audio core saturated; adds refused |

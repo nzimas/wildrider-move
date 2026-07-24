@@ -556,23 +556,28 @@ function renderSamplerLEDs(flashOn) {
  * knows they're here), the generator pad lit red (pulsing while a job runs), and
  * rows 1-3 = the Transformers bank (slots 32..55). Pads WITH A SAMPLE pulse at
  * 120 BPM (a heartbeat); a slot selected for editing is painted solid RED. */
-function renderCdpLEDs(playOn, genOn) {
+function renderCdpLEDs(playOn, recOn) {
     for (var c = 0; c < 32; c++) {
         var color = DarkGrey;                        /* dim cool wash everywhere */
         if (c === CDP_GEN_CELL) {                    /* the generator / record+process pad */
-            color = cdpBusy ? (genOn ? BrightRed : Red) : Red;   /* moderate blink while a job runs */
+            color = cdpBusy ? (recOn ? BrightRed : Red) : Red;   /* fast, gentle red breathe while a job runs */
         } else if (c < 24) {                         /* rows 1-3 = Transformers slots 32..55 */
             var slot = 32 + c;
             var st = sampStates[slot];
+            var wired = sampPatchFx[slot];
+            /* a slot's bright + dim shades of the SAME hue — pulsing between them is a
+             * gentle breathe (NOT the old full-colour-to-black "turn signal"). */
+            var bright = wired ? AzureBlue : (sampFresh[slot] ? BrightGreen : White);
+            var dim    = wired ? DeepBlue  : (sampFresh[slot] ? DullGreen  : WhiteLedDim);
             if (selSlots.indexOf(slot) >= 0) {       /* selected for editing = solid RED (high contrast) */
                 color = Red;
-            } else if (st === 'playing') {           /* PLAYING pulses discretely at 120 BPM */
-                color = playOn ? (sampPatchFx[slot] ? AzureBlue : White) : DarkGrey;
+            } else if (st === 'playing') {           /* PLAYING: gentle 120 BPM breathe */
+                var pb = wired ? AzureBlue : White, pd = wired ? DeepBlue : WhiteLedDim;
+                color = playOn ? pb : pd;
             } else if (st === 'filled') {
-                var idc = sampFresh[slot] ? BrightGreen : (sampPatchFx[slot] ? AzureBlue : White);
-                /* while the job runs the filling slots blink MODERATELY; once it
-                 * finishes they go STEADY (only playback pulses them again). */
-                color = cdpBusy ? (genOn ? idc : DarkGrey) : idc;
+                /* while the job runs the filling slots breathe FAST + gently; once it
+                 * finishes they go STEADY (only playback breathes them again). */
+                color = cdpBusy ? (recOn ? bright : dim) : bright;
             }
             /* empty slot stays on the DarkGrey dim base */
         }
@@ -809,16 +814,17 @@ globalThis.tick = function () {
         return;
     }
     if (cdpMode) {                          /* TRANSFORMERS view owns the grid + screen */
-        /* wall-clock driven so the cadence never depends on the tick rate */
+        /* wall-clock driven so the cadence never depends on the tick rate. Both are
+         * 50% duty and pulse between bright/dim shades, so they read as a gentle
+         * breathe rather than a hard on/off. */
         var nowMs = Date.now();
-        var playOn = (nowMs % 500) < 150;   /* 120 BPM DISCRETE pulse — playing slots */
-        var genOn  = (nowMs % 1000) < 300;  /* ~1 Hz MODERATE blink — during a job (not a strobe) */
-        /* only animate while a job runs (moderate blink) or a slot plays (120 BPM);
-         * idle filled slots are steady, so they stop blinking once generation ends. */
+        var playOn = (nowMs % 500) < 250;   /* 120 BPM breathe — playing slots */
+        var recOn  = (nowMs % 260) < 130;   /* ~4 Hz FAST breathe — while a job runs */
+        /* only animate while a job runs or a slot plays; idle filled slots are steady */
         var anim = cdpBusy || sampStates.indexOf('playing', 32) >= 0;
-        var frame = (playOn ? 1 : 0) | (genOn ? 2 : 0);
+        var frame = (playOn ? 1 : 0) | (recOn ? 2 : 0);
         if (anim && frame !== cdpBlinkFrame) { cdpBlinkFrame = frame; ledDirty = true; }
-        if (ledDirty) renderCdpLEDs(playOn, genOn);
+        if (ledDirty) renderCdpLEDs(playOn, recOn);
         if (screenDirty) { drawCdp(); screenDirty = false; }
         return;
     }
