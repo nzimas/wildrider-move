@@ -1,3 +1,5 @@
+![Wildrider](assets/branding/wildrider-logo-dark.png)
+
 # Wildrider for Move
 
 A standalone **electroacoustic / experimental instrument that runs entirely on the
