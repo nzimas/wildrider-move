@@ -362,32 +362,36 @@
 		 * a new patch's level for normalization while the output is faded to silence
 		 * during a click-free swap. */
 		~analysisSynth = Synth.tail(~gRec, ("analysis_" ++ channels).asSymbol, [\in, ~masterBus.index]);
-		// SAMPLER slot state (32 pads): a buffer + a rec synth + a play synth + the
-		// recorded frame count per slot. Buffers are allocated ON DEMAND when a slot
-		// is recorded (so empty slots cost no RAM) and freed on delete.
-		~sampBufs = Array.newClear(32); ~sampRecSyn = Array.newClear(32);
-		~sampPlaySyn = Array.newClear(32); ~sampFrames = Array.newClear(32);
+		// SAMPLER slot state — TWO SEPARATE BANKS in one index space: slots 0..31 are
+		// the RECORDER bank, slots 32..55 are the TRANSFORMERS bank. The engine treats
+		// them uniformly (just more slots); the views address disjoint ranges so a
+		// recorded take never appears among the transform variations and vice-versa.
+		// Each slot: a buffer + rec synth + play synth + frame count. Buffers are
+		// allocated ON DEMAND when a slot is recorded (empty slots cost no RAM).
+		~sampN = 56;
+		~sampBufs = Array.newClear(~sampN); ~sampRecSyn = Array.newClear(~sampN);
+		~sampPlaySyn = Array.newClear(~sampN); ~sampFrames = Array.newClear(~sampN);
 		~sampMaxFrames = (30 * sr).asInteger;     // 30s max take per slot
 		// per-slot params: loop region (0..1), volume (0..~1.3), pan (-1..1),
 		// filter cutoff (Hz) + resonance (0..4 MoogFF gain)
-		~sampLs = Array.fill(32, 0.0); ~sampLe = Array.fill(32, 1.0);
-		~sampVol = Array.fill(32, 1.0); ~sampPan = Array.fill(32, 0.0);
-		~sampCut = Array.fill(32, 18000.0); ~sampRes = Array.fill(32, 0.0);
-		~sampPit = Array.fill(32, 0.0);   // pitch in semitones, -24..24
+		~sampLs = Array.fill(~sampN, 0.0); ~sampLe = Array.fill(~sampN, 1.0);
+		~sampVol = Array.fill(~sampN, 1.0); ~sampPan = Array.fill(~sampN, 0.0);
+		~sampCut = Array.fill(~sampN, 18000.0); ~sampRes = Array.fill(~sampN, 0.0);
+		~sampPit = Array.fill(~sampN, 0.0);   // pitch in semitones, -24..24
 		// per-slot step-button FX: an ordered insert chain of real modules. Step button
 		// index = position in ~sampFxChain (= the `which` index used by /fxset). Only the
 		// ENABLED modules are built (heavy ones like CLOUDS cost nothing when off).
 		~sampFxChain = [\gate, \distort, \comb, \clouds];
 		~sampNfx = ~sampFxChain.size;
-		~sampFxOn = Array.fill(32, { Array.fill(~sampNfx, 0) });        // on/off per slot per fx
-		~sampFxP  = Array.fill(32, { Array.fill(~sampNfx, { [] }) });   // last param args per slot per fx
-		~sampFxActiveSyn = Array.fill(32, { Array.newClear(~sampNfx) });// which -> live synth (when built)
-		~sampFxNodes = Array.fill(32, { [] });  // routing synths to free on rebuild (fx + clears + cord)
-		~sampFxBus   = Array.fill(32, { [] });  // intermediate busses to free on rebuild
-		~sampPlayBus = Array.newClear(32);      // stable per-slot bus the play synth writes to
-		~sampSlotGrp = Array.newClear(32);
-		~sampPatchFx = Array.newClear(32);      // Rec+slot: target patch-module id to route this slot THROUGH (or nil)
-		~sampPatchCord = Array.newClear(32);    // the ~gModules cord: playBus -> target module inBus
+		~sampFxOn = Array.fill(~sampN, { Array.fill(~sampNfx, 0) });        // on/off per slot per fx
+		~sampFxP  = Array.fill(~sampN, { Array.fill(~sampNfx, { [] }) });   // last param args per slot per fx
+		~sampFxActiveSyn = Array.fill(~sampN, { Array.newClear(~sampNfx) });// which -> live synth (when built)
+		~sampFxNodes = Array.fill(~sampN, { [] });  // routing synths to free on rebuild (fx + clears + cord)
+		~sampFxBus   = Array.fill(~sampN, { [] });  // intermediate busses to free on rebuild
+		~sampPlayBus = Array.newClear(~sampN);      // stable per-slot bus the play synth writes to
+		~sampSlotGrp = Array.newClear(~sampN);
+		~sampPatchFx = Array.newClear(~sampN);      // Rec+slot: target patch-module id to route this slot THROUGH (or nil)
+		~sampPatchCord = Array.newClear(~sampN);    // the ~gModules cord: playBus -> target module inBus
 		~sampRelease = 0.5;               // fade-out tail (must match samplerPlay release)
 		~built = true;
 		s.startAliveThread(0.0, 0.5);   // poll /status so avgCPU / numSynths stay live
@@ -614,7 +618,7 @@
 // ---- OSC responders -----------------------------------------------------
 // ---- SAMPLER manager: per-slot record/playback of the master mix ----
 ~sampRecStart = { |slot|
-	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < ~sampN } }).if {
 		~sampPlaySyn[slot].notNil.if { ~sampPlaySyn[slot].free; ~sampPlaySyn[slot] = nil };
 		~sampRecSyn[slot].notNil.if { ~sampRecSyn[slot].free; ~sampRecSyn[slot] = nil };
 		~sampBufs[slot].notNil.if { ~sampBufs[slot].free };
@@ -625,7 +629,7 @@
 	};
 };
 ~sampRecStop = { |slot, frames|
-	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < ~sampN } }).if {
 		~sampRecSyn[slot].notNil.if { ~sampRecSyn[slot].free; ~sampRecSyn[slot] = nil };
 		~sampFrames[slot] = frames.asInteger.clip(0, ~sampMaxFrames);
 	};
@@ -795,14 +799,14 @@
 // module.
 ~sampWirePatch = { |slot, midStr|
 	var m = midStr.asString;
-	(slot >= 0 and: { slot < 32 }).if {
+	(slot >= 0 and: { slot < ~sampN }).if {
 		~sampPatchFx[slot] = (m.size > 0).if({ m.asSymbol }, { nil });
 		~sampSyncPatchRoute.(slot);
 	};
 };
 ~sampPlayStart = { |slot|
 	var buf, fr, grp, playBus;
-	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < ~sampN } }).if {
 		buf = ~sampBufs[slot]; fr = ~sampFrames[slot] ? 0;
 		(buf.notNil and: { fr > 0 }).if {
 			~sampFreeChain.(slot);                  // re-play: drop old chain immediately, no fade
@@ -826,7 +830,7 @@
 // else (re-randomize while engaged) set the live module's params.
 ~sampSetFx = { |slot, which, on, pairs|
 	var args = [], wasOn;
-	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } and: { which >= 0 and: { which < ~sampNfx } } }).if {
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < ~sampN } and: { which >= 0 and: { which < ~sampNfx } } }).if {
 		pairs.pairsDo { |k, v| args = args ++ [k.asSymbol, v] };
 		wasOn = ~sampFxOn[slot][which];
 		~sampFxOn[slot][which] = on; ~sampFxP[slot][which] = args;
@@ -842,20 +846,20 @@
 // CTRL-ALL: set the resonant filter (cutoff Hz, res 0..4) on EVERY slot + playing.
 ~sampSetFilter = { |cutoff, res|
 	(~sampBufs.notNil).if {
-		32.do { |i| ~sampCut[i] = cutoff; ~sampRes[i] = res };
+		~sampN.do { |i| ~sampCut[i] = cutoff; ~sampRes[i] = res };
 		~sampPlaySyn.do { |syn| syn.notNil.if { syn.set(\cutoff, cutoff, \res, res) } };
 	};
 };
 // CTRL-ALL: set the loop region (0..1) on EVERY slot + push to all playing.
 ~sampSetLoop = { |start, end|
 	(~sampBufs.notNil).if {
-		32.do { |i| ~sampLs[i] = start.clip(0, 1); ~sampLe[i] = end.clip(0, 1) };
+		~sampN.do { |i| ~sampLs[i] = start.clip(0, 1); ~sampLe[i] = end.clip(0, 1) };
 		~sampPlaySyn.do { |syn| syn.notNil.if { syn.set(\loopStart, start.clip(0, 1), \loopEnd, end.clip(0, 1)) } };
 	};
 };
 // Per-slot params (slot-selection mode): vol, pan, loop, filter cut/res, pitch.
 ~sampSetSlot = { |slot, vol, pan, ls, le, cutoff, res, pitch|
-	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < ~sampN } }).if {
 		~sampVol[slot] = vol.max(0); ~sampPan[slot] = pan.clip(-1, 1);
 		~sampLs[slot] = ls.clip(0, 1); ~sampLe[slot] = le.clip(0, 1);
 		~sampCut[slot] = cutoff; ~sampRes[slot] = res; ~sampPit[slot] = pitch.clip(-24, 24);
@@ -869,13 +873,13 @@
 // CTRL-ALL pitch: set every slot's pitch + push to all playing.
 ~sampSetPitchAll = { |pitch|
 	(~sampBufs.notNil).if {
-		32.do { |i| ~sampPit[i] = pitch.clip(-24, 24) };
+		~sampN.do { |i| ~sampPit[i] = pitch.clip(-24, 24) };
 		~sampPlaySyn.do { |syn| syn.notNil.if { syn.set(\pitch, pitch.clip(-24, 24)) } };
 	};
 };
 ~sampPlayStop = { |slot|
 	var grp, playBus, fxBuses;
-	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < ~sampN } }).if {
 		~sampPlaySyn[slot].notNil.if {
 			// gate -> 0: the play synth fades out over `release`; capture THIS chain and
 			// reap it (group + busses) after the tail so the FX hear the fade-out too.
@@ -891,7 +895,7 @@
 	};
 };
 ~sampFree = { |slot|
-	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < ~sampN } }).if {
 		~sampFreeChain.(slot);                                  // group + busses + synth refs
 		~sampFxOn[slot] = Array.fill(~sampNfx, 0);              // clear stored FX state
 		~sampFxP[slot] = Array.fill(~sampNfx, { [] });
@@ -905,7 +909,7 @@
 // to a WAV; load reads a WAV back in and (optionally) resumes playback once it lands
 // (Buffer.read is async, so per-slot settings/FX must be pushed BEFORE the load).
 ~sampSaveBuf = { |slot, path|
-	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < ~sampN } }).if {
 		(~sampBufs[slot].notNil and: { (~sampFrames[slot] ? 0) > 0 }).if {
 			~sampBufs[slot].write(path.asString, "wav", "float", ~sampFrames[slot], 0);
 		};
@@ -913,7 +917,7 @@
 };
 ~sampLoadBuf = { |slot, path, autoplay|
 	var oldBuf;
-	(~sampBufs.notNil and: { slot >= 0 and: { slot < 32 } }).if {
+	(~sampBufs.notNil and: { slot >= 0 and: { slot < ~sampN } }).if {
 		// Gapless swap: fade the OLD take out (it keeps reading its own buffer by
 		// bufnum while it releases), read the NEW take into a fresh slot buffer, and
 		// (auto)play it — so old fades down as new fades up. Free the old buffer only

@@ -183,18 +183,20 @@ editor): turn the jog to scan 1–99 s, click to confirm.
 ## 7. Transformers — generate variations from the mix
 
 **Track 4.** The grid dims to a cool grey wash so you always know you're here.
-Rows 1–3 (slots 0–23) are sample players; the **bottom-left pad** (the red one) is
-the generator.
+Rows 1–3 (24 pads) are the Transformers' **own sample bank** — **entirely separate**
+from the Recorder's; takes and variations never mix. The **bottom-left pad** (the
+red one) is the generator.
 
 - **Tap the red pad** → Wildrider captures a live snippet and spawns **16
   variations into the free slots** of rows 1–3 — **8 from CDP** (phase-vocoder /
   waveset) then **8 from Csound** (ATS resynthesis, LPC formants, spectral
   morphing, modal resonators), back to back. Occupied slots are never overwritten;
   the pad flashes bright red while the job runs.
-- **Freshly generated content lights bright green** until you audition it, then
-  returns to the normal slot colour — so you can see at a glance what's new.
-- **Playing slots always flash** (in every state) so you can see what's sounding.
-- **Shift + pad selects a slot for editing** — it turns a clear **blue**.
+- **Pads with a sample pulse at ~120 BPM** (a heartbeat) so you can see, at a
+  glance, which slots hold content.
+- **Freshly generated content pulses bright green** until you audition it, then
+  reverts to the normal colour — so you can spot what's new.
+- **Shift + pad selects a slot for editing** — it turns solid **red** for contrast.
 
 The slot gestures, per-slot encoder editing, and armed insert FX are identical to
 the Recorder (below).
@@ -204,9 +206,10 @@ the Recorder (below).
 ## 8. Recorder — capture the mix (for publishing)
 
 **Shift + Track 4.** A live recorder with a **warm** palette (black base, amber
-takes) distinct from the Transformers wash. The 32 pads are sample slots that
-record Wildrider's own output — primarily to capture performances you want to keep
-or publish. Same per-slot performance knobs as the Transformers view.
+takes) distinct from the Transformers wash. The 32 pads are its **own** sample
+bank — separate from the Transformers' — that record Wildrider's own output,
+primarily to capture performances you want to keep or publish. Same per-slot
+performance knobs as the Transformers view.
 
 | Gesture | Action |
 |---|---|
@@ -270,9 +273,9 @@ Filled slots glow green; the last saved/loaded slot is white.
 | Step buttons | amber | armed insert FX (Recorder / Transformers) |
 | Scenes | blue / white / violet | stored / loaded / morph destination |
 | Performances | green / white | saved / last used |
-| Transformers | grey wash | you're in the Transformers view |
-| Transformers | flashing | a **playing** slot — always flashes, in any state |
-| Transformers | blue / bright green / white | selected-for-edit / fresh (unauditioned) / take |
+| Transformers | grey wash | you're in the Transformers view (its own slot bank) |
+| Transformers | pulsing ~120 BPM | a pad **with a sample** (heartbeat); green pulse = fresh |
+| Transformers | solid red | selected-for-edit (high contrast) |
 | Recorder | red-flash / amber / green / blue | recording / take / playing / selected-for-edit |
 | Screen | "CPU LIMIT" | audio core saturated; adds refused |
 

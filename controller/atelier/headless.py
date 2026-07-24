@@ -43,6 +43,12 @@ _SAMP_FX_SPEC = {"gate": _GATE_SPEC, "dist": _DISTORT_SPEC,
 _SAMP_FX_WHICH = {"gate": 0, "dist": 1, "comb": 2, "clouds": 3}
 _SAMP_FX_ORDER = ["gate", "dist", "comb", "clouds"]
 
+# Sample slots are TWO SEPARATE BANKS in one index space (must match engine ~sampN):
+# 0..31 = RECORDER bank, 32..55 = TRANSFORMERS bank. The Recorder view addresses
+# 0..31; the Transformers view addresses 32..55; a generate job fills the latter.
+_SAMP_N = 56
+_XF_BASE = 32          # first Transformers-bank slot (24 slots: 32..55)
+
 
 def _fresh_samp_slot() -> dict:
     return {"state": "empty", "t0": 0.0, "frames": 0, "fresh": False,
@@ -122,7 +128,7 @@ class HeadlessController:
         self._pad_map: dict = {}        # module id -> stable pad cell (0-31)
         self._style = ARTISTS[0]        # current patch's artist (for LFO re-rand)
         self._swap_lock = threading.Lock()   # serialize click-free patch swaps
-        # Sampler: 32 slots. Each has playback state + per-slot params (loop region,
+        # Sampler: 56 slots (Recorder 0-31 + Transformers 32-55). Each has playback state + per-slot params (loop region,
         # volume, pan). loop ls/le default full take; vol unity; pan centre.
         self._samp = [{"state": "empty", "t0": 0.0, "frames": 0, "fresh": False,
                        "vol": 1.0, "pan": 0.0, "ls": 0.0, "le": 1.0,
@@ -130,7 +136,7 @@ class HeadlessController:
                        # per-slot insert FX (step buttons): real modules, on + params each
                        "gate_on": 0, "gate_params": {}, "dist_on": 0, "dist_params": {},
                        "comb_on": 0, "comb_params": {}, "clouds_on": 0, "clouds_params": {}}
-                      for _ in range(32)]
+                      for _ in range(_SAMP_N)]
         # per-FX dry/wet balance (0..1, 0.5 = 50/50), shared by all slots that carry it.
         # DISTORT defaults to 0.1 (10 wet / 90 dry). Order = _SAMP_FX_ORDER.
         self._fx_wet = [0.5, 0.1, 0.5, 0.5]
@@ -442,7 +448,7 @@ class HeadlessController:
         """Short-press a sample slot. empty -> start recording the master mix;
         recording -> stop (slot becomes playable); filled -> start looping playback;
         playing -> stop."""
-        if not (0 <= pad < 32):
+        if not (0 <= pad < _SAMP_N):
             return
         sl = self._samp[pad]
         st = sl["state"]
@@ -469,7 +475,7 @@ class HeadlessController:
 
     def sampler_del(self, pad: int) -> None:
         """X + pad in the sampler view: free the slot's buffer + synths."""
-        if not (0 <= pad < 32):
+        if not (0 <= pad < _SAMP_N):
             return
         self.bridge.send("/atelier/sampler/free", pad)
         self._samp[pad] = _fresh_samp_slot()
@@ -488,7 +494,7 @@ class HeadlessController:
         """Rec + sample-slot pad (sampler/CDP view): toggle routing that slot through
         the patch's FX chain instead of straight to master."""
         slot = int(slot)
-        if not (0 <= slot < 32):
+        if not (0 <= slot < _SAMP_N):
             return
         if slot in self._samp_patchfx:                 # toggle OFF -> back to master
             del self._samp_patchfx[slot]
@@ -594,9 +600,9 @@ class HeadlessController:
         wet = samp.get("fx_wet") or [0.5, 0.1, 0.5, 0.5]
         self._fx_wet = (list(wet) + [0.5, 0.1, 0.5, 0.5])[:4]
         saved = samp.get("slots") or []
-        old_playing = [self._samp[i]["state"] == "playing" for i in range(32)]
+        old_playing = [self._samp[i]["state"] == "playing" for i in range(_SAMP_N)]
         new = []
-        for i in range(32):
+        for i in range(_SAMP_N):
             sl = _fresh_samp_slot()
             if i < len(saved) and isinstance(saved[i], dict):
                 sl.update(saved[i])
@@ -805,7 +811,7 @@ class HeadlessController:
 
     def _push_slot(self, slot: int) -> None:
         """Send a slot's current stored params to its play synth (+ for next play)."""
-        if not (0 <= slot < 32):
+        if not (0 <= slot < _SAMP_N):
             return
         sl = self._samp[slot]
         if sl["le"] < sl["ls"] + 0.01:                 # keep a minimum loop window
@@ -822,7 +828,7 @@ class HeadlessController:
         v = max(lo, min(hi, float(value)))
         for s in slots:
             s = int(s)
-            if 0 <= s < 32:
+            if 0 <= s < _SAMP_N:
                 self._samp[s][param] = v
                 self._push_slot(s)
 
@@ -1481,7 +1487,9 @@ class HeadlessController:
             #    modal resonators. A re-generate fills only the empties the performer
             #    left; occupied slots are never overwritten.
             from . import csoundfx as _csfx
-            free = [i for i in range(24) if self._samp[i]["state"] == "empty"]
+            # fill only the TRANSFORMERS bank (slots 32..55) — entirely separate from
+            # the Recorder bank (0..31), so takes and variations never mix.
+            free = [i for i in range(_XF_BASE, _SAMP_N) if self._samp[i]["state"] == "empty"]
             if not free:
                 return
             n_cdp = min(8, len(free))

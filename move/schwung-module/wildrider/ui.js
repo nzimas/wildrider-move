@@ -162,9 +162,9 @@ let samplerMode = false;
 let cdpMode = false;
 let cdpBusy = false;             /* controller is capturing / running the CDP job */
 const CDP_GEN_CELL = 24;         /* bottom-left pad = record+process trigger */
-let sampStates = new Array(32).fill('empty');   /* per slot from status.json */
-let sampFresh = new Array(32).fill(0);          /* 1 = freshly CDP-generated, not yet auditioned */
-let sampPatchFx = new Array(32).fill(false);    /* Rec+slot: routed through the patch FX chain */
+let sampStates = new Array(56).fill('empty');   /* per slot from status.json */
+let sampFresh = new Array(56).fill(0);          /* 1 = freshly CDP-generated, not yet auditioned */
+let sampPatchFx = new Array(56).fill(false);    /* Rec+slot: routed through the patch FX chain */
 let sampFlashOn = false;       /* red-flash phase for recording slots */
 /* CTRL-ALL loop region (knob 1 = start, knob 2 = end), 0..1 of each take. */
 let loopStart = 0.0, loopEnd = 1.0;
@@ -177,9 +177,9 @@ let selCut = 1.0, selRes = 0.0, selPit = 0.0;  /* filter cut/res (0..1), pitch (
 let filtCut = 1.0, filtRes = 0.0, filtPit = 0.0;  /* CTRL-ALL working values */
 let sampKnobShow = null;                       /* which param bar to draw */
 let lastSamParam = null, lastSamValue = 0;     /* last per-slot edit (sent as `samedit`) */
-let sampVol = new Array(32).fill(1.0), sampPan = new Array(32).fill(0.0);
-let sampLs = new Array(32).fill(0.0), sampLe = new Array(32).fill(1.0);
-let sampCut = new Array(32).fill(1.0), sampRes = new Array(32).fill(0.0), sampPit = new Array(32).fill(0.0);
+let sampVol = new Array(56).fill(1.0), sampPan = new Array(56).fill(0.0);
+let sampLs = new Array(56).fill(0.0), sampLe = new Array(56).fill(1.0);
+let sampCut = new Array(56).fill(1.0), sampRes = new Array(56).fill(0.0), sampPit = new Array(56).fill(0.0);
 /* Step-button FX. WORKFLOW: a step button toggles that FX in the ARMED set
  * (no selection needed); the armed FX are then stamped onto slots as you select
  * them (shift+pad). So: toggle the FX first, then pick the slots it applies to. */
@@ -191,8 +191,8 @@ let fxWet = FX_WET0.slice();
 /* Hold an FX step button + jog = adjust that FX's dry/wet. We decide tap-vs-hold on
  * release: a tap (no jog) toggles/arms; a jog turn adjusts wet (no toggle). */
 let fxHeld = -1, fxHeldShift = false, fxHeldAdjusted = false;
-let sampGateOn = new Array(32).fill(0), sampDistOn = new Array(32).fill(0);
-let sampCombOn = new Array(32).fill(0), sampCloudsOn = new Array(32).fill(0);
+let sampGateOn = new Array(56).fill(0), sampDistOn = new Array(56).fill(0);
+let sampCombOn = new Array(56).fill(0), sampCloudsOn = new Array(56).fill(0);
 let pendingFxSync = null, pendingFxWet = null, fxN = 0;   /* sync + wet msgs sent in writeControl */
 const FX_ON_COLOR = Mustard;
 /* Queue an FX sync: stamp `fxArmed` onto `slots` (controller engages armed FX with
@@ -392,7 +392,7 @@ function readStatus() {
     }
     /* Sampler slot states + per-slot params. */
     if (s.sampler && Array.isArray(s.sampler.states)) {
-        for (var qi = 0; qi < 32; qi++) {
+        for (var qi = 0; qi < 56; qi++) {            /* 0-31 Recorder bank, 32-55 Transformers bank */
             sampStates[qi] = s.sampler.states[qi] || 'empty';
             sampFresh[qi] = (s.sampler.fresh && s.sampler.fresh[qi]) ? 1 : 0;
             if (s.sampler.vol) sampVol[qi] = s.sampler.vol[qi];
@@ -551,30 +551,27 @@ function renderSamplerLEDs(flashOn) {
     }
     ledDirty = false;
 }
-/* CDP view: a DIM wash over the whole grid (so the performer always knows they're
- * here), the generator pad lit bright (flashing while a job runs), and rows 1-3
- * (24 pads) showing sampler-slot state (they hold the CDP variations) over the dim base. */
-function renderCdpLEDs(flashOn) {
+/* TRANSFORMERS view: a DIM cool wash over the whole grid (so the performer always
+ * knows they're here), the generator pad lit red (pulsing while a job runs), and
+ * rows 1-3 = the Transformers bank (slots 32..55). Pads WITH A SAMPLE pulse at
+ * 120 BPM (a heartbeat); a slot selected for editing is painted solid RED. */
+function renderCdpLEDs(pulseOn) {
     for (var c = 0; c < 32; c++) {
-        var color = DarkGrey;                        /* dim base everywhere */
+        var color = DarkGrey;                        /* dim cool wash everywhere */
         if (c === CDP_GEN_CELL) {                    /* the generator / record+process pad */
-            color = cdpBusy ? (flashOn ? BrightRed : Black) : Red;
-        } else if (c < 24) {                         /* rows 1-3 = the 24 variation players */
-            var st = sampStates[c];
-            var sel = selSlots.indexOf(c) >= 0;
-            /* the slot's identity colour: selected wins (clear blue), then wired /
-             * fresh / filled over the dim wash. */
-            var idc;
-            if (sel) idc = RoyalBlue;                            /* selected for editing = clear blue */
-            else if (st === 'playing') idc = sampPatchFx[c] ? AzureBlue : Purple;
-            else if (st === 'filled' && sampFresh[c]) idc = BrightGreen;   /* fresh, not yet auditioned */
-            else if (st === 'filled') idc = sampPatchFx[c] ? AzureBlue : White;   /* blue = through patch FX */
-            else idc = DarkGrey;                                 /* empty stays on the dim base */
-            /* ACTIVE / playing slots ALWAYS flash — in EVERY state (default, selected,
-             * wired) — so the performer can see what's sounding; they blink their
-             * identity colour over the wash. */
-            if (st === 'playing') color = flashOn ? idc : DarkGrey;
-            else color = idc;
+            color = cdpBusy ? (pulseOn ? BrightRed : Red) : Red;
+        } else if (c < 24) {                         /* rows 1-3 = Transformers slots 32..55 */
+            var slot = 32 + c;
+            var st = sampStates[slot];
+            if (selSlots.indexOf(slot) >= 0) {       /* selected for editing = solid RED (high contrast) */
+                color = Red;
+            } else if (st === 'filled' || st === 'playing') {
+                /* a pad WITH A SAMPLE pulses at 120 BPM (heartbeat) in its identity colour */
+                var idc = (st === 'filled' && sampFresh[slot]) ? BrightGreen        /* fresh, unauditioned */
+                        : (sampPatchFx[slot] ? AzureBlue : White);                  /* blue = through patch FX */
+                color = pulseOn ? idc : DarkGrey;
+            }
+            /* empty slot stays on the DarkGrey dim base */
         }
         setLED(PAD_NOTES[c], color);
     }
@@ -599,7 +596,7 @@ function drawSampler() {
     /* A knob is touched/turning -> show that param's bar (slot value, or CTRL-ALL). */
     if (sampKnobShow) {
         var sel = selSlots.length > 0;
-        print(0, 6, sel ? (selSlots.length > 1 ? (selSlots.length + ' SLOTS') : ('SLOT ' + (selPrimary + 1))) : 'ALL SLOTS', 2);
+        print(0, 6, sel ? (selSlots.length > 1 ? (selSlots.length + ' SLOTS') : ('SLOT ' + (selPrimary - (cdpMode ? 32 : 0) + 1))) : 'ALL SLOTS', 2);
         var vol = sel ? selVol : 1, pan = sel ? selPan : 0;
         var ls = sel ? selLs : loopStart, le = sel ? selLe : loopEnd;
         var cut = sel ? selCut : filtCut, res = sel ? selRes : filtRes, pit = sel ? selPit : filtPit;
@@ -632,7 +629,7 @@ function drawCdp() {
     if (cdpBusy) { print(0, 24, 'PROCESSING...', 1); }
     else {
         var fill = 0, play = 0;
-        for (var i = 0; i < 24; i++) { var s = sampStates[i]; if (s === 'playing') play++; else if (s === 'filled') fill++; }
+        for (var i = 0; i < 24; i++) { var s = sampStates[32 + i]; if (s === 'playing') play++; else if (s === 'filled') fill++; }
         print(0, 24, (fill + play) + '/24 variations', 1);
     }
     print(0, 44, 'gen pad = capture + process', 1);
@@ -750,18 +747,18 @@ globalThis.init = function () {
     perfMode = false; perfFilled = new Array(32).fill(false); perfActive = -1;
     sceneActive = -1; sceneMorphTo = -1; lastSceneActive = -1; lastMorphTo = -1;
     morphEdit = false; morphTime = 10;
-    samplerMode = false; sampStates = new Array(32).fill('empty'); sampFresh = new Array(32).fill(0); sampFlashOn = false;
-    sampPatchFx = new Array(32).fill(false);
+    samplerMode = false; sampStates = new Array(56).fill('empty'); sampFresh = new Array(56).fill(0); sampFlashOn = false;
+    sampPatchFx = new Array(56).fill(false);
     cdpMode = false; cdpBusy = false;
     loopStart = 0.0; loopEnd = 1.0;
     selSlots = []; selPrimary = -1; selVol = 1.0; selPan = 0.0; selLs = 0.0; selLe = 1.0;
     selCut = 1.0; selRes = 0.0; selPit = 0.0; filtCut = 1.0; filtRes = 0.0; filtPit = 0.0;
     sampKnobShow = null; lastSamParam = null; lastSamValue = 0;
-    sampVol = new Array(32).fill(1.0); sampPan = new Array(32).fill(0.0);
-    sampLs = new Array(32).fill(0.0); sampLe = new Array(32).fill(1.0);
-    sampCut = new Array(32).fill(1.0); sampRes = new Array(32).fill(0.0); sampPit = new Array(32).fill(0.0);
-    sampGateOn = new Array(32).fill(0); sampDistOn = new Array(32).fill(0);
-    sampCombOn = new Array(32).fill(0); sampCloudsOn = new Array(32).fill(0);
+    sampVol = new Array(56).fill(1.0); sampPan = new Array(56).fill(0.0);
+    sampLs = new Array(56).fill(0.0); sampLe = new Array(56).fill(1.0);
+    sampCut = new Array(56).fill(1.0); sampRes = new Array(56).fill(0.0); sampPit = new Array(56).fill(0.0);
+    sampGateOn = new Array(56).fill(0); sampDistOn = new Array(56).fill(0);
+    sampCombOn = new Array(56).fill(0); sampCloudsOn = new Array(56).fill(0);
     fxArmed = [0, 0, 0, 0]; fxWet = FX_WET0.slice();
     fxHeld = -1; fxHeldShift = false; fxHeldAdjusted = false;
     pendingFxSync = null; pendingFxWet = null; fxN = 0;
@@ -809,8 +806,10 @@ globalThis.tick = function () {
         return;
     }
     if (cdpMode) {                          /* TRANSFORMERS view owns the grid + screen */
-        var cOn = (Math.floor(phase / 4) % 2) === 0;   /* blink: generator pad while busy AND any playing slot */
-        if ((cdpBusy || sampStates.indexOf('playing') >= 0) && cOn !== sampFlashOn) { sampFlashOn = cOn; ledDirty = true; }
+        var pulseOn = (phase % 15) < 4;     /* ~120 BPM heartbeat (30Hz tick -> 15-tick period) */
+        /* animate only when the Transformers bank (slots 32..55) has content, or a job runs */
+        var anim = cdpBusy || sampStates.indexOf('filled', 32) >= 0 || sampStates.indexOf('playing', 32) >= 0;
+        if (anim && pulseOn !== sampFlashOn) { sampFlashOn = pulseOn; ledDirty = true; }
         if (ledDirty) renderCdpLEDs(sampFlashOn);
         if (screenDirty) { drawCdp(); screenDirty = false; }
         return;
@@ -952,11 +951,12 @@ globalThis.onMidiMessageInternal = function (data) {
             if (cell >= 24) return;                  /* rows 1-3 (0-23) are players; the rest of row 4 is inert */
             /* cells 0-23 fall through to the sampler slot handling (they ARE slots 0-23) */
         }
-        if (samplerMode || (cdpMode && cell < 24)) { /* SAMPLER slot ops (shared by the CDP rows 1-3) */
+        if (samplerMode || (cdpMode && cell < 24)) { /* slot ops — Recorder=slots 0-31, Transformers=slots 32-55 */
+            var slot = (cdpMode ? 32 : 0) + cell;    /* absolute slot in the ACTIVE bank */
             if (shiftHeld) {                         /* Shift+pad toggles this slot in/out of the selection (multi-select) */
-                var si = selSlots.indexOf(cell);
+                var si = selSlots.indexOf(slot);
                 if (si >= 0) { selSlots.splice(si, 1); }      /* deselect */
-                else { selSlots.push(cell); }                 /* add to selection */
+                else { selSlots.push(slot); }                 /* add to selection */
                 selPrimary = (selSlots.length > 0) ? selSlots[selSlots.length - 1] : -1;
                 if (selPrimary >= 0) { selVol = sampVol[selPrimary]; selPan = sampPan[selPrimary]; selLs = sampLs[selPrimary]; selLe = sampLe[selPrimary]; selCut = sampCut[selPrimary]; selRes = sampRes[selPrimary]; selPit = sampPit[selPrimary]; }
                 lastSamParam = null;                          /* no stale edit applied to a new selection */
@@ -966,15 +966,15 @@ globalThis.onMidiMessageInternal = function (data) {
                 return;
             }
             if (recHeld) {                           /* Rec + slot = (un)wire this slot THROUGH the patch FX chain */
-                sampPatchFx[cell] = !sampPatchFx[cell];
-                sendCmd('sampwire', cell);
-                showAction('SLOT ' + (cell + 1) + (sampPatchFx[cell] ? ' -> PATCH FX' : ' DRY'));
+                sampPatchFx[slot] = !sampPatchFx[slot];
+                sendCmd('sampwire', slot);
+                showAction('SLOT ' + (cell + 1) + (sampPatchFx[slot] ? ' -> PATCH FX' : ' DRY'));
                 ledDirty = true; screenDirty = true;
                 return;
             }
-            if (deleteHeld) { sampStates[cell] = 'empty'; var di = selSlots.indexOf(cell); if (di >= 0) selSlots.splice(di, 1); if (selPrimary === cell) selPrimary = selSlots.length ? selSlots[selSlots.length - 1] : -1; sendCmd('sampdel', cell); }
-            else if (cpuHigh && sampStates[cell] === 'filled') { showAction('CPU LIMIT'); return; }  /* starting playback refused while core saturated */
-            else { sendCmd('samppad', cell); }       /* controller resolves rec/play/stop by state */
+            if (deleteHeld) { sampStates[slot] = 'empty'; var di = selSlots.indexOf(slot); if (di >= 0) selSlots.splice(di, 1); if (selPrimary === slot) selPrimary = selSlots.length ? selSlots[selSlots.length - 1] : -1; sendCmd('sampdel', slot); }
+            else if (cpuHigh && sampStates[slot] === 'filled') { showAction('CPU LIMIT'); return; }  /* starting playback refused while core saturated */
+            else { sendCmd('samppad', slot); }       /* controller resolves rec/play/stop by state */
             ledDirty = true; screenDirty = true;
             return;
         }
@@ -1106,9 +1106,11 @@ globalThis.onMidiMessageInternal = function (data) {
             if (d2 > 0) {
                 if (shiftHeld) {
                     samplerMode = !samplerMode; if (samplerMode) { cdpMode = false; scenesMode = false; perfMode = false; sendAudStop(); } fxHeld = -1;
+                    selSlots = []; selPrimary = -1;   /* the two banks are separate — don't carry a selection across */
                     ledDirty = true; screenDirty = true; showAction(samplerMode ? 'RECORDER' : 'PATCH');
                 } else {
                     cdpMode = !cdpMode; if (cdpMode) { samplerMode = false; scenesMode = false; perfMode = false; sendAudStop(); } fxHeld = -1;
+                    selSlots = []; selPrimary = -1;
                     ledDirty = true; screenDirty = true; showAction(cdpMode ? 'TRANSFORMERS' : 'PATCH');
                 }
             }
