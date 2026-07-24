@@ -28,6 +28,12 @@ ssh "root@$HOST" "chown -R ableton:users $DEST"
 # chown clears file capabilities — re-grant scsynth's RT caps AFTER it (this
 # script is typically run after deploy.sh, so it must have the last word).
 ssh "root@$HOST" "setcap cap_ipc_lock,cap_sys_nice,cap_sys_resource=eip $DEST/bin/scsynth 2>/dev/null; getcap $DEST/bin/scsynth"
+# supernova (multicore server) spawns its OWN parallel DSP threads; libjack only
+# promotes the main callback thread, so the helper threads self-elevate via
+# AcquireSelfRealTime — which needs the same caps ON THE BINARY (the ableton user's
+# rtprio ulimit is 0). Without this supernova's DSP threads stay SCHED_OTHER and
+# XRun heavily under load even though the work is spread across cores.
+ssh "root@$HOST" "[ -f $DEST/bin/supernova ] && { setcap cap_ipc_lock,cap_sys_nice,cap_sys_resource=eip $DEST/bin/supernova 2>/dev/null; echo -n 'supernova caps: '; getcap $DEST/bin/supernova; }"
 # The shadow jackd (RNBO's binary) must run realtime (`jackd -R`) or the whole
 # audio chain stays SCHED_OTHER and XRuns under load. The ableton user's rtprio
 # ulimit is 0, so jackd needs the caps to self-elevate. Not in our tree, so cap

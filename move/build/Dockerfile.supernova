@@ -87,6 +87,13 @@ RUN set -eux; \
     echo "built: $SN"; \
     mkdir -p /out/bin /out/lib /out/plugins; \
     cp -v "$SN" /out/bin/supernova; \
+    # supernova gets cap_sys_nice on-device (its parallel DSP threads self-elevate
+    # to RT), and a capability file runs secure-exec: the loader IGNORES
+    # LD_LIBRARY_PATH. So bake an ABSOLUTE DT_RPATH to the on-device lib dirs, same
+    # as scsynth — wildrider/lib for its own libs, rnbo/lib for libjack.so.0. \
+    patchelf --force-rpath --set-rpath \
+        "/data/UserData/wildrider/lib:/data/UserData/rnbo/lib" /out/bin/supernova; \
+    echo -n "supernova RPATH: "; patchelf --print-rpath /out/bin/supernova; \
     echo "=== extra supernova products ==="; \
     find /mi/build /bb/build /sc3/build -name "*_supernova.so" | sort; \
     find /sc/build /mi/build /bb/build /sc3/build -type f -name "*_supernova.so" -exec cp -v {} /out/plugins/ \; ; \
