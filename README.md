@@ -136,9 +136,9 @@ over an SSH session.
   `HOME` is pointed at an Ableton-writable dir so sclang boots from the menu.
 - **CPU:** the Move is a shared, load-heavy CM4. Generated patches are DSP-budgeted
   and the audio chain is pinned to SCHED_FIFO to keep XRuns at zero.
-- **Multicore (optional):** the DSP engine can switch from single-core `scsynth` to
-  the multithreaded **`supernova`** server, spreading a patch across all four cores
-  (~1.5× the module capacity, 0 XRuns under load). Opt-in and fully reversible —
+- **Multicore by default:** the DSP runs on the multithreaded **`supernova`**
+  server, spreading a patch across all four cores (~1.5× the module capacity,
+  0 XRuns under load). Single-core `scsynth` remains a one-line fallback —
   see [`docs/supernova.md`](docs/supernova.md).
 - **Recovery:** a Move OS auto-update can wipe the Schwung shim hook — re-run the
   post-update step as root and restart the Move service if the overtake stops

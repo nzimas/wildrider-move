@@ -4,17 +4,16 @@ Wildrider's DSP can run on either of two SuperCollider servers:
 
 | Server | Threads | When |
 |---|---|---|
-| **scsynth** | single-threaded DSP | the default — proven, tuned, always available |
-| **supernova** | multithreaded DSP (one thread per core) | opt-in — spreads the patch across the Move's four cores |
+| **supernova** | multithreaded DSP (one thread per core) | **the default** — spreads the patch across the Move's four cores |
+| **scsynth** | single-threaded DSP | fallback — the original single-core engine |
 
 This document explains why supernova exists, how it was built, how the audio
 graph is restructured to actually use the extra cores, how its DSP threads get
-realtime priority on a locked-down device, and how to turn it on, tune it, and
-troubleshoot it.
+realtime priority on a locked-down device, and how to tune it and troubleshoot it.
 
-> **TL;DR for operators.** `echo 3 > /data/UserData/wildrider/supernova.threads`
-> then relaunch Wildrider from the Move menu = multicore. `rm` that file and
-> relaunch = back to scsynth. Everything else below is the *why*.
+> **TL;DR for operators.** Supernova is the default engine — there's nothing to
+> turn on. To fall back to single-core scsynth, set `ATELIER_THREADS=0` in
+> `run-engine.sh` (see §7). Everything else below is the *why*.
 
 ---
 
@@ -43,7 +42,7 @@ cores at ~60% — roughly 1.5× the capacity of scsynth, with headroom to spare.
 Three constraints shaped every decision:
 
 1. **Reversible.** supernova lands *alongside* scsynth, never replacing it. A
-   single sentinel file chooses at boot. The scsynth launch path is byte-for-byte
+   single environment variable chooses at boot. The scsynth launch path is byte-for-byte
    untouched, so the proven instrument is always one `rm` away.
 2. **Same sound.** A patch must sound identical on both servers (with one
    documented exception — the reverb, see §4).
@@ -232,22 +231,24 @@ the display/DAC path is never starved.
 
 ## 7. Operating supernova
 
-### Enable / disable
+### The switch
 
-The switch is a sentinel file read at engine boot
-([`supercollider/wr-boot.scd`](../supercollider/wr-boot.scd) +
-[`move/deploy/run-engine.sh`](../move/deploy/run-engine.sh)):
+The engine is chosen at boot from the `ATELIER_THREADS` environment variable
+([`move/run-engine.sh`](../move/run-engine.sh) exports it,
+[`supercollider/wr-boot.scd`](../supercollider/wr-boot.scd) reads it):
 
-```bash
-# multicore: boot supernova with N DSP threads (3 recommended on the 4-core Move)
-ssh root@move.local 'echo 3 > /data/UserData/wildrider/supernova.threads'
+- **Default:** `run-engine.sh` sets `ATELIER_THREADS="${ATELIER_THREADS:-3}"`, so
+  every launch boots **supernova with 3 DSP threads**. Nothing to toggle.
+- **Fall back to scsynth:** a value `< 1` selects single-core scsynth. Change the
+  default in `run-engine.sh` to `0`:
 
-# back to scsynth (default)
-ssh root@move.local 'rm -f /data/UserData/wildrider/supernova.threads'
-```
+  ```sh
+  export ATELIER_THREADS="${ATELIER_THREADS:-0}"   # 0 = scsynth, 3 = supernova
+  ```
 
-Then **relaunch Wildrider from the Move menu** for the change to take effect. The
-file's contents are the thread count; its mere presence selects supernova.
+  or, for a one-off test over SSH, launch the engine with `ATELIER_THREADS=0` in
+  the environment. Either way, the change takes effect on the next engine launch
+  (relaunch Wildrider from the Move menu, or restart the Move).
 
 ### Tuning
 
@@ -300,5 +301,5 @@ ssh root@move.local '
 | `supercollider/wr-boot.scd` | boot switch: `ATELIER_THREADS` → supernova; sets `~wrSupernova` |
 | `supercollider/synthdefs.scd` | server-conditional VERB (GVerb ⇄ JPverb) |
 | `supercollider/engine.scd` | topological-layer ParGroups (`~graphLayers`/`~applyLayers`) |
-| `move/deploy/run-engine.sh` | sentinel → `ATELIER_THREADS`; boot-wait + core-pinning know supernova |
+| `move/run-engine.sh` | exports `ATELIER_THREADS` (default 3); boot-wait + core-pinning know supernova |
 | `move/deploy-controller.sh` | `setcap` the RT capabilities onto the supernova binary |

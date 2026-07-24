@@ -296,20 +296,16 @@ its wet/dry actually blends.
 
 ---
 
-## 12. Multicore mode (supernova) — optional
+## 12. The engine (supernova, multicore)
 
-By default Wildrider's DSP runs on one core. You can switch the engine to the
-**multithreaded `supernova` server**, which spreads a patch across all four of the
-Move's cores — roughly 1.5× the module capacity with fewer XRuns under heavy load.
-It's a per-boot toggle:
+Wildrider runs on the **multithreaded `supernova` server by default**, spreading
+each patch across all four of the Move's cores — roughly 1.5× the module capacity
+of the old single-core engine, with fewer XRuns under load. There's nothing to
+turn on.
 
-```bash
-# enable multicore (then relaunch Wildrider from the Move menu)
-ssh root@move.local 'echo 3 > /data/UserData/wildrider/supernova.threads'
-
-# back to the default single-core engine
-ssh root@move.local 'rm -f /data/UserData/wildrider/supernova.threads'
-```
+If you ever need the original single-core `scsynth` engine (for example to
+A/B a suspected engine issue), change the default in `move/run-engine.sh` from
+`3` to `0` — a thread count below 1 selects scsynth — and relaunch.
 
 Full details, tuning, and the one caveat (coexistence with the Move's own audio)
 are in [docs/supernova.md](supernova.md).
