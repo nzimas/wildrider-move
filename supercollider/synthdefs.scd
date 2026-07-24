@@ -487,7 +487,7 @@
 		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
 		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
 		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
-		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
+		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 20);   // drone: allow very long sustains
 		clkVelV = Latch.kr((1 - clkVel) + (TRand.kr(0, 1, clkTrig) * clkVel), clkTrig).lag(0.004);
 		v = clkVelV.max(0.03);
 		hz = ((note.clip(0, 127) + pitchShift).midicps).clip(8, 16000);
@@ -525,9 +525,19 @@
 		model = 0, harm = 0.5, timbre = 0.5, morph = 0.5,
 		decay = 0.5, lpgColour = 0.5, aux = 0.0, amp = 0.4, pan = 0,
 		clkRate = 2, clkChaos = 0.4, clkDrift = 0.3, clkLen = 0.3, clkVel = 0.5, densityMul = 1, pitchShift = 0, bypass = 0, wet = 1, enable = 1|
-		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, gOn;
+		var clkR, clkBase, clkTrig, clkLenV, clkVelV, v, gOn, mdl, clkMul, modelDec, envAtk, envDec;
 		var pitchN, sig, mono, trim, aEnv, s;
-		clkR = (clkRate * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
+		mdl = model.round.clip(0, 15);
+		// Per-model CLOCK + ENVELOPE — each Plaits engine is articulated to suit the sound
+		// it makes. clkMul scales the trigger rate: pitched/sustained models (0-7) fire
+		// slowly, textural (8-9) medium, particle/drums (10,13-15) fast, string/modal (11-12)
+		// medium. modelDec = the internal LPG decay base (sustained long, perc short), scaled
+		// by the user decay. envAtk/envDec = the outer amp envelope (sustained hold the note
+		// length; perc are short).
+		clkMul = Select.kr(mdl, [
+			0.5, 0.6, 0.6, 0.7, 0.5, 0.6, 0.4, 0.5,
+			0.7, 0.8, 1.4, 0.9, 0.9, 1.8, 1.9, 2.4]);
+		clkR = (clkRate * clkMul * densityMul * (2 ** (LFNoise2.kr(0.3) * clkDrift * 1.5))).clip(0.03, 110);
 		clkBase = CoinGate.kr((1 - (clkChaos * 0.65)).clip(0.15, 1), Impulse.kr(clkR));
 		clkTrig = clkBase + Dust.kr(clkR * clkChaos * 0.7);
 		clkLenV = (clkLen * (2 ** (TRand.kr(-1.2, 0.6, clkTrig) * clkChaos))).clip(0.01, 8);
@@ -535,18 +545,28 @@
 		v = clkVelV.max(0.03);
 		gOn = Trig.kr(clkTrig, clkLenV);
 		pitchN = (note.clip(0, 127) + pitchShift).clip(0, 127);
+		modelDec = Select.kr(mdl, [
+			0.85, 0.80, 0.75, 0.70, 0.88, 0.80, 0.90, 0.85,
+			0.62, 0.55, 0.22, 0.42, 0.42, 0.16, 0.22, 0.12]);
 		sig = MiPlaits.ar(
 			pitch: pitchN,
-			engine: model.round.clip(0, 15),
+			engine: mdl,
 			harm: harm.clip(0, 1), timbre: timbre.clip(0, 1), morph: morph.clip(0, 1),
 			trigger: clkTrig,
 			level: v.clip(0, 1),
-			decay: decay.clip(0, 1), lpg_colour: lpgColour.clip(0, 1));
+			decay: (modelDec * (0.55 + (decay.clip(0, 1) * 0.9))).clip(0.05, 1), lpg_colour: lpgColour.clip(0, 1));
 		mono = XFade2.ar(sig[0], sig[1], (aux.clip(0, 1) * 2) - 1);
-		trim = Select.kr(model.round.clip(0, 15), [
+		trim = Select.kr(mdl, [
 			0.76, 0.99, 0.82, 1.54, 0.97, 1.01, 0.74, 1.77,
 			0.78, 0.74, 1.25, 6.00, 1.29, 2.70, 1.44, 1.71]);
-		aEnv = EnvGen.ar(Env.perc(0.004, clkLenV.max(0.03), 1, -3), gOn);
+		envAtk = Select.kr(mdl, [
+			0.012, 0.010, 0.008, 0.012, 0.014, 0.010, 0.020, 0.015,
+			0.012, 0.008, 0.001, 0.003, 0.003, 0.001, 0.001, 0.0005]);
+		envDec = Select.kr(mdl, [
+			clkLenV, clkLenV, clkLenV, clkLenV, clkLenV, clkLenV, clkLenV, clkLenV,
+			clkLenV * 0.8, clkLenV * 0.6, 0.10, (clkLenV * 0.5).clip(0.15, 1.2), (clkLenV * 0.5).clip(0.15, 1.0),
+			0.14, 0.16, 0.06]);
+		aEnv = EnvGen.ar(Env.perc(envAtk, envDec.max(0.02), 1, -3), gOn);
 		s = LeakDC.ar(mono) * trim * amp * aEnv * enable;
 		Out.ar(out, ~killbad.(~spread.(s, nchan, pan) * (1 - bypass) * wet));
 	}).add;
