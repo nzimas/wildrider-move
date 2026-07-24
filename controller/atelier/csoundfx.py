@@ -125,7 +125,7 @@ def _dur(wav: Path) -> float:
 # --------------------------------------------------------------------------- #
 _HEAD = """<CsoundSynthesizer>
 <CsOptions>
--o {out} -W -f -d -m0 --nodisplays
+-o {out} -W {fmt} -d -m0 --nodisplays
 </CsOptions>
 <CsInstruments>
 sr = 44100
@@ -134,12 +134,13 @@ nchnls = 2
 0dbfs = 1
 gisrc ftgen 0, 0, 0, 1, "{src}", 0, 0, 1
 giSine ftgen 0, 0, 16384, 10, 1
+giWin ftgen 0, 0, 4096, 20, 2
 instr 1
 {body}
   aLd dcblock2 aLo
   aRd dcblock2 aRo
   aenv linen 1, 0.02, p3, 0.06
-  outs tanh(aLd * 1.3) * 0.72 * aenv, tanh(aRd * 1.3) * 0.72 * aenv
+  outs (tanh(aLd) * 0.9) * aenv, (tanh(aRd) * 0.9) * aenv
 endin
 </CsInstruments>
 <CsScore>
@@ -150,11 +151,35 @@ e
 """
 
 
-def _csd(out: Path, src: Path, body: str, out_dur: float) -> str:
+def _csd(out: Path, src: Path, body: str, out_dur: float, pcm16: bool = False) -> str:
     """Assemble a full .csd. `body` is instr-1 code that must set a-rate `aLo` and
-    `aRo`. `out_dur` sets the single score note length (seconds)."""
-    return _HEAD.format(out=str(out), src=str(src), body=body,
-                        sco=f"i1 0 {out_dur:.3f}")
+    `aRo`. `out_dur` sets the single score note length (seconds). `pcm16` writes a
+    16-bit temp (so it can be RMS-measured before the loudness-normalise pass)."""
+    return _HEAD.format(out=str(out), fmt=("-s" if pcm16 else "-f"), src=str(src),
+                        body=body, sco=f"i1 0 {out_dur:.3f}")
+
+
+# loudness-normalise pass: read the raw temp, apply the measured gain, soft-limit.
+_NORM = """<CsoundSynthesizer>
+<CsOptions>
+-o {out} -W -f -d -m0 --nodisplays
+</CsOptions>
+<CsInstruments>
+sr = 44100
+ksmps = 64
+nchnls = 2
+0dbfs = 1
+instr 1
+  aL, aR diskin2 "{tmp}", 1, 0, 0
+  outs tanh(aL * {gain}), tanh(aR * {gain})
+endin
+</CsInstruments>
+<CsScore>
+i1 0 {dur}
+e
+</CsScore>
+</CsoundSynthesizer>
+"""
 
 
 # mono, loudness-lifted source prep — read the stereo capture, fold, makeup + soft
@@ -183,9 +208,51 @@ e
 
 
 _MAX_DUR = 12.0     # cap: stretches make drones, but a sample slot wants < ~12 s
+_TARGET_RMS = 0.12  # loudness target — every variation is normalised toward this RMS
+_PEAK_CEIL = 0.7    # ...but never gained so hard the peak slams the limiter
+
+
+def _level_gain(tmp: Path) -> float:
+    """Read the 16-bit raw temp and return a gain that pulls it toward a consistent
+    loudness (RMS) without letting the peak exceed the ceiling. This is the
+    attenuation stage: dense/hot transforms get pulled DOWN, sparse ones lifted.
+    Falls back to unity if the audio can't be measured."""
+    try:
+        import wave
+        import audioop
+        with wave.open(str(tmp), "rb") as w:
+            sw, ch = w.getsampwidth(), w.getnchannels()
+            frames = w.readframes(w.getnframes())
+        if not frames:
+            return 1.0
+        if ch > 1:
+            frames = audioop.tomono(frames, sw, 0.5, 0.5)
+        full = float(1 << (8 * sw - 1))
+        rms = audioop.rms(frames, sw) / full
+        peak = audioop.max(frames, sw) / full
+        if rms < 5e-4:                       # essentially silent — leave it
+            return 1.0
+        g = _TARGET_RMS / rms
+        if peak * g > _PEAK_CEIL:            # keep transients off the limiter
+            g = _PEAK_CEIL / max(peak, 1e-4)
+        return max(0.1, min(6.0, g))
+    except Exception:
+        return 1.0
+
 
 def _do(ctx: _Ctx, out: Path, body: str, out_dur: float) -> bool:
-    return ctx.render(_csd(out, Path(ctx.src), body, min(out_dur, _MAX_DUR)), out)
+    """Render a variation in two passes: (1) the transform to a 16-bit temp, (2) a
+    loudness-normalised gain pass so no variation comes out way hotter than another."""
+    dur = min(out_dur, _MAX_DUR)
+    tmp = ctx.tmp("wav")
+    if not ctx.render(_csd(tmp, Path(ctx.src), body, dur, pcm16=True), tmp):
+        return False
+    gain = _level_gain(tmp)
+    if os.environ.get("CSFX_DEBUG"):
+        import sys
+        sys.stderr.write(f"[csfx] norm gain {gain:.3f}\n")
+    return ctx.render(
+        _NORM.format(out=str(out), tmp=str(tmp), gain=f"{gain:.4f}", dur=f"{dur:.3f}"), out)
 
 
 # --------------------------------------------------------------------------- #
@@ -347,12 +414,69 @@ def l_talk(ctx, out):                              # pitch-tracked buzz -> talki
     return _do(ctx, out, body, ctx.sdur * ctx.rng.choice([1, 2]))
 
 
+# ---- FSHIFT: Hilbert single-sideband frequency shift -> inharmonic / clangorous #
+def fs_shift(ctx, out):
+    sh = ctx.rng.choice([-300, -150, -70, 70, 120, 250, 400])
+    shR = sh + (ctx.rng.uniform(0.5, 4.0) * (1 if sh >= 0 else -1))
+    body = (f'  asig diskin2 "{ctx.src}", 1, 0, 1\n'
+            f'  areal, aimag hilbert asig\n'
+            f'  acL oscili 1, {sh:.3f}, giSine, 0.25\n'
+            f'  asL oscili 1, {sh:.3f}, giSine, 0\n'
+            f'  acR oscili 1, {shR:.3f}, giSine, 0.25\n'
+            f'  asR oscili 1, {shR:.3f}, giSine, 0\n'
+            f'  aLo = (areal * acL) - (aimag * asL)\n'
+            f'  aRo = (areal * acR) - (aimag * asR)')
+    return _do(ctx, out, body, ctx.sdur)
+
+# ---- CLOUD: granular synthesis (syncgrain) over the source -> grain textures ---- #
+def cl_cloud(ctx, out):
+    dens = ctx.rng.choice([12, 25, 45, 80])
+    grsize = ctx.rng.choice([0.06, 0.12, 0.25])
+    pit = 2 ** (ctx.rng.choice([-12, -7, 0, 7, 12]) / 12.0)
+    prate = round(ctx.rng.uniform(0.1, 0.6), 3)
+    body = (f'  aL syncgrain 1, {dens}, {pit:.4f}, {grsize}, {prate}, giWin, gisrc, 100\n'
+            f'  aR syncgrain 1, {dens * 1.03:.2f}, {pit * 1.01:.4f}, {grsize}, {prate}, giWin, gisrc, 100\n'
+            f'  aLo = aL * 0.6\n'
+            f'  aRo = aR * 0.6')
+    return _do(ctx, out, body, min(ctx.sdur * 2, _MAX_DUR))
+
+# ---- SHAPE: nonlinear waveshaping / distortion -> harmonic saturation, fuzz ----- #
+def sh_distort(ctx, out):
+    pre = round(ctx.rng.uniform(1.5, 6.0), 3)
+    sh1 = round(ctx.rng.uniform(0.1, 0.7), 3)
+    sh2 = round(ctx.rng.uniform(0.1, 0.7), 3)
+    ton = ctx.rng.choice([1200, 2500, 5000, 9000])
+    body = (f'  asig diskin2 "{ctx.src}", 1, 0, 1\n'
+            f'  ad distort1 asig, {pre}, 0.5, {sh1}, {sh2}\n'
+            f'  ad tone ad, {ton}\n'
+            f'  aLo = ad * 0.5\n'
+            f'  aRo delay ad * 0.5, 0.0071')
+    return _do(ctx, out, body, ctx.sdur)
+
+# ---- SPECPITCH: spectral pitch scaling (pvscale), formant-preserving option ----- #
+def sp_scale(ctx, out):
+    ratio = ctx.rng.choice([0.5, 0.75, 1.333, 1.5, 2.0])
+    keepform = ctx.rng.choice([0, 1, 2])
+    fft = ctx.rng.choice([1024, 2048])
+    body = (f'  asig diskin2 "{ctx.src}", 1, 0, 1\n'
+            f'  f1 pvsanal asig, {fft}, {fft // 4}, {fft}, 1\n'
+            f'  f2 pvscale f1, {ratio}, {keepform}, 1\n'
+            f'  ao pvsynth f2\n'
+            f'  aLo = ao\n'
+            f'  aRo delay ao, 0.0083')
+    return _do(ctx, out, body, ctx.sdur)
+
+
 FAMILIES: dict[str, list] = {
-    "GRAIN": [g_stretch, g_scrub],
-    "MODAL": [m_bank],
-    "XSPEC": [x_morph, x_shiftblur],
-    "ATS":   [a_drone, a_noise, a_shift],
-    "LPC":   [l_buzz, l_noise, l_talk],
+    "GRAIN":     [g_stretch, g_scrub],
+    "MODAL":     [m_bank],
+    "XSPEC":     [x_morph, x_shiftblur],
+    "ATS":       [a_drone, a_noise, a_shift],
+    "LPC":       [l_buzz, l_noise, l_talk],
+    "FSHIFT":    [fs_shift],
+    "CLOUD":     [cl_cloud],
+    "SHAPE":     [sh_distort],
+    "SPECPITCH": [sp_scale],
 }
 
 
