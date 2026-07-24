@@ -89,6 +89,7 @@ SHARE = Path(_env("WR_SHARE", "/data/UserData/wildrider/share"))
 SNAP_FILE = SHARE / "snapshot.json"
 STATUS_FILE = SHARE / "status.json"
 PERF_DIR = SHARE.parent / "performances"   # top-level projects: patch + scenes + samples
+WEB_PORT = int(_env("WR_WEB_PORT", "7180"))  # http://move.local:7180 — manage/download recordings
 # On-device TTS (espeak-ng) for speaking processor names in the module browser.
 _TTS_DIR = SHARE.parent / "tts"
 _TTS_BIN = _TTS_DIR / "bin" / "espeak-ng"
@@ -140,6 +141,13 @@ class HeadlessController:
         # per-FX dry/wet balance (0..1, 0.5 = 50/50), shared by all slots that carry it.
         # DISTORT defaults to 0.1 (10 wet / 90 dry). Order = _SAMP_FX_ORDER.
         self._fx_wet = [0.5, 0.1, 0.5, 0.5]
+        # Performance recorder: 8 long-form master captures PER PROJECT.
+        self._active_perf = -1     # active project slot (-1 = unsaved scratch)
+        self._rec_state = "idle"   # idle | recording | playing
+        self._rec_slot = -1        # slot being recorded / played
+        self._rec_t0 = 0.0
+        self._rec_timer = None
+        self._rec_filled = [False] * self.N_REC
         self._perf_reload = 0      # bumps on performance load so the ui re-reads macros
         self._master_gain = 6.0    # current master makeup (saved/restored per performance)
         self._muted = True         # Play-button toggle: master output silenced (patch starts SILENT — audible only when Play is pressed)
@@ -192,8 +200,11 @@ class HeadlessController:
         self._start_control_channel()
         threading.Thread(target=self._snapshot_loop, daemon=True).start()
         threading.Thread(target=self._control_file_loop, daemon=True).start()
+        self._rec_scan()                        # initial (scratch project) recordings
+        from . import webserver                 # web UI: browse/download recordings (daemon thread)
+        webserver.serve(WEB_PORT, PERF_DIR, self.N_REC)
         print(f"[wildrider] headless controller up — engine {SC_HOST}:{SC_PORT}, "
-              f"control :{CONTROL_PORT}, snapshot {SNAP_FILE}", flush=True)
+              f"control :{CONTROL_PORT}, snapshot {SNAP_FILE}, web :{WEB_PORT}", flush=True)
 
     def run(self) -> None:
         """Block in the modulation loop until signalled."""
@@ -516,6 +527,91 @@ class HeadlessController:
                 del self._samp_patchfx[slot]
                 self.bridge.send("/atelier/sampler/patchfx", slot, "")
 
+    # -- Recorder: 8 long-form performance recordings PER PROJECT -------------- #
+    N_REC = 8
+    REC_MAX_S = 600.0                    # hard cap: 10 min per recording
+
+    def _rec_base(self) -> Path:
+        return self._perf_dir(self._active_perf) if self._active_perf >= 0 else (PERF_DIR / "_scratch")
+
+    def _rec_dir(self) -> Path:
+        d = self._rec_base() / "recordings"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _rec_path(self, slot: int) -> Path:
+        return self._rec_dir() / f"rec_{int(slot):02d}.wav"
+
+    def _rec_scan(self) -> None:
+        d = self._rec_base() / "recordings"
+        self._rec_filled = [(d / f"rec_{s:02d}.wav").exists() for s in range(self.N_REC)]
+
+    def _rec_stop_all(self) -> None:
+        if self._rec_timer:
+            self._rec_timer.cancel()
+            self._rec_timer = None
+        if self._rec_state == "recording":
+            self.bridge.send("/atelier/rec/stop")
+        elif self._rec_state == "playing":
+            self.bridge.send("/atelier/rec/playstop")
+        self._rec_state = "idle"
+        self._rec_slot = -1
+
+    def _rec_begin(self, slot: int) -> None:
+        self._rec_stop_all()
+        self.bridge.send("/atelier/rec/start", str(self._rec_path(slot)))
+        self._rec_state = "recording"
+        self._rec_slot = slot
+        self._rec_t0 = time.monotonic()
+        self._rec_filled[slot] = True
+        self._rec_timer = threading.Timer(self.REC_MAX_S, self._rec_cap)
+        self._rec_timer.daemon = True
+        self._rec_timer.start()
+
+    def _rec_cap(self) -> None:
+        if self._rec_state == "recording":
+            self._rec_stop_all()
+
+    def _rec_play(self, slot: int) -> None:
+        self.bridge.send("/atelier/rec/play", str(self._rec_path(slot)))
+        self._rec_state = "playing"
+        self._rec_slot = slot
+
+    def recorder_pad(self, slot: int) -> None:
+        """Recorder-view pad (current workflow): tapping the ACTIVE slot stops it;
+        tapping any other slot records it if empty, plays it if it holds a take."""
+        slot = int(slot)
+        if not (0 <= slot < self.N_REC):
+            return
+        if self._rec_state in ("recording", "playing") and self._rec_slot == slot:
+            self._rec_stop_all()
+            return
+        self._rec_stop_all()
+        if self._rec_path(slot).exists():
+            self._rec_play(slot)
+        else:
+            self._rec_begin(slot)
+
+    def recorder_del(self, slot: int) -> None:
+        slot = int(slot)
+        if not (0 <= slot < self.N_REC):
+            return
+        if self._rec_slot == slot and self._rec_state in ("recording", "playing"):
+            self._rec_stop_all()
+        try:
+            self._rec_path(slot).unlink()
+        except OSError:
+            pass
+        self._rec_filled[slot] = False
+
+    def _recorder_status(self) -> dict:
+        elapsed = (time.monotonic() - self._rec_t0) if self._rec_state == "recording" else 0.0
+        return {"n": self.N_REC,
+                "filled": [1 if x else 0 for x in self._rec_filled],
+                "state": self._rec_state, "slot": self._rec_slot,
+                "elapsed": round(elapsed, 1),
+                "project": (self._active_perf + 1) if self._active_perf >= 0 else 0}
+
     # -- Performances: top-tier project = patch + scenes + modulation + samples - #
     def _perf_dir(self, pad: int):
         return PERF_DIR / f"perf_{int(pad):02d}"
@@ -539,6 +635,8 @@ class HeadlessController:
             return
         from .persistence import save_patch
         d = self._perf_dir(pad)
+        self._active_perf = pad          # recordings now target this project's dir
+        self._rec_scan()
         (d / "samples").mkdir(parents=True, exist_ok=True)
         save_patch(self.state, str(d / "patch.json"))
         slots = []
@@ -566,6 +664,9 @@ class HeadlessController:
         d = self._perf_dir(int(pad))
         if not (d / "patch.json").exists():
             return
+        self._active_perf = int(pad)     # recordings now target this project's dir
+        self._rec_stop_all()             # a play/record from the old project shouldn't bleed over
+        self._rec_scan()                 # show THIS project's recordings in the Recorder view
         patch_json = json.loads((d / "patch.json").read_text())
         samp = {}
         try:
@@ -1415,6 +1516,10 @@ class HeadlessController:
             self._safe(lambda: self.sampler_del(arg))
         elif cmd == "sampwire":             # Rec + slot: route slot through the patch FX
             self._safe(lambda: self.sampler_wire(arg))
+        elif cmd == "recpad":               # Recorder view: rec/stop/play toggle on a slot
+            self._safe(lambda: self.recorder_pad(arg))
+        elif cmd == "recdel":               # Recorder view: X + slot = delete the recording
+            self._safe(lambda: self.recorder_del(arg))
         elif cmd == "playtoggle":           # Play tap: silence / un-silence the whole patch
             self._safe(self.toggle_mute)
         elif cmd == "cdpgen":               # CDP view: capture a snippet + spawn 8 variations
@@ -1576,7 +1681,8 @@ class HeadlessController:
                 "scenes": self._scenes_status(),  # {filled[32], active, morphTo}
                 "performances": self._perf_status(),  # {filled[32]}
                 "perfReload": self._perf_reload,
-                "sampler": self._sampler_status(),  # {states[32]}
+                "sampler": self._sampler_status(),  # {states[56]}
+                "recorder": self._recorder_status(),  # 8 per-project performance recordings
                 "cdpBusy": self._cdp_busy,          # CDP view: capture+process in progress
             }
             tmp = STATUS_FILE.with_suffix(".json.tmp")

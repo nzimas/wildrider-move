@@ -932,6 +932,36 @@
 	};
 };
 
+// ---- PERFORMANCE RECORDER: long-form master-OUTPUT capture to disk (per project).
+// Manual start/stop (the controller caps the length); DiskOut streams bus 0 to a WAV.
+~recBuf = nil; ~recSynth = nil; ~recPlayBuf = nil; ~recPlaySyn = nil;
+~recStop = {
+	~recSynth.notNil.if { ~recSynth.free; ~recSynth = nil };          // stop writing first
+	~recBuf.notNil.if { ~recBuf.close; ~recBuf.free; ~recBuf = nil }; // close finalizes the WAV
+};
+~recStart = { |path|
+	~recStop.value;
+	~recBuf = Buffer.alloc(s, 65536, 2);
+	~recSynth = Synth.basicNew(\atelierRec, s);
+	// open the file (leaveOpen) then start DiskOut via the write's completion message
+	~recBuf.write(path.asString, "wav", "int16", 0, 0, true,
+		~recSynth.newMsg(~gRec, [\buf, ~recBuf], \addToTail));
+};
+~recPlayStop = {
+	~recPlaySyn.notNil.if { ~recPlaySyn.free; ~recPlaySyn = nil };
+	~recPlayBuf.notNil.if { ~recPlayBuf.close; ~recPlayBuf.free; ~recPlayBuf = nil };
+};
+~recPlayStart = { |path|
+	~recPlayStop.value;
+	~recPlayBuf = Buffer.cueSoundFile(s, path.asString, 0, 2);
+	~recPlaySyn = Synth.tail(~gRec, \atelierRecPlay, [\buf, ~recPlayBuf]);
+	~recPlaySyn.register;
+	~recPlaySyn.onFree({
+		~recPlayBuf.notNil.if { ~recPlayBuf.close; ~recPlayBuf.free; ~recPlayBuf = nil };
+		~recPlaySyn = nil;
+	});
+};
+
 ~defs = [
 	OSCdef(\boot, { |m| ~boot.(m[1], m[2], m[3]) }, '/atelier/boot'),
 	OSCdef(\sampSave, { |m| ~sampSaveBuf.(m[1].asInteger, m[2]) }, '/atelier/sampler/save'),
@@ -947,6 +977,10 @@
 	OSCdef(\sampRecStop, { |m| ~sampRecStop.(m[1].asInteger, m[2].asInteger) }, '/atelier/sampler/recstop'),
 	OSCdef(\sampPlay, { |m| ~sampPlayStart.(m[1].asInteger) }, '/atelier/sampler/play'),
 	OSCdef(\sampStop, { |m| ~sampPlayStop.(m[1].asInteger) }, '/atelier/sampler/stop'),
+	OSCdef(\wrRecStart, { |m| ~recStart.(m[1]) }, '/atelier/rec/start'),
+	OSCdef(\wrRecStop, { |m| ~recStop.value }, '/atelier/rec/stop'),
+	OSCdef(\wrRecPlay, { |m| ~recPlayStart.(m[1]) }, '/atelier/rec/play'),
+	OSCdef(\wrRecPlayStop, { |m| ~recPlayStop.value }, '/atelier/rec/playstop'),
 	OSCdef(\sampFree, { |m| ~sampFree.(m[1].asInteger) }, '/atelier/sampler/free'),
 	OSCdef(\sampLoop, { |m| ~sampSetLoop.(m[1], m[2]) }, '/atelier/sampler/looprange'),
 	OSCdef(\sampSlot, { |m| ~sampSetSlot.(m[1].asInteger, m[2], m[3], m[4], m[5], m[6], m[7], m[8]) }, '/atelier/sampler/slot'),

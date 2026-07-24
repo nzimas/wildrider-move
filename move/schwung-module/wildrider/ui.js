@@ -147,14 +147,13 @@ const SCENE_MORPH_COLOR = ElectricViolet;
 /* Scene morph-time editor (Shift + Track 3): jog scans 1..99s, jog-click confirms. */
 let morphEdit = false;
 let morphTime = 10;            /* seconds, 1..99, default 10 */
-/* ---- RECORDER view (Shift + Track 4) — 32 pads = 32 sample slots ----
- * A live recorder (primarily for capturing performances to publish), with the same
- * per-slot performance knobs as the Transformers view.
- * Short-press empty = record the master mix; press again = stop -> playable.
- * Short-press a filled slot = loop playback; press again = stop. X+pad deletes.
- * WARM palette (distinct from Transformers): black base, recording=red(flash),
- * take=amber, playing=green(steady), selected=blue. */
+/* ---- RECORDER view (Shift + Track 4) — 8 LONG-FORM performance recordings PER
+ * PROJECT. Tap empty = record the master output to disk; tap the recording pad =
+ * stop; tap a filled pad = play; X+pad deletes. Recordings live in the active
+ * project's dir and are downloadable from the web UI (move.local:7180). Only 8
+ * pads (row 1) are used; the rest are dark. */
 let samplerMode = false;
+let recN = 8, recFilled = new Array(8).fill(0), recState = 'idle', recSlot = -1, recElapsed = 0, recProject = 0;
 /* ---- TRANSFORMERS view (Track 4) -------------------------------------------
  * Bottom-left pad (cell 24) = the GENERATOR: capture a live snippet + spawn 8 CDP
  * + 8 Csound variations into the FREE slots of rows 1-3 (cells 0-23, 24 slots).
@@ -411,6 +410,15 @@ function readStatus() {
             if (s.sampler.clouds) sampCloudsOn[qi] = s.sampler.clouds[qi];
         }
     }
+    if (s.recorder) {                            /* 8 per-project performance recordings */
+        recN = s.recorder.n || 8;
+        var rf = s.recorder.filled || [];
+        for (var ri2 = 0; ri2 < 8; ri2++) recFilled[ri2] = rf[ri2] ? 1 : 0;
+        recState = s.recorder.state || 'idle';
+        recSlot = (typeof s.recorder.slot === 'number') ? s.recorder.slot : -1;
+        recElapsed = s.recorder.elapsed || 0;
+        recProject = s.recorder.project || 0;
+    }
     var newCdpBusy = !!s.cdpBusy;             /* CDP capture/process running */
     if (newCdpBusy !== cdpBusy) { cdpBusy = newCdpBusy; if (cdpMode) { ledDirty = true; screenDirty = true; } }
     /* Only mark dirty when the VISIBLE state changed (not cpu/meter jitter), so
@@ -418,9 +426,10 @@ function readStatus() {
     var sceneSig = scenesMode ? ('S' + sceneActive + '/' + sceneMorphTo + '/' +
         sceneFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
     var perfSig = perfMode ? ('P' + perfActive + '/' + perfFilled.map(function (v) { return v ? '1' : '0'; }).join('')) : '';
-    var sampSig = (samplerMode || cdpMode) ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',') + '/' + sampFresh.join('') + '|' + fxArmed.join('') + sampGateOn.join('') + sampDistOn.join('') + sampCombOn.join('') + sampCloudsOn.join('')) : '';
+    var recSig = samplerMode ? ('R' + recState + recSlot + recProject + recFilled.join('') + Math.floor(recElapsed)) : '';
+    var sampSig = cdpMode ? ('Z' + selSlots.join('.') + ':' + sampStates.join(',') + '/' + sampFresh.join('') + '|' + fxArmed.join('') + sampGateOn.join('') + sampDistOn.join('') + sampCombOn.join('') + sampCloudsOn.join('')) : '';
     var sig = (ready ? '1' : '0') + '|' + grid.map(function (g) {
-        return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig + '|' + sampSig + '|' + perfSig;
+        return g.pad + (g.on ? '+' : '-') + g.cat; }).join(',') + '|' + lfoStates.map(function (v) { return v ? '1' : '0'; }).join('') + '|' + sceneSig + '|' + sampSig + '|' + recSig + '|' + perfSig;
     if (sig !== lastSig) { lastSig = sig; ledDirty = true; screenDirty = true; }
 }
 
@@ -539,21 +548,19 @@ function drawMorphEdit() {
 /* ---- RECORDER view LEDs — a WARM identity, distinct from the Transformers view's
  * dim wash: black base, red-flash while recording, amber takes, green while playing
  * (STEADY — the always-flashing playing behaviour belongs to the Transformers view). */
-function renderSamplerLEDs(flashOn) {
+/* RECORDER view LEDs — 8 long-form performance-recording slots (row 1). Empty=off,
+ * recording=red breathe, playing=green breathe, holds a take=steady green. */
+function renderRecorderLEDs(pulseOn) {
     for (var c = 0; c < 32; c++) {
-        var st = sampStates[c], color = Black;
-        if (st === 'recording') color = flashOn ? Red : Black;   /* recording wins */
-        else if (selSlots.indexOf(c) >= 0) color = RoyalBlue;    /* selected for editing = clear blue */
-        else if (st === 'playing') color = sampPatchFx[c] ? AzureBlue : BrightGreen;
-        else if (st === 'filled') color = sampPatchFx[c] ? AzureBlue : VividYellow;  /* amber take; blue = through patch FX */
+        var color = Black;
+        if (c < recN) {
+            if (c === recSlot && recState === 'recording') color = pulseOn ? BrightRed : Red;
+            else if (c === recSlot && recState === 'playing') color = pulseOn ? BrightGreen : DullGreen;
+            else if (recFilled[c]) color = BrightGreen;      /* holds a recording */
+        }
         setLED(PAD_NOTES[c], color);
     }
-    /* step buttons (1..4) show the ARMED FX set; armed FX are stamped onto slots as
-     * they are selected. Steps 5-16 are unused here. */
-    for (var i = 0; i < 16; i++) {
-        var on = (i < FX_STEPS.length) && !!fxArmed[i];
-        setLED(STEP_BASE + i, on ? FX_ON_COLOR : Black);
-    }
+    for (var i = 0; i < 16; i++) setLED(STEP_BASE + i, Black);   /* step row unused here */
     ledDirty = false;
 }
 /* TRANSFORMERS view: a DIM cool wash over the whole grid (so the performer always
@@ -593,6 +600,21 @@ function renderCdpLEDs(playOn, recOn) {
         setLED(STEP_BASE + i, on ? FX_ON_COLOR : Black);
     }
     ledDirty = false;
+}
+function fmtTime(sec) { var m = Math.floor(sec / 60), s = Math.floor(sec % 60); return m + ':' + (s < 10 ? '0' + s : s); }
+function drawRecorder() {
+    if (typeof clear_screen !== 'function' || typeof print !== 'function') return;
+    clear_screen();
+    print(0, 6, 'RECORDER', 2);
+    var proj = recProject > 0 ? ('PROJECT ' + recProject) : 'UNSAVED';
+    if (recState === 'recording') print(0, 30, 'REC ' + (recSlot + 1) + '   ' + fmtTime(recElapsed), 1);
+    else if (recState === 'playing') print(0, 30, 'PLAY ' + (recSlot + 1), 1);
+    else {
+        var n = 0; for (var i = 0; i < recN; i++) if (recFilled[i]) n++;
+        print(0, 30, proj + '    ' + n + '/' + recN + ' recordings', 1);
+    }
+    print(0, 44, 'tap=rec/stop/play   X+pad=del', 1);
+    print(0, 56, 'get them at  move.local:7180', 1);
 }
 function cutHz(n) { return Math.round(20 * Math.pow(900, n)); }   /* normalised -> Hz */
 function panLbl(p) { return p === 0 ? 'C' : (p > 0 ? 'R' + Math.round(p * 100) : 'L' + Math.round(-p * 100)); }
@@ -841,11 +863,13 @@ globalThis.tick = function () {
         if (screenDirty) { drawCdp(); screenDirty = false; }
         return;
     }
-    if (samplerMode) {                      /* SAMPLER view owns the grid + screen */
-        var fOn = (Math.floor(phase / 5) % 2) === 0;   /* blink ~3Hz for recording slots */
-        if (sampStates.indexOf('recording') >= 0 && fOn !== sampFlashOn) { sampFlashOn = fOn; ledDirty = true; }
-        if (ledDirty) renderSamplerLEDs(sampFlashOn);
-        if (screenDirty) { drawSampler(); screenDirty = false; }
+    if (samplerMode) {                      /* RECORDER view owns the grid + screen */
+        var rpulse = (Date.now() % 700) < 350;         /* gentle breathe while rec/playing */
+        if ((recState === 'recording' || recState === 'playing') && rpulse !== sampFlashOn) {
+            sampFlashOn = rpulse; ledDirty = true;
+        }
+        if (ledDirty) renderRecorderLEDs(sampFlashOn);
+        if (screenDirty) { drawRecorder(); screenDirty = false; }
         return;
     }
     if (scenesMode) {                       /* SCENES view owns the grid + screen */
@@ -895,7 +919,7 @@ globalThis.onMidiMessageInternal = function (data) {
     /* Encoder capacitive touch (notes 0..7 = knob 1..8). In the sampler slot view,
      * TOUCHING a control knob shows its bar (not only on rotation). */
     if (d1 >= MoveKnob1Touch && d1 <= MoveKnob8Touch && (status === 0x90 || status === 0x80)) {
-        if (samplerMode || cdpMode) {
+        if (cdpMode) {
             var touched = (status === 0x90 && d2 >= 64);
             var ki = d1 - MoveKnob1Touch;    /* 0..7 = knob 1..8 */
             var sel = selSlots.length > 0;
@@ -931,12 +955,12 @@ globalThis.onMidiMessageInternal = function (data) {
      * Shift+press re-randomizes that one LFO (keeping its on/off state). */
     if (status === 0x90 && d2 > 0 && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {
         const i = d1 - STEP_BASE;
-        if ((samplerMode || cdpMode) && i < FX_STEPS.length) {  /* SAMPLER/CDP: press starts a hold; decide tap-vs-adjust on release */
+        if ((cdpMode) && i < FX_STEPS.length) {  /* SAMPLER/CDP: press starts a hold; decide tap-vs-adjust on release */
             fxHeld = i; fxHeldShift = shiftHeld; fxHeldAdjusted = false;
             screenDirty = true;                  /* show the dry/wet bar while held */
             return;
         }
-        if (samplerMode || cdpMode) return;      /* steps 5-16 unused in the sampler/CDP views */
+        if (cdpMode) return;      /* steps 5-16 unused in the sampler/CDP views */
         if (shiftHeld && masterTouched && i === 0) {   /* shift + vol-touch + step1 = randomize ALL */
             sendCmd('lforandall', -1);
             showAction('RND ALL LFOS');
@@ -954,7 +978,7 @@ globalThis.onMidiMessageInternal = function (data) {
     }
     if ((status === 0x80 || (status === 0x90 && d2 === 0)) && d1 >= STEP_BASE && d1 <= STEP_BASE + 15) {  /* step release (either note-off form) */
         const ri = d1 - STEP_BASE;
-        if ((samplerMode || cdpMode) && ri < FX_STEPS.length && fxHeld === ri) {
+        if ((cdpMode) && ri < FX_STEPS.length && fxHeld === ri) {
             if (!fxHeldAdjusted) {               /* a tap (no jog) = arm/toggle, or re-randomize with shift */
                 if (fxHeldShift && fxArmed[ri]) {
                     var rr = [0, 0, 0, 0]; rr[ri] = 1; queueFxSync(selSlots, rr);
@@ -982,7 +1006,14 @@ globalThis.onMidiMessageInternal = function (data) {
             if (cell >= 24) return;                  /* rows 1-3 (0-23) are players; the rest of row 4 is inert */
             /* cells 0-23 fall through to the sampler slot handling (they ARE slots 0-23) */
         }
-        if (samplerMode || (cdpMode && cell < 24)) { /* slot ops — Recorder=slots 0-31, Transformers=slots 32-55 */
+        if (samplerMode) {                           /* RECORDER: 8 performance-recording slots (row 1) */
+            if (cell >= recN) return;                /* only the 8 rec pads are live */
+            if (deleteHeld) { sendCmd('recdel', cell); recFilled[cell] = 0; }
+            else { sendCmd('recpad', cell); }        /* controller resolves rec / stop / play */
+            ledDirty = true; screenDirty = true;
+            return;
+        }
+        if (cdpMode && cell < 24) { /* slot ops — Recorder=slots 0-31, Transformers=slots 32-55 */
             var slot = (cdpMode ? 32 : 0) + cell;    /* absolute slot in the ACTIVE bank */
             if (shiftHeld) {                         /* Shift+pad toggles this slot in/out of the selection (multi-select) */
                 var si = selSlots.indexOf(slot);
@@ -1165,7 +1196,7 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveMainKnob) {       /* hold a pad + jog wheel -> that module's level (amp) */
             const delta = decodeDelta(d2);
             if (delta === 0) return;
-            if ((samplerMode || cdpMode) && fxHeld >= 0) {   /* hold an FX step + jog -> that FX's dry/wet */
+            if ((cdpMode) && fxHeld >= 0) {   /* hold an FX step + jog -> that FX's dry/wet */
                 fxWet[fxHeld] = Math.max(0, Math.min(1, fxWet[fxHeld] + delta * 0.02));
                 fxHeldAdjusted = true;
                 pendingFxWet = { fx: fxHeld, wet: fxWet[fxHeld], n: ++fxN };
@@ -1190,7 +1221,7 @@ globalThis.onMidiMessageInternal = function (data) {
             const i = d1 - MoveKnob1;
             const delta = decodeDelta(d2);
             if (delta === 0) return;
-            if (samplerMode || cdpMode) {
+            if (cdpMode) {
                 var step = 0.0025;            /* fine loop step: ~400 detents across the take */
                 if (selSlots.length > 0) {    /* selected (1 or many): per-slot vol/pan/pitch/filter/loop */
                     var pp = null, pv = 0;

@@ -1437,6 +1437,25 @@
 	SynthDef(("samplerRec" ++ suf).asSymbol, { |buf = 0, in = 0|
 		RecordBuf.ar(In.ar(in, nchan), buf, recLevel: 1, loop: 0, doneAction: 2);
 	}).add;
+		// ---- PERFORMANCE RECORDER: long-form stereo capture of the master OUTPUT
+		// (bus 0) to a WAV on disk via DiskOut. int16 so browsers play it in <audio>.
+		// A modest makeup + limiter lifts the engine's conservative ~0.45 peak.
+		SynthDef(\atelierRec, { |buf = 0|
+			DiskOut.ar(buf, Limiter.ar(In.ar(0, 2) * 1.7, 0.95, 0.002));
+		}).add;
+		// LEVEL MONITOR while recording: report output amplitude ~12 Hz so the
+		// controller can end a take once its reverb/delay tail has died away.
+		SynthDef(\atelierRecAmp, {
+			SendReply.kr(Impulse.kr(12), '/atelier/recamp',
+				[Amplitude.kr(Mix.ar(In.ar(0, 2)) * 0.5, 0.01, 0.2)]);
+		}).add;
+		// PLAYBACK of a recorded take from disk (audition on the Move). VDiskIn streams
+		// the file; one-shot; frees itself when the file runs out (silence).
+		SynthDef(\atelierRecPlay, { |buf = 0, amp = 1.0|
+			var sig = VDiskIn.ar(2, buf, 1, loop: 0);
+			DetectSilence.ar(Mix.ar(sig), 0.001, 1.0, doneAction: 2);
+			Out.ar(0, sig * amp);
+		}).add;
 	// SEAMLESS LOOP via an equal-power CROSSFADE at the seam. A plain wrap clicks
 	// because buf[end] -> buf[0] is a discontinuity. Zero-crossing search only
 	// half-fixes it (no derivative continuity; stereo channels cross at different
