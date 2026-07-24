@@ -64,8 +64,8 @@ that take over until you leave them.
 |---|---|---|
 | **Patch** (default) | — (launch default) | Play modules, browse & assign the catalog, macros, LFOs |
 | **Scenes** | **Track 3** | Store & recall up to 32 snapshots, with morphing |
-| **Sampler** | **Track 4** | 32-slot sampler — record the mix, replay, per-slot FX |
-| **CDP** | **Shift + Track 4** | Generate granular/CDP variations into free sample slots |
+| **Transformers** | **Track 4** | Generate CDP + Csound variations into free sample slots |
+| **Recorder** | **Shift + Track 4** | 32-slot recorder — capture the mix (for publishing), replay, per-slot FX |
 | **Performances** | **Menu** | Save / load / delete whole projects (32 slots) |
 | **Chains** (modal) | **Shift + Track 1** | Build a patch by hand from the module list |
 | **Morph-time** (modal) | **Shift + Track 3** | Set the scene-morph duration (1–99 s) |
@@ -148,7 +148,7 @@ The 16 step buttons are a bank of global LFOs.
 | **Track 1** | New guided-random patch | **Shift** → Chains (manual build) |
 | **Track 2** | Rewire the patch | **Long** → rewire **and** re-randomize all params |
 | **Track 3** | Scenes view | **Shift** → Morph-time editor |
-| **Track 4** | Sampler view | **Shift** → CDP view |
+| **Track 4** | Transformers view | **Shift** → Recorder view |
 | **Play** | Play / silence the whole patch | Hold = "force RINGS" modifier for empty pads |
 | **Rec** | (sampler wiring) | Hold = "force FMTONE" modifier for empty pads |
 | **Menu** | Performances view | |
@@ -180,24 +180,48 @@ editor): turn the jog to scan 1–99 s, click to confirm.
 
 ---
 
-## 7. Sampler — record and replay the mix
+## 7. Transformers — generate variations from the mix
 
-**Track 4.** The 32 pads are sample slots that record Wildrider's own output.
+**Track 4.** The grid dims to a cool grey wash so you always know you're here.
+Rows 1–3 (slots 0–23) are sample players; the **bottom-left pad** (the red one) is
+the generator.
+
+- **Tap the red pad** → Wildrider captures a live snippet and spawns **16
+  variations into the free slots** of rows 1–3 — **8 from CDP** (phase-vocoder /
+  waveset) then **8 from Csound** (ATS resynthesis, LPC formants, spectral
+  morphing, modal resonators), back to back. Occupied slots are never overwritten;
+  the pad flashes bright red while the job runs.
+- **Freshly generated content lights bright green** until you audition it, then
+  returns to the normal slot colour — so you can see at a glance what's new.
+- **Playing slots always flash** (in every state) so you can see what's sounding.
+- **Shift + pad selects a slot for editing** — it turns a clear **blue**.
+
+The slot gestures, per-slot encoder editing, and armed insert FX are identical to
+the Recorder (below).
+
+---
+
+## 8. Recorder — capture the mix (for publishing)
+
+**Shift + Track 4.** A live recorder with a **warm** palette (black base, amber
+takes) distinct from the Transformers wash. The 32 pads are sample slots that
+record Wildrider's own output — primarily to capture performances you want to keep
+or publish. Same per-slot performance knobs as the Transformers view.
 
 | Gesture | Action |
 |---|---|
 | **Tap an empty slot** | Start recording the master mix; **tap again** to stop |
-| **Tap a filled slot** | Play / loop it; tap again to stop |
+| **Tap a filled slot** | Play / loop it (lights green); tap again to stop |
 | **X (Delete) + pad** | Delete that take |
 | **Rec + pad** | Route that slot **through the patch's FX chain** (turns blue) |
-| **Shift + pad** | Add/remove the slot from the selection (multi-select) and load its params |
+| **Shift + pad** | Select for editing (turns **blue**); multi-select and load its params |
 
-Recording slots flash red; selected slots are yellow; playing slots are purple
-(blue if routed through the patch FX).
+Recording slots flash red; takes are amber; playing is green; selected is blue
+(routed-through-FX slots are azure).
 
 ### Per-slot editing (with a selection)
 
-With one or more slots selected, the encoders edit them:
+With one or more slots selected, the encoders edit them (same in both views):
 
 | Encoder | E1 | E2 | E3 | E4 | E5 | E7 | E8 |
 |---|---|---|---|---|---|---|---|
@@ -209,30 +233,13 @@ pitch, applied broadly.
 ### Armed insert FX (step buttons 1–4)
 
 Step buttons 1–4 arm a set of insert effects — **Gate, Distort, Comb, Clouds** —
-that get stamped onto slots as you select them.
+stamped onto slots as you select them.
 
 | Gesture | Action |
 |---|---|
 | **Tap a step (1–4)** | Arm / disarm that FX (armed = amber) |
 | **Shift + armed step** | Re-randomize that FX's parameters |
 | **Hold a step + jog** | Set that FX's dry/wet |
-
----
-
-## 8. CDP — granular variations
-
-**Shift + Track 4.** The whole grid dims to grey so you always know you're in CDP.
-Rows 1–3 (slots 0–23) behave exactly like sampler slots; the **bottom-left pad**
-(the red one) is the generator.
-
-- **Tap the red pad** → Wildrider captures a live snippet and spawns **CDP
-  variations into every free slot** of rows 1–3 (occupied slots are never
-  overwritten). The pad flashes bright red while the job runs.
-- **Freshly generated content lights bright green** until you audition it for the
-  first time, after which it returns to the normal slot colour — so you can see at
-  a glance what's new.
-
-Encoders and the armed-FX step buttons work exactly as in the Sampler view.
 
 ---
 
@@ -260,12 +267,13 @@ Filled slots glow green; the last saved/loaded slot is white.
 | Palette | dim colour / cyan edge | available module / "more hidden this way" |
 | Palette | bright glow | currently auditioning |
 | Step buttons | yellow | LFO on (Patch) |
-| Step buttons | amber | armed insert FX (Sampler / CDP) |
+| Step buttons | amber | armed insert FX (Recorder / Transformers) |
 | Scenes | blue / white / violet | stored / loaded / morph destination |
 | Performances | green / white | saved / last used |
-| Sampler | red-flash / yellow / purple / blue | recording / selected / playing / playing-through-FX |
-| CDP | grey wash | you're in CDP mode |
-| CDP | **bright green** | freshly generated, not yet auditioned |
+| Transformers | grey wash | you're in the Transformers view |
+| Transformers | flashing | a **playing** slot — always flashes, in any state |
+| Transformers | blue / bright green / white | selected-for-edit / fresh (unauditioned) / take |
+| Recorder | red-flash / amber / green / blue | recording / take / playing / selected-for-edit |
 | Screen | "CPU LIMIT" | audio core saturated; adds refused |
 
 ---

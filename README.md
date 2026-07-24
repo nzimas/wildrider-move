@@ -96,14 +96,14 @@ tuning/troubleshooting — is in [`docs/supernova.md`](docs/supernova.md).
 
 | Control | Role |
 |---|---|
-| **32 pads** | The module canvas — generators in rows 1 & 3, processors in rows 2 & 4. Also scene launch and the 32-slot sampler. |
+| **32 pads** | The module canvas — generators in rows 1 & 3, processors in rows 2 & 4. Also scene launch, the Transformers generator, and the 32-slot Recorder. |
 | **Encoder 1** | **Density** — scales every generator's internal clock (bipolar; hold a generator pad to scope it to that module). |
 | **Encoder 2** | **Pitch shift** — transposes the generators (bipolar, low end floored to avoid sub gargle; per-module when a pad is held). |
 | **Encoders 3 / 4** | **Global master filter** — cutoff / resonance. |
 | **Encoder 5** | **Morph macro** — bipolar "morph everything": nudges every patch param up/down by a random-but-persistent direction (generator pitch excluded). |
 | **Encoders 6–8** | Macro bank (each drives many destinations). |
 | **Master encoder** | Main volume. |
-| **Step buttons** | The 16-slot global LFO bank; in the sampler view, arm the step-button insert FX. |
+| **Step buttons** | The 16-slot global LFO bank; in the Recorder / Transformers views, arm the step-button insert FX. |
 | **Transport / track / Shift / Rec** | Scene + performance launch/capture, sampler record, morph-time and page gestures. |
 | **Screen** | Bipolar parameter bars, module names, live CPU, the morph editor and the Performances browser. |
 

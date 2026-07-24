@@ -10,9 +10,10 @@
 //   Track 3              toggle SCENES view (32 pads = 32 scene slots)
 //   (in SCENES) pad      load a stored scene with a 10s morph
 //   (in SCENES) shift+pad  save the current performance into that slot
-//   Track 4              toggle SAMPLER view (32 pads = 32 sample slots)
-//   (in SAMPLER) pad     tap empty=rec the master mix, tap again=stop; tap take=play/stop
-//   (in SAMPLER) X+pad   delete that take
+//   Track 4              toggle TRANSFORMERS view (CDP+Csound sample generator, 24 slots)
+//   Shift + Track 4      toggle RECORDER view (32 pads = 32 sample slots)
+//   (in RECORDER) pad    tap empty=rec the master mix, tap again=stop; tap take=play/stop
+//   (in RECORDER) X+pad  delete that take
 //   X (Delete) + pad     delete the module at that pad
 //   Encoders E1..E8      macros M1..M8 (slider shown while turning)
 //   Back                 exit the runner
@@ -144,17 +145,20 @@ const SCENE_MORPH_COLOR = ElectricViolet;
 /* Scene morph-time editor (Shift + Track 3): jog scans 1..99s, jog-click confirms. */
 let morphEdit = false;
 let morphTime = 10;            /* seconds, 1..99, default 10 */
-/* ---- SAMPLER view (Track 4 toggles it) — 32 pads = 32 sample slots ----
+/* ---- RECORDER view (Shift + Track 4) — 32 pads = 32 sample slots ----
+ * A live recorder (primarily for capturing performances to publish), with the same
+ * per-slot performance knobs as the Transformers view.
  * Short-press empty = record the master mix; press again = stop -> playable.
  * Short-press a filled slot = loop playback; press again = stop. X+pad deletes.
- * LEDs: empty=unlit, recording=red(flashing), filled idle=white, playing=purple. */
+ * WARM palette (distinct from Transformers): black base, recording=red(flash),
+ * take=amber, playing=green(steady), selected=blue. */
 let samplerMode = false;
-/* ---- CDP view (Shift + Track 4) ---------------------------------------------
- * Bottom-left pad (cell 24) = the GENERATOR: capture a live snippet + spawn CDP
- * variations into every FREE slot of rows 1-3 (cells 0-23, 24 slots). Those pads
- * are sample players, just like the sampler slots (they ARE sampler slots 0-23).
- * Freshly generated content is green until first played; the rest of row 4 is
- * painted DIM so the performer always knows they're in the CDP view. */
+/* ---- TRANSFORMERS view (Track 4) -------------------------------------------
+ * Bottom-left pad (cell 24) = the GENERATOR: capture a live snippet + spawn 8 CDP
+ * + 8 Csound variations into the FREE slots of rows 1-3 (cells 0-23, 24 slots).
+ * Those pads ARE sample players (slots 0-23). Freshly generated content is green
+ * until first played; the grid is painted DIM (cool wash) so the performer always
+ * knows they're here. PLAYING slots always flash; selected-for-edit = blue. */
 let cdpMode = false;
 let cdpBusy = false;             /* controller is capturing / running the CDP job */
 const CDP_GEN_CELL = 24;         /* bottom-left pad = record+process trigger */
@@ -527,14 +531,16 @@ function drawMorphEdit() {
     print(0, 56, 'jog=scan click=ok Trk3/Back=exit', 1);
 }
 
-/* ---- SAMPLER view LEDs: empty=off, recording=red(flash), filled=white, playing=purple ---- */
+/* ---- RECORDER view LEDs — a WARM identity, distinct from the Transformers view's
+ * dim wash: black base, red-flash while recording, amber takes, green while playing
+ * (STEADY — the always-flashing playing behaviour belongs to the Transformers view). */
 function renderSamplerLEDs(flashOn) {
     for (var c = 0; c < 32; c++) {
         var st = sampStates[c], color = Black;
         if (st === 'recording') color = flashOn ? Red : Black;   /* recording wins */
-        else if (selSlots.indexOf(c) >= 0) color = VividYellow;  /* selected slot(s) */
-        else if (st === 'playing') color = sampPatchFx[c] ? AzureBlue : Purple;
-        else if (st === 'filled') color = sampPatchFx[c] ? AzureBlue : White;   /* blue = routed through patch FX */
+        else if (selSlots.indexOf(c) >= 0) color = RoyalBlue;    /* selected for editing = clear blue */
+        else if (st === 'playing') color = sampPatchFx[c] ? AzureBlue : BrightGreen;
+        else if (st === 'filled') color = sampPatchFx[c] ? AzureBlue : VividYellow;  /* amber take; blue = through patch FX */
         setLED(PAD_NOTES[c], color);
     }
     /* step buttons (1..4) show the ARMED FX set; armed FX are stamped onto slots as
@@ -555,12 +561,20 @@ function renderCdpLEDs(flashOn) {
             color = cdpBusy ? (flashOn ? BrightRed : Black) : Red;
         } else if (c < 24) {                         /* rows 1-3 = the 24 variation players */
             var st = sampStates[c];
-            if (selSlots.indexOf(c) >= 0) color = VividYellow;   /* selected */
-            else if (st === 'playing') color = sampPatchFx[c] ? AzureBlue : Purple;
-            /* freshly generated + not yet auditioned = distinct green until first play */
-            else if (st === 'filled' && sampFresh[c]) color = BrightGreen;
-            else if (st === 'filled') color = sampPatchFx[c] ? AzureBlue : White;   /* blue = through patch FX */
-            /* empty variation slot stays on the DarkGrey dim base */
+            var sel = selSlots.indexOf(c) >= 0;
+            /* the slot's identity colour: selected wins (clear blue), then wired /
+             * fresh / filled over the dim wash. */
+            var idc;
+            if (sel) idc = RoyalBlue;                            /* selected for editing = clear blue */
+            else if (st === 'playing') idc = sampPatchFx[c] ? AzureBlue : Purple;
+            else if (st === 'filled' && sampFresh[c]) idc = BrightGreen;   /* fresh, not yet auditioned */
+            else if (st === 'filled') idc = sampPatchFx[c] ? AzureBlue : White;   /* blue = through patch FX */
+            else idc = DarkGrey;                                 /* empty stays on the dim base */
+            /* ACTIVE / playing slots ALWAYS flash — in EVERY state (default, selected,
+             * wired) — so the performer can see what's sounding; they blink their
+             * identity colour over the wash. */
+            if (st === 'playing') color = flashOn ? idc : DarkGrey;
+            else color = idc;
         }
         setLED(PAD_NOTES[c], color);
     }
@@ -598,7 +612,7 @@ function drawSampler() {
         else if (sampKnobShow === 'le') { print(0, 24, 'LOOP END ' + Math.round(le * 100) + '%', 1); bar(le); }
         return;
     }
-    print(0, 6, 'SAMPLER', 2);
+    print(0, 6, 'RECORDER', 2);
     var rec = 0, fill = 0, play = 0;
     for (var i = 0; i < 32; i++) {
         var s = sampStates[i];
@@ -614,7 +628,7 @@ function drawCdp() {
     if (typeof clear_screen !== 'function' || typeof print !== 'function') return;
     if (fxHeld >= 0 || sampKnobShow) { drawSampler(); return; }   /* shared encoder/FX bars */
     clear_screen();
-    print(0, 6, 'CDP', 2);
+    print(0, 6, 'TRANSFORMERS', 2);
     if (cdpBusy) { print(0, 24, 'PROCESSING...', 1); }
     else {
         var fill = 0, play = 0;
@@ -794,9 +808,9 @@ globalThis.tick = function () {
         if (screenDirty) { drawMorphEdit(); screenDirty = false; }
         return;
     }
-    if (cdpMode) {                          /* CDP view owns the grid + screen */
-        var cOn = (Math.floor(phase / 4) % 2) === 0;   /* blink the generator pad while busy */
-        if (cdpBusy && cOn !== sampFlashOn) { sampFlashOn = cOn; ledDirty = true; }
+    if (cdpMode) {                          /* TRANSFORMERS view owns the grid + screen */
+        var cOn = (Math.floor(phase / 4) % 2) === 0;   /* blink: generator pad while busy AND any playing slot */
+        if ((cdpBusy || sampStates.indexOf('playing') >= 0) && cOn !== sampFlashOn) { sampFlashOn = cOn; ledDirty = true; }
         if (ledDirty) renderCdpLEDs(sampFlashOn);
         if (screenDirty) { drawCdp(); screenDirty = false; }
         return;
@@ -1088,14 +1102,14 @@ globalThis.onMidiMessageInternal = function (data) {
             }
             return;
         }
-        if (d1 === MoveRow4) {                                  /* Track 4 = SAMPLER view; Shift+Track 4 = CDP view */
+        if (d1 === MoveRow4) {                                  /* Track 4 = TRANSFORMERS view; Shift+Track 4 = RECORDER */
             if (d2 > 0) {
                 if (shiftHeld) {
-                    cdpMode = !cdpMode; if (cdpMode) { samplerMode = false; scenesMode = false; perfMode = false; sendAudStop(); } fxHeld = -1;
-                    ledDirty = true; screenDirty = true; showAction(cdpMode ? 'CDP' : 'PATCH');
+                    samplerMode = !samplerMode; if (samplerMode) { cdpMode = false; scenesMode = false; perfMode = false; sendAudStop(); } fxHeld = -1;
+                    ledDirty = true; screenDirty = true; showAction(samplerMode ? 'RECORDER' : 'PATCH');
                 } else {
-                    samplerMode = !samplerMode; if (samplerMode) { scenesMode = false; perfMode = false; cdpMode = false; sendAudStop(); } fxHeld = -1;
-                    ledDirty = true; screenDirty = true; showAction(samplerMode ? 'SAMPLER' : 'PATCH');
+                    cdpMode = !cdpMode; if (cdpMode) { samplerMode = false; scenesMode = false; perfMode = false; sendAudStop(); } fxHeld = -1;
+                    ledDirty = true; screenDirty = true; showAction(cdpMode ? 'TRANSFORMERS' : 'PATCH');
                 }
             }
             return;
