@@ -111,7 +111,7 @@ are hidden).
 
 | Gesture | Action |
 |---|---|
-| **Tap a generator palette pad** | **Audition** it — it self-sounds; tap again to stop |
+| **Tap a generator palette pad** | **Audition** it — it self-sounds *and speaks its name*; tap again to stop |
 | **Tap a processor palette pad** | Hear its **name spoken** (the device says it aloud) |
 | **Hold a palette pad + tap a canvas slot** | **Assign / replace** — a held generator drops into a row-1 slot, a held processor into a row-2 slot |
 

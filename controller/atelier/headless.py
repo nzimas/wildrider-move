@@ -94,7 +94,10 @@ _SPOKEN = {"VERB": "reverb", "SDLY": "stereo delay", "COMB": "comb filter",
            "RINGMOD": "ring mod", "AMPSIM": "amp sim", "LOFI": "low fi",
            "BITCRUSHER": "bit crusher", "WAVEFOLDER": "wave folder", "ENV": "envelope",
            "DISTORT": "distortion", "EQUALIZER": "equalizer", "OVERDRIVE": "overdrive",
-           "GRAINS": "grains", "RINGS": "rings", "PITCH": "pitch shift"}
+           "GRAINS": "grains", "RINGS": "rings", "PITCH": "pitch shift",
+           # generators (the abbreviated ones — the rest read fine lower-cased)
+           "FMTONE": "f m tone", "FM7": "f m seven", "NOIZEOP": "noise op",
+           "WTABLE": "wavetable", "BYTEBEAT": "byte beat", "BUCHLOID": "buke loid"}
 # ui.js -> controller: the JS sandbox has file IO but no UDP socket, so the
 # overtake ui.js writes commands/macro values here and the controller polls it.
 CONTROL_FILE = SHARE / "control.json"
@@ -1046,24 +1049,31 @@ class HeadlessController:
     # -- Module-browser audition (patch-view palette, rows 3 & 4) -------------- #
     def audition(self, mtype: str, kind: str) -> None:
         """Tap a palette module: hear it. Generators self-sound (toggle: tap again to
-        stop). Processors SPEAK their name via on-device espeak-ng (each tap speaks) —
-        both paths bypass the Play-toggle mute."""
+        stop) AND speak their name; processors SPEAK their name via on-device espeak-ng
+        (each tap speaks). All paths bypass the Play-toggle mute."""
         from .catalog import CATALOG
         if not mtype or mtype not in CATALOG:
             return
         if kind == "fx":
             self._auditioning = None
-            threading.Thread(target=self._speak_processor, args=(mtype,), daemon=True).start()
+            threading.Thread(target=self._speak_name, args=(mtype, "/atelier/audition/say"),
+                             daemon=True).start()
             return
-        if self._auditioning == mtype:                  # generator toggle
+        if self._auditioning == mtype:                  # generator toggle off
             self.audition_stop()
             return
         self._auditioning = mtype
         self.bridge.send("/atelier/audition/gen", mtype)
+        # speak the engine's name over the top, like processors — the WAV is rendered
+        # async and OVERLAID (audition/sayover) so it never cuts off the sounding gen.
+        threading.Thread(target=self._speak_name, args=(mtype, "/atelier/audition/sayover"),
+                         daemon=True).start()
 
-    def _speak_processor(self, mtype: str) -> None:
-        """Render the processor name to a WAV with espeak-ng, then have the engine play
-        it (so the speech mixes through our audio path, mute-independent)."""
+    def _speak_name(self, mtype: str, addr: str = "/atelier/audition/say") -> None:
+        """Render a module name to a WAV with espeak-ng, then have the engine play it
+        (so the speech mixes through our audio path, mute-independent). `addr` is
+        /atelier/audition/say (processors — replaces the audition) or /sayover
+        (generators — overlays the sounding voice)."""
         import os
         import subprocess
         if not _TTS_BIN.exists():
@@ -1075,8 +1085,11 @@ class HeadlessController:
             subprocess.run([str(_TTS_BIN), "--path", str(_TTS_DATA), "-s", "150",
                             "-w", str(_TTS_WAV), phrase],
                            env=env, timeout=5, capture_output=True)
+            # Skip a stray overlay if the generator was already toggled off mid-render.
+            if addr == "/atelier/audition/sayover" and self._auditioning != mtype:
+                return
             if _TTS_WAV.exists():
-                self.bridge.send("/atelier/audition/say", str(_TTS_WAV))
+                self.bridge.send(addr, str(_TTS_WAV))
         except Exception:
             pass
 

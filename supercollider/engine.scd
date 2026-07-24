@@ -657,6 +657,19 @@
 		});
 	};
 };
+// speak a generator's name OVER a sounding audition: same WAV playback but WITHOUT
+// ~auditionStop, so the self-sounding voice (audout) keeps running underneath. audsay
+// and audout both sum to bus 0, so they simply mix. Only a prior spoken clip is freed.
+~auditionSayOver = { |path|
+	var p = path.asString;
+	~audSaySyn.notNil.if { ~audSaySyn.free; ~audSaySyn = nil };
+	~audSayBuf.notNil.if { ~audSayBuf.free; ~audSayBuf = nil };
+	File.exists(p).if {
+		~audSayBuf = Buffer.read(s, p, action: { |b|
+			~audSaySyn = Synth.tail(~gRec, ("audsay_" ++ ~nchan).asSymbol, [\buf, b.bufnum]);
+		});
+	};
+};
 ~auditionGen = { |type|
 	~auditionStop.value;
 	~moduleNew.(\_aud, type, ~nchan, 1, 0);
@@ -924,6 +937,7 @@
 	OSCdef(\audGen, { |m| ~auditionGen.(m[1]) }, '/atelier/audition/gen'),
 	OSCdef(\audFx, { |m| ~auditionFx.(m[1]) }, '/atelier/audition/fx'),
 	OSCdef(\audSay, { |m| ~auditionSay.(m[1]) }, '/atelier/audition/say'),
+	OSCdef(\audSayOver, { |m| ~auditionSayOver.(m[1]) }, '/atelier/audition/sayover'),
 	OSCdef(\audStop, { |m| ~auditionStop.value }, '/atelier/audition/stop'),
 	OSCdef(\sampRec, { |m| ~sampRecStart.(m[1].asInteger) }, '/atelier/sampler/rec'),
 	OSCdef(\sampRecStop, { |m| ~sampRecStop.(m[1].asInteger, m[2].asInteger) }, '/atelier/sampler/recstop'),
