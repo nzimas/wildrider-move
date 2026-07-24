@@ -133,6 +133,9 @@ Every on-screen bar activates the moment its encoder is touched.
   than drowning in generators).
 - **Scenes** with gapless structural morphing; **Performances** (full project
   save / recall / delete — patch, scenes, samples, macros, master level).
+- **Performance recorder** — the Recorder view captures the master output to disk
+  (long-form, 8 takes per project). A built-in web page (`move.local:7180`) lists
+  every project's recordings to play and **download** for publishing.
 - **Sampler** — 32 slots with per-slot pitch, multi-select, and step-button insert
   FX that reuse the real GATE / DISTORT / COMB / CLOUDS modules.
 - **Modulation** — per-module and global LFO banks over a deterministic,

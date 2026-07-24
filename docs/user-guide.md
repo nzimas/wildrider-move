@@ -65,7 +65,7 @@ that take over until you leave them.
 | **Patch** (default) | — (launch default) | Play modules, browse & assign the catalog, macros, LFOs |
 | **Scenes** | **Track 3** | Store & recall up to 32 snapshots, with morphing |
 | **Transformers** | **Track 4** | Generate CDP + Csound variations into free sample slots |
-| **Recorder** | **Shift + Track 4** | 32-slot recorder — capture the mix (for publishing), replay, per-slot FX |
+| **Recorder** | **Shift + Track 4** | Long-form performance recorder — 8 takes per project, downloadable at move.local:7180 |
 | **Performances** | **Menu** | Save / load / delete whole projects (32 slots) |
 | **Chains** (modal) | **Shift + Track 1** | Build a patch by hand from the module list |
 | **Morph-time** (modal) | **Shift + Track 3** | Set the scene-morph duration (1–99 s) |
@@ -204,46 +204,36 @@ the Recorder (below).
 
 ---
 
-## 8. Recorder — capture the mix (for publishing)
+## 8. Recorder — capture full performances (for publishing)
 
-**Shift + Track 4.** A live recorder with a **warm** palette (black base, amber
-takes) distinct from the Transformers wash. The 32 pads are its **own** sample
-bank — separate from the Transformers' — that record Wildrider's own output,
-primarily to capture performances you want to keep or publish. Same per-slot
-performance knobs as the Transformers view.
-
-| Gesture | Action |
-|---|---|
-| **Tap an empty slot** | Start recording the master mix; **tap again** to stop |
-| **Tap a filled slot** | Play / loop it (lights green); tap again to stop |
-| **X (Delete) + pad** | Delete that take |
-| **Rec + pad** | Route that slot **through the patch's FX chain** (turns blue) |
-| **Shift + pad** | Select for editing (turns **blue**); multi-select and load its params |
-
-Recording slots flash red; takes are amber; playing is green; selected is blue
-(routed-through-FX slots are azure).
-
-### Per-slot editing (with a selection)
-
-With one or more slots selected, the encoders edit them (same in both views):
-
-| Encoder | E1 | E2 | E3 | E4 | E5 | E7 | E8 |
-|---|---|---|---|---|---|---|---|
-| **Edits** | loop start | loop end | cutoff | resonance | pitch (±24 st) | pan | volume |
-
-With **no** selection ("CTRL-ALL"), E1/E2 = loop start/end, E3/E4 = filter, E5 =
-pitch, applied broadly.
-
-### Armed insert FX (step buttons 1–4)
-
-Step buttons 1–4 arm a set of insert effects — **Gate, Distort, Comb, Clouds** —
-stamped onto slots as you select them.
+**Shift + Track 4.** A **long-form performance recorder**: it captures the master
+output straight to a stereo WAV on disk (up to 10 minutes), so you can record a
+whole take and publish it. Each **project has its own 8 recording slots** (row 1,
+the 8 leftmost pads) — the active project is whichever you last loaded or saved.
 
 | Gesture | Action |
 |---|---|
-| **Tap a step (1–4)** | Arm / disarm that FX (armed = amber) |
-| **Shift + armed step** | Re-randomize that FX's parameters |
-| **Hold a step + jog** | Set that FX's dry/wet |
+| **Tap an empty slot** | Start recording the master output |
+| **Tap the recording slot** | Stop the take (it's saved to disk) |
+| **Tap a filled slot** | Play it back (audition) |
+| **X (Delete) + pad** | Delete that recording |
+
+A recording slot **breathes red**; a playing slot **breathes green**; a slot that
+holds a take is **steady green**. The screen shows the active project, elapsed time
+while recording, and the download address.
+
+### Getting recordings off the device
+
+Recordings download from a small **web page** the instrument serves on your
+network:
+
+```
+http://move.local:7180
+```
+
+Open it from any phone or laptop on the same Wi-Fi. It lists every project that has
+recordings; each row has **▶ Play** (streams in the browser), **Download** (the
+WAV), and **Del**. This is the intended path for publishing a performance.
 
 ---
 
@@ -279,7 +269,7 @@ Filled slots glow green; the last saved/loaded slot is white.
 | Transformers | gentle breathe, 120 BPM | a **playing** slot (soft bright↔dim, not on/off) |
 | Transformers | fast gentle breathe | a job is generating |
 | Transformers | solid red | selected-for-edit (high contrast) |
-| Recorder | red-flash / amber / green / blue | recording / take / playing / selected-for-edit |
+| Recorder | red breathe / green breathe / steady green | recording / playing / holds a take (8 slots, row 1) |
 | Screen | "CPU LIMIT" | audio core saturated; adds refused |
 
 ---
