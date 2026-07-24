@@ -40,7 +40,7 @@ The chosen architecture is an **on-device full stack**:
                  │       60 Hz modulation loop, macro logic)
                  │  ──OSC──►  sclang :57120   ◄─OSC──  meters / analysis / CPU
                  ▼
-  SuperCollider engine  (scsynth :57110)
+  SuperCollider engine  (supernova :57110 — multicore; scsynth fallback)
                  │
                  ▼
   shadow JACK (jackd -R, realtime)  ──►  Schwung shadow mixer  ──►  DAC / speaker
@@ -55,6 +55,40 @@ The chosen architecture is an **on-device full stack**:
 - Audio is realtime-scheduled (`jackd -R`) into the Move's shadow-JACK mixer, which
   is the fix for the clicks/pops that a non-RT chain produced. The engine outputs a
   conservative peak so the shadow mixer's post-gain doesn't clip the DAC.
+
+## Multicore engine (supernova)
+
+The Move is a four-core Raspberry Pi CM4, but classic `scsynth` runs all of its
+DSP on **one** core — so a heavy patch saturates a single core, misses the 2.9 ms
+audio deadline, and clicks (XRuns), while the other three cores sit idle. Wildrider
+now runs on **`supernova`**, SuperCollider's multithreaded server, **by default** —
+spreading each patch across all four cores.
+
+Making that actually work took three things beyond swapping the binary:
+
+- **Topological ParGroups.** The patch graph is split into dependency *layers* —
+  independent modules (all the generators, parallel effect chains) run
+  simultaneously on different cores, while genuine `gen → FX → FX` dependencies
+  still run in order. Same sound, spread wide. On `scsynth` the same structure
+  collapses to a plain serial graph, so nothing there changes.
+- **Realtime DSP threads.** supernova's worker threads are granted `SCHED_FIFO`
+  priority via a Linux capability on the binary (the device otherwise runs
+  everything at normal priority), so the parallel work reliably makes each block
+  deadline.
+- **Full plugin parity.** Every UGen Wildrider uses was rebuilt as a
+  `*_supernova.so` variant. The lone exception — the JPverb reverb, which won't
+  register under supernova — falls back to a GVerb-based **VERB** on that engine
+  only; every other module is identical on both.
+
+| | `scsynth` (single-core) | `supernova` (multicore) |
+|---|---|---|
+| DSP cores used | 1 (others idle) | **all 4** (~60% each under load) |
+| Module ceiling before XRuns | ~13 | **19+ with 0 XRuns** |
+
+supernova is the default and needs no configuration. To fall back to single-core
+`scsynth`, change one line in `move/run-engine.sh` (`ATELIER_THREADS` → `0`). The
+full story — build recipe, the ParGroup design, the realtime-capability fix, and
+tuning/troubleshooting — is in [`docs/supernova.md`](docs/supernova.md).
 
 ## The control surface
 
@@ -135,11 +169,21 @@ over an SSH session.
   telemetry `:57140`, control channel `:57150`; 44.1 kHz, 128-sample block, stereo.
   `HOME` is pointed at an Ableton-writable dir so sclang boots from the menu.
 - **CPU:** the Move is a shared, load-heavy CM4. Generated patches are DSP-budgeted
-  and the audio chain is pinned to SCHED_FIFO to keep XRuns at zero.
-- **Multicore by default:** the DSP runs on the multithreaded **`supernova`**
-  server, spreading a patch across all four cores (~1.5× the module capacity,
-  0 XRuns under load). Single-core `scsynth` remains a one-line fallback —
-  see [`docs/supernova.md`](docs/supernova.md).
+  and the audio chain is pinned to SCHED_FIFO to keep XRuns at zero. The engine runs
+  multicore by default — see [Multicore engine (supernova)](#multicore-engine-supernova).
 - **Recovery:** a Move OS auto-update can wipe the Schwung shim hook — re-run the
   post-update step as root and restart the Move service if the overtake stops
   appearing.
+
+## License
+
+Wildrider for Move is released under the **MIT License** — see [`LICENSE`](LICENSE).
+
+The instrument bundles and builds on third-party components that carry their own
+licenses, which continue to apply to those parts: SuperCollider and its plugins,
+the Mutable Instruments UGens (Plaits / Rings / Clouds), ByteBeat, the sc3-plugins
+(JPverb / Greyhole and others), the Composers Desktop Project (CDP) tools, and
+espeak-ng. Wildrider was forked from the desktop
+[`AbsoluteManagement/wildrider`](https://github.com/AbsoluteManagement/wildrider)
+(see [`HANDOFF.md`](HANDOFF.md) for provenance); the MIT grant here covers this
+project's own source.
