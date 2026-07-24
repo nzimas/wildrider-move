@@ -14,6 +14,16 @@ speaker become the whole interface. No browser, no Docker, no host computer.
 
 ---
 
+## Documentation
+
+| Doc | What |
+|---|---|
+| [`docs/user-guide.md`](docs/user-guide.md) | **Playing Wildrider** — every view, pad, encoder and gesture, view by view. |
+| [`docs/supernova.md`](docs/supernova.md) | **Multicore audio** — the `supernova` engine: why, how it's built, the ParGroup design, realtime scheduling, tuning & troubleshooting. |
+| [`HANDOFF.md`](HANDOFF.md) | Fork provenance and desktop-vs-Move history. |
+
+---
+
 ## How it runs on the Move
 
 The chosen architecture is an **on-device full stack**:
@@ -65,13 +75,20 @@ Every on-screen bar activates the moment its encoder is touched.
 
 ## What's inside
 
-- **Generators** (unstable-clock voices): **FMTONE** (a bespoke Digitone-style
+- **Generators** (17, unstable-clock voices): **FMTONE** (a bespoke Digitone-style
   4-operator FM voice), **WAVIARY** (morphing-wavetable), **RINGS** (modal /
-  sympathetic-string resonator). Each runs its own drifting internal clock.
-- **Processors** (21): PITCH, TIME, COMB, GAIN, SDLY, VERB, CLOUDS, GRAINS, ENV,
-  GATE, DISTORT (level-compensated so its wet/dry actually blends), OVERDRIVE,
-  AMPSIM, EQUALIZER, FLANGER, **PHASER** (an authentic 1970s string-machine
-  phaser), RINGMOD, BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER.
+  sympathetic-string resonator), plus the clock-articulated "poundhard fleet" —
+  FM7, BUCHLOID, MOLLY, BEN, NOIZEOP, CHAOS, ICARUS, PLAITS, SHAKER, MEMBRANE,
+  PLUCK, TUBE, WTABLE, BYTEBEAT. Each runs its own drifting internal clock.
+- **Processors** (22): PITCH, TIME, COMB, GAIN, SDLY, VERB, CLOUDS, GRAINS, RINGS
+  (the one module that is both a generator and an insert), ENV, GATE, DISTORT
+  (level-compensated so its wet/dry actually blends), OVERDRIVE, AMPSIM, EQUALIZER,
+  FLANGER, **PHASER** (an authentic 1970s string-machine phaser), RINGMOD,
+  BITCRUSHER, LOFI, TREMOLO, WAVEFOLDER.
+- **On-device module browser** — audition generators and hear processor names
+  spoken, then assign them to the canvas (palette rows 3 & 4).
+- **CDP variations** — capture a live snippet and fan Composers-Desktop-Project
+  transformations across the free sample slots.
 - **Guided generative patches** — artist-profile randomization with a CPU budget so
   a generated patch always leaves DSP headroom (and stays processor-forward rather
   than drowning in generators).
@@ -119,6 +136,10 @@ over an SSH session.
   `HOME` is pointed at an Ableton-writable dir so sclang boots from the menu.
 - **CPU:** the Move is a shared, load-heavy CM4. Generated patches are DSP-budgeted
   and the audio chain is pinned to SCHED_FIFO to keep XRuns at zero.
+- **Multicore (optional):** the DSP engine can switch from single-core `scsynth` to
+  the multithreaded **`supernova`** server, spreading a patch across all four cores
+  (~1.5× the module capacity, 0 XRuns under load). Opt-in and fully reversible —
+  see [`docs/supernova.md`](docs/supernova.md).
 - **Recovery:** a Move OS auto-update can wipe the Schwung shim hook — re-run the
   post-update step as root and restart the Move service if the overtake stops
   appearing.
